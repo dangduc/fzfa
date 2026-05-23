@@ -108,9 +108,7 @@ Minimal setup:
 
 #+begin_src emacs-lisp :tangle yes
   (use-package fzf-async
-    :vc (:url "https://github.com/jojojames/fzf-async" :rev :newest)
-    :config
-    (fzf-async-setup))
+    :vc (:url "https://github.com/jojojames/fzf-async" :rev :newest))
 #+end_src
 
 Recommended:
@@ -130,9 +128,7 @@ Recommended:
     (fussy-company-setup))
 
   (use-package fzf-async
-    :vc (:url "https://github.com/jojojames/fzf-async" :rev :newest)
-    :config
-    (fzf-async-setup))
+    :vc (:url "https://github.com/jojojames/fzf-async" :rev :newest))
 #+end_src
 
 This sets up a consistent ~completing-read~ and ~completion-in-region~
@@ -141,10 +137,7 @@ experience using ~fzf~ as the core filtering/scoring algorithm.
 * Quick Start
 
 #+begin_src emacs-lisp :tangle yes
-  ;; Register the completion style.
-  (fzf-async-setup)
-
-  ;; Then call any command:
+  ;; No explicit setup needed — just call any command:
   (fzf-async-find-any)
   (fzf-async-rg)
   (fzf-async-fd)
@@ -255,10 +248,12 @@ For ad-hoc combinations, call ~fzf-async-multi-read~ directly:
 * Extensions
 
 Optional integrations live in the ~extensions/~ subdirectory.  They are
-opt-in via ~fzf-async-extensions~ — a list of short symbols ~fzf-async-setup~
-walks: for each ~SYMBOL~ it ~require~ s ~fzf-async-SYMBOL~ and calls
-~fzf-async-SYMBOL-setup~ if defined.  ~extensions/~ is added to
-~load-path~ on first setup so no manual path wiring is needed.
+opt-in via ~fzf-async-extensions~ — a list of short symbols that the
+lazy setup walks: for each ~SYMBOL~ it ~require~ s ~fzf-async-SYMBOL~
+and calls ~fzf-async-SYMBOL-setup~ if defined.  ~extensions/~ is added
+to ~load-path~ on first use so no manual path wiring is needed.
+Extension loading happens the first time you invoke any fzf-async
+command (or up front if you call ~fzf-async-setup~ explicitly).
 
 | Symbol      | Library                | Soft dependency   | Commands                                                                                                                              |
 |-------------+------------------------+-------------------+---------------------------------------------------------------------------------------------------------------------------------------|
@@ -285,8 +280,7 @@ To disable extension loading entirely:
 #+begin_src emacs-lisp :tangle yes
   (use-package fzf-async
     :vc (:url "https://github.com/jojojames/fzf-async" :rev :newest)
-    :custom (fzf-async-extensions nil)
-    :config (fzf-async-setup))
+    :custom (fzf-async-extensions nil))
 #+end_src
 
 * Completion style compatibility
@@ -298,7 +292,7 @@ it directly to the ~fzf~ scoring layer without applying any transformation.
 *This style must not be added to the global ~completion-styles~ list.*
 Doing so applies it to every ~completing-read~ in the session, including
 callers that pass a plain list or hash-table as the collection, which will
-trigger an error.  ~fzf-async-setup~ wires the style correctly via
+trigger an error.  fzf-async wires the style correctly via
 ~completion-category-overrides~ for the ~fzf-async~ category only.  Other
 ~completion-styles~ packages (e.g. ~orderless~, ~hotfuzz~) may override
 this.
@@ -339,9 +333,7 @@ command (e.g. ~find~ or ~ripgrep~) and must be streamed incrementally.
 
   ;; Async fuzzy completion for large file/grep searches.
   (use-package fzf-async
-    :vc (:url "https://github.com/jojojames/fzf-async" :rev :newest)
-    :config
-    (fzf-async-setup))
+    :vc (:url "https://github.com/jojojames/fzf-async" :rev :newest))
 #+end_src
 
 * Integrations

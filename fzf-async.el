@@ -198,6 +198,10 @@ that directory is added to `load-path' the first time
 Captured at load time so `fzf-async-setup' can add it to `load-path'
 regardless of where it is called from.")
 
+(defvar fzf-async--setup-done nil
+  "Non-nil once `fzf-async--ensure-setup' has installed registrations.
+Reset to nil to force a re-setup on the next entry-point call.")
+
 (defvar fzf-async--multi-mode nil
   "Dispatch flag for `fzf-async-completing-read' / `fzf-sync-completing-read'.
 - `:extract'         — throw `fzf-async-extracted' with the call's keyword args.
@@ -400,6 +404,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
   IDX      — current selection index (omitted for frontends without one)
   FILTERED — candidates matching the current query
   TOTAL    — total candidates collected so far"
+  (fzf-async--ensure-setup)
   (unless skip-executable-check
     (when-let* ((prog (and command (car (split-string command nil t)))))
       (unless (executable-find prog)
@@ -622,6 +627,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
             TRANSFORM is nil return the group name; when non-nil return
             the display string for CANDIDATE within its group.  Frontends
             like vertico render group headers between sections."
+  (fzf-async--ensure-setup)
   (cond
    ((eq fzf-async--multi-mode :extract)
     (throw 'fzf-async-extracted
@@ -985,6 +991,7 @@ Composes: if a command in COMMANDS itself calls `fzf-async--multi-read'
 \(e.g. `fzf-async-find-any'), its inner sources are flattened in alongside
 the other commands' sources, with each inner source keeping its own
 :action."
+  (fzf-async--ensure-setup)
   (let* ((source-lists
           (mapcar
            (lambda (cmd)
@@ -1808,24 +1815,16 @@ Each is registered in `completion-category-overrides' so the
 pre-scored passthrough style runs instead of style re-filtering.")
 
 (defun fzf-async--check-completion-setup ()
-  "Signal a user-error if the completion configuration is incorrect.
-Guards against two misconfiguration patterns:
-- `fzf-async' in the global `completion-styles' list, which applies the
-  style to every completing-read and breaks callers that pass plain lists.
-- fzf-async categories absent from `completion-category-overrides',
-  which means the style never activates and results are silently
-  re-filtered."
+  "Signal a user-error if `fzf-async' has been added to global `completion-styles'.
+That applies the passthrough style to every completing-read, including
+ones that pass a plain list/hash-table — which the style errors on.
+fzf-async wires itself in via `completion-category-overrides' only;
+`fzf-async--ensure-setup' guarantees that, so the per-category check
+that used to live here is no longer needed."
   (when (memq 'fzf-async completion-styles)
     (user-error
      "fzf-async must not be in `completion-styles' globally (it is).  \
-Remove it and ensure `fzf-async-setup' has been called so it is wired \
-via `completion-category-overrides' only"))
-  (unless (and (assq 'fzf-async-misc completion-category-overrides)
-               (assq 'fzf-async-file completion-category-overrides)
-               (assq 'fzf-async-multi completion-category-overrides))
-    (user-error
-     "fzf-async categories missing from `completion-category-overrides'.  \
-Call `fzf-async-setup' before using fzf-async commands")))
+Remove it; fzf-async wires itself in via `completion-category-overrides'")))
 
 (defun fzf-async--bridge-defcustoms (orig-fn &rest args)
   "Wrap a fzf-native call so the C scorer sees fzf-async-* values."
@@ -1835,47 +1834,64 @@ Call `fzf-async-setup' before using fzf-async commands")))
         (fzf-native-case-mode        fzf-async-case-mode))
     (apply orig-fn args)))
 
+(defun fzf-async--ensure-setup ()
+  "Install fzf-async's registrations exactly once.
+Idempotent: subsequent calls are a flag check.  Called from every
+public entry point.
+
+ e.g.
+ `fzf-async-completing-read',
+ `fzf-sync-completing-read',
+ `fzf-async-multi-read'."
+  (unless fzf-async--setup-done
+    (setq fzf-async--setup-done t)
+    (add-to-list 'completion-styles-alist
+                 '(fzf-async
+                   fzf-async-try-completion fzf-async-all-completions
+                   "Passthrough style for pre-scored async fzf completions."))
+
+    (advice-add 'fzf-native-async-start      :around #'fzf-async--bridge-defcustoms)
+    (advice-add 'fzf-native-async-candidates :around #'fzf-async--bridge-defcustoms)
+
+    ;; Register each fzf-async category with the passthrough style so other
+    ;; styles (e.g. fussy on `file', `basic' on multi) don't re-filter our
+    ;; pre-scored candidates or cache them client-side past the first call.
+    (dolist (cat fzf-async--categories)
+      (add-to-list 'completion-category-overrides `(,cat (styles fzf-async))))
+
+    (with-eval-after-load 'embark
+      (dolist (entry '((fzf-async-file     . embark-file-map)
+                       (fzf-async-buffer   . embark-buffer-map)
+                       (fzf-async-bookmark . embark-bookmark-map)
+                       (fzf-async-grep     fzf-async-grep-map embark-general-map)))
+        (add-to-list 'embark-keymap-alist entry))
+      (setf (alist-get 'fzf-async-grep embark-default-action-overrides)
+            #'fzf-async--grep-jump))
+
+    (with-eval-after-load 'marginalia
+      (dolist (entry '((fzf-async-file     marginalia-annotate-file     none)
+                       (fzf-async-buffer   marginalia-annotate-buffer   none)
+                       (fzf-async-bookmark marginalia-annotate-bookmark none)
+                       (fzf-async-theme    marginalia-annotate-theme    none)
+                       (fzf-async-imenu    marginalia-annotate-imenu    none)))
+        (add-to-list 'marginalia-annotators entry)))
+
+    (when fzf-async-extensions
+      (when (and fzf-async--extensions-dir
+                 (file-directory-p fzf-async--extensions-dir))
+        (add-to-list 'load-path fzf-async--extensions-dir))
+      (dolist (ext fzf-async-extensions)
+        (require (intern (format "fzf-async-%s" ext)))
+        (let ((setup-fn (intern (format "fzf-async-%s-setup" ext))))
+          (when (fboundp setup-fn) (funcall setup-fn)))))))
+
 ;;;###autoload
-(defun fzf-async-setup ()
-  "Register the fzf-async completion style and category overrides."
-  (add-to-list 'completion-styles-alist
-               '(fzf-async fzf-async-try-completion fzf-async-all-completions
-                           "Passthrough style for pre-scored async fzf completions."))
-
-  (advice-add 'fzf-native-async-start      :around #'fzf-async--bridge-defcustoms)
-  (advice-add 'fzf-native-async-candidates :around #'fzf-async--bridge-defcustoms)
-
-  ;; Register each fzf-async category with the passthrough style so other
-  ;; styles (e.g. fussy on `file', `basic' on multi) don't re-filter our
-  ;; pre-scored candidates or cache them client-side past the first call.
-  (dolist (cat fzf-async--categories)
-    (add-to-list 'completion-category-overrides `(,cat (styles fzf-async))))
-
-  (with-eval-after-load 'embark
-    (dolist (entry '((fzf-async-file     . embark-file-map)
-                     (fzf-async-buffer   . embark-buffer-map)
-                     (fzf-async-bookmark . embark-bookmark-map)
-                     (fzf-async-grep     fzf-async-grep-map embark-general-map)))
-      (add-to-list 'embark-keymap-alist entry))
-    (setf (alist-get 'fzf-async-grep embark-default-action-overrides)
-          #'fzf-async--grep-jump))
-
-  (with-eval-after-load 'marginalia
-    (dolist (entry '((fzf-async-file     marginalia-annotate-file     none)
-                     (fzf-async-buffer   marginalia-annotate-buffer   none)
-                     (fzf-async-bookmark marginalia-annotate-bookmark none)
-                     (fzf-async-theme    marginalia-annotate-theme    none)
-                     (fzf-async-imenu    marginalia-annotate-imenu    none)))
-      (add-to-list 'marginalia-annotators entry)))
-
-  (when fzf-async-extensions
-    (when (and fzf-async--extensions-dir
-               (file-directory-p fzf-async--extensions-dir))
-      (add-to-list 'load-path fzf-async--extensions-dir))
-    (dolist (ext fzf-async-extensions)
-      (require (intern (format "fzf-async-%s" ext)))
-      (let ((setup-fn (intern (format "fzf-async-%s-setup" ext))))
-        (when (fboundp setup-fn) (funcall setup-fn))))))
+(define-obsolete-function-alias 'fzf-async-setup #'fzf-async--ensure-setup "1.0"
+  "Calling `fzf-async-setup' is no longer required — every fzf-async
+entry point installs the necessary registrations lazily on first
+invocation.  The alias forwards to `fzf-async--ensure-setup' (which is
+idempotent), so existing configs still work; new configs should drop
+the call.")
 
 (provide 'fzf-async)
 ;;; fzf-async.el ends here
