@@ -66,6 +66,8 @@
 (declare-function helm "helm-core")
 (declare-function helm-make-source "helm-source")
 (declare-function helm-force-update "helm-core")
+(declare-function projectile-project-root "projectile")
+
 
 ;;; Debug logging
 
