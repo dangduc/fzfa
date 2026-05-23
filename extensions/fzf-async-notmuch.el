@@ -63,7 +63,7 @@ Each element is shell-quoted before being joined into the command."
 
 (defun fzf-async-notmuch--query-candidates ()
   "Candidates for the query completing-read: tags plus saved-search queries.
-Tags are formatted as `tag:NAME'. Saved searches come from
+Tags are formatted as `tag:NAME'.  Saved searches come from
 `notmuch-saved-searches' as-is."
   (let ((tags (ignore-errors
                 (process-lines (or (bound-and-true-p notmuch-command) "notmuch")
@@ -78,7 +78,7 @@ Tags are formatted as `tag:NAME'. Saved searches come from
 (defun fzf-async-notmuch--read-query (prompt)
   "Read a notmuch query with PROMPT.
 Completes over notmuch tags (as `tag:NAME') and saved-search queries.
-Free-form input is accepted. Defaults to `fzf-async-notmuch-default-query'."
+Free-form input is accepted.  Defaults to `fzf-async-notmuch-default-query'."
   (completing-read prompt
                    (fzf-async-notmuch--query-candidates)
                    nil nil nil

@@ -53,9 +53,10 @@ browser (Brave, Edge, Vivaldi, Arc)."
   "Cached bookmark candidates (tab-encoded strings).")
 
 (defun fzf-async-chrome--walk (node folder-path)
-  "Return list of tab-encoded candidate strings for url leaves under NODE.
+  "Collect tab-encoded candidate strings for url nodes under NODE.
 FOLDER-PATH accumulates the breadcrumb of containing folders.  Each
-emitted line has fields: FOLDER\\tNAME\\tURL\\tID."
+emitted line has fields: FOLDER\\tNAME\\tURL\\tID.  Folder nodes recurse;
+url nodes emit one row."
   (let ((type (gethash "type" node))
         (name (gethash "name" node)))
     (pcase type
@@ -74,11 +75,11 @@ emitted line has fields: FOLDER\\tNAME\\tURL\\tID."
   "Parse Chrome's Bookmarks JSON; return list of tab-encoded strings."
   (unless fzf-async-chrome-bookmarks-file
     (user-error
-     "fzf-async-chrome: no default bookmarks path for `%s'; set `fzf-async-chrome-bookmarks-file'"
+     "Fzf-async-chrome: no default bookmarks path for `%s'; set `fzf-async-chrome-bookmarks-file'"
      system-type))
   (let ((file (expand-file-name fzf-async-chrome-bookmarks-file)))
     (unless (file-readable-p file)
-      (user-error "fzf-async-chrome: cannot read %s" file))
+      (user-error "Fzf-async-chrome: cannot read %s" file))
     (let* ((data (with-temp-buffer
                    (insert-file-contents file)
                    (json-parse-buffer :object-type 'hash-table
@@ -93,7 +94,7 @@ emitted line has fields: FOLDER\\tNAME\\tURL\\tID."
       (setq fzf-async-chrome--cache (fzf-async-chrome--load))))
 
 (defun fzf-async-chrome--group (cand transform)
-  "Group fn for `fzf-async-chrome' candidates.
+  "Group fn for `fzf-async-chrome' candidate CAND.
 TRANSFORM nil returns the constant group key (suppresses headers
 beyond the first); TRANSFORM t returns the cleaned per-row display
 without the trailing ID field."

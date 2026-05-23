@@ -1,4 +1,11 @@
 ;;; fzf-async-test.el --- Tests for fzf-async  -*- lexical-binding: t; -*-
+
+;;; Commentary:
+
+;; ERT tests for fzf-async.
+
+;;; Code:
+
 (require 'ert)
 (require 'fzf-async)
 
@@ -115,7 +122,7 @@
 
 (defun fzf-async-test--extract (cmd)
   "Run CMD under the multi `:extract' mode and return the captured plist.
-Returns nil if CMD completes without invoking a fzf completing-read."
+Returns nil if CMD completes without invoking `completing-read'."
   (let ((fzf-async--multi-mode :extract))
     (catch 'fzf-async-extracted
       (funcall cmd)

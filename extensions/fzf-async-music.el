@@ -54,8 +54,9 @@
   "JXA snippet returning tab-separated id/artist/album/name/genre lines.")
 
 (defvar fzf-async-music--cache nil
-  "Cached tracks, each entry a plist with `:id', `:artist', `:album',
-`:name', and `:genre' keys.")
+  "Cached tracks.
+Each entry is a plist with `:id', `:artist', `:album', `:name', and
+`:genre' keys.")
 
 (defvar fzf-async-music--playlists-cache nil
   "Cached playlists, each entry a plist with `:id' and `:name' keys.")
@@ -80,7 +81,7 @@ metadata for the candidate currently being rendered.")
 (defun fzf-async-music--osascript-lines (script)
   "Run JXA SCRIPT via `osascript', return non-empty stdout lines."
   (unless (eq system-type 'darwin)
-    (user-error "fzf-async-music requires macOS"))
+    (user-error "Fzf-async-music requires macOS"))
   (with-temp-buffer
     (let ((rc (with-timeout (fzf-async-music-dump-timeout
                              (user-error "Music.app query timed out after %ss"
@@ -88,7 +89,7 @@ metadata for the candidate currently being rendered.")
                 (call-process "osascript" nil t nil
                               "-l" "JavaScript" "-e" script))))
       (unless (zerop rc)
-        (user-error "osascript failed (exit %s): %s" rc (buffer-string)))
+        (user-error "Osascript failed (exit %s): %s" rc (buffer-string)))
       (split-string (buffer-string) "\n" t))))
 
 (defun fzf-async-music--dump ()
@@ -127,6 +128,7 @@ metadata for the candidate currently being rendered.")
 
 (defun fzf-async-music--read (tracks group-key prompt)
   "Read TRACKS via `fzf-sync-completing-read'; return the chosen plist.
+PROMPT is shown in the minibuffer.
 GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
 - TRACKS are sorted by GROUP-KEY so consecutive same-key entries cluster.
 - For `:genre' the group value is also prefixed to the candidate string

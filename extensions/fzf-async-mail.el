@@ -60,13 +60,13 @@ Large inboxes (10k+ messages) can take 30s+ to enumerate."
   "JXA snippet returning tab-separated id/date/sender/subject lines.")
 
 (defvar fzf-async-mail--cache nil
-  "Cached messages, each entry a plist with `:id', `:date', `:from',
-and `:subject' keys.")
+  "Cached messages.
+Each entry is a plist with `:id', `:date', `:from', and `:subject' keys.")
 
 (defun fzf-async-mail--osascript-lines (script)
   "Run JXA SCRIPT via `osascript', return non-empty stdout lines."
   (unless (eq system-type 'darwin)
-    (user-error "fzf-async-mail requires macOS"))
+    (user-error "Fzf-async-mail requires macOS"))
   (with-temp-buffer
     (let ((rc (with-timeout (fzf-async-mail-dump-timeout
                              (user-error "Mail.app query timed out after %ss"
@@ -74,7 +74,7 @@ and `:subject' keys.")
                 (call-process "osascript" nil t nil
                               "-l" "JavaScript" "-e" script))))
       (unless (zerop rc)
-        (user-error "osascript failed (exit %s): %s" rc (buffer-string)))
+        (user-error "Osascript failed (exit %s): %s" rc (buffer-string)))
       (split-string (buffer-string) "\n" t))))
 
 (defun fzf-async-mail--dump ()

@@ -33,6 +33,8 @@
 (require 'cl-lib)
 (require 'fzf-native)
 
+;;; Code:
+
 (defgroup fzf-async nil
   "Async fuzzy completion via fzf-native."
   :group 'completion
@@ -67,6 +69,19 @@
 (declare-function helm-make-source "helm-source")
 (declare-function helm-force-update "helm-core")
 (declare-function projectile-project-root "projectile")
+(declare-function project-root "project")
+(declare-function vertico--exhibit "vertico")
+(defvar vertico--index)
+(defvar vertico--input)
+(defvar recentf-list)
+(defvar marginalia-annotators)
+(declare-function fzf-native-score "fzf-native")
+(declare-function fzf-native-score-all "fzf-native")
+(declare-function fzf-native-async-start "fzf-native")
+(declare-function fzf-native-async-stop "fzf-native")
+(declare-function fzf-native-async-generation "fzf-native")
+(declare-function fzf-native-async-candidates "fzf-native")
+(declare-function fzf-native-async-stats "fzf-native")
 
 
 ;;; Debug logging
@@ -77,7 +92,7 @@ Set before loading or re-evaluating fzf-async.el; toggling at runtime
 has no effect (the check is macro-expanded at load time, like #ifdef).")
 
 (defmacro fzf-async--log (fmt &rest args)
-  "Emit a debug message if `fzf-async-debug' is non-nil at load time.
+  "Emit a debug message FMT with ARGS if `fzf-async-debug' is non-nil at load.
 Expands to nothing when disabled — zero runtime cost."
   (when (bound-and-true-p fzf-async-debug) `(message ,fmt ,@args)))
 
@@ -216,9 +231,6 @@ existing single-source commands without modifying their definitions.")
 When non-nil, supersedes `fzf-async-project-backend' and `default-directory'.
 Intended for `let'-binding when extending built-in commands:
 
-  (let ((fzf-async-directory default-directory))
-    (fzf-async-rg))
-
 Priority: `fzf-async-directory' > project backend > `default-directory'.")
 
 (defcustom fzf-async-project-backend 'project
@@ -242,7 +254,7 @@ Always accepts STRING as-is; scoring is done in C."
 
 (defun fzf-async-all-completions (string table pred _point)
   "All-completions for the fzf-async completion style.
-Passes STRING through to the collection TABLE without transformation.
+Passes STRING through to the collection TABLE filtered by PRED.
 Highlighting is applied by the C layer (see `fzf-async-highlight')."
   (funcall table string pred t))
 
@@ -271,7 +283,7 @@ Used to implement live preview (e.g. `fzf-async-theme')."
 
 (defun fzf-async--frontend-exhibit ()
   "Trigger a display refresh in the active completion UI.
-Handles vertico and icomplete. `ivy' is handled separately."
+Handles vertico and icomplete.  `ivy' is handled separately."
   (when-let* ((win (active-minibuffer-window)))
     (with-selected-window win
       (cond
@@ -297,6 +309,8 @@ e.g., 1234567 → 1,234,567."
 (cl-defun fzf-async--helm-completing-read (&key prompt command directory
                                                 skip-executable-check)
   "Helm path for `fzf-async-completing-read'.
+PROMPT is shown in the minibuffer.  COMMAND is the producer shell command run
+in DIRECTORY.  SKIP-EXECUTABLE-CHECK bypasses the `executable-find' guard.
 Starts an fzf-native async session and opens a helm buffer driven by a
 `helm-source-sync' with `:match-dynamic t' so helm never re-filters the
 already-scored candidates.  A timer polls the C-side generation counter and
@@ -379,7 +393,7 @@ when RESOLVE-PATHS is nil."
                                      group
                                      (resolve-paths t)
                                      skip-executable-check)
-  "Run shell COMMAND and completing-read its output.
+  "Run shell COMMAND with asynchronous `completing-read'.
 
 :PROMPT                 Minibuffer prompt.  Derived from the first token of
                         COMMAND (e.g. \"find: \" for \"find .\") when omitted.
@@ -609,7 +623,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                     annotate
                                     affix
                                     group)
-  "Run completing-read over CANDIDATES using fzf-native for scoring.
+  "Run `completing-read' over CANDIDATES using fzf-native for scoring.
 
 :CANDIDATES List of strings to score with `fzf-native-score-all'.
 :PROMPT     Minibuffer prompt string.  Defaults to \"fzf > \".
@@ -675,7 +689,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
   cand)
 
 (defun fzf-async--multi-source-of (cand sources-v hash)
-  "Return the source plist responsible for CAND, or nil."
+  "Return the source plist responsible for CAND, or nil.
+SOURCES-V is the vector of source plists; HASH maps CAND to source index."
   (and (stringp cand) (> (length cand) 0)
        (let ((idx (or (get-text-property 0 'fzf-async-src-idx cand)
                       (gethash cand hash))))
@@ -696,7 +711,8 @@ the property set by `fzf-native-score-all'.  Returns 0 on empty input."
    (t (or (get-text-property 0 'completion-score (car results)) 0))))
 
 (cl-defun fzf-async--multi-read (sources &key (prompt "fzf-multi: "))
-  "Run completing-read across multiple SOURCES, fzf-async style.
+  "Run `completing-read' across multiple SOURCES, fzf-async style.
+PROMPT is shown in the minibuffer.
 
 Internal — users should call `fzf-async-multi-read' which derives sources
 from existing single-source commands.  This function takes pre-built
@@ -728,7 +744,7 @@ Per-source plist keys:
    ((eq (car-safe fzf-async--multi-mode) :inject)
     (cl-return-from fzf-async--multi-read (cdr fzf-async--multi-mode))))
   (when (bound-and-true-p helm-mode)
-    (user-error "fzf-async--multi-read does not yet support helm-mode"))
+    (user-error "Fzf-async--multi-read does not yet support helm-mode"))
   (let* ((n            (length sources))
          (sources-v    (vconcat sources))
          (handles      (make-vector n nil))
@@ -1375,7 +1391,7 @@ kill ring instead.  Override the location via
 
 ;;;###autoload
 (defun fzf-async-theme ()
-  "Prompt for a theme to enable, with live preview as the selection moves.
+  "Prompt for a theme to enable, previewing each candidate live.
 Aborting (e.g. \\[keyboard-quit]) restores the themes that were enabled
 when the command was invoked.  Selecting \"default\" disables all themes."
   (interactive)
@@ -1718,7 +1734,7 @@ embark default action for the `fzf-async-grep' category."
 Composed with `embark-general-map' via `embark-keymap-alist'.")
 
 (defun fzf-async--grep-group (cand transform)
-  "Group function for FILE:LINE:CONTENT grep candidates.
+  "Group function for FILE:LINE:CONTENT grep candidate CAND.
 TRANSFORM nil  → return the filename as the section header.
 TRANSFORM non-nil → strip the filename prefix; display LINE:CONTENT only."
   (if (string-match fzf-async--grep-line-regexp cand)
@@ -1818,18 +1834,18 @@ pre-scored passthrough style runs instead of style re-filtering.")
 
 (defun fzf-async--check-completion-setup ()
   "Signal a user-error if `fzf-async' has been added to global `completion-styles'.
-That applies the passthrough style to every completing-read, including
+That applies the passthrough style to every `completing-read', including
 ones that pass a plain list/hash-table — which the style errors on.
 fzf-async wires itself in via `completion-category-overrides' only;
 `fzf-async--ensure-setup' guarantees that, so the per-category check
 that used to live here is no longer needed."
   (when (memq 'fzf-async completion-styles)
     (user-error
-     "fzf-async must not be in `completion-styles' globally (it is).  \
+     "Fzf-async must not be in `completion-styles' globally (it is).  \
 Remove it; fzf-async wires itself in via `completion-category-overrides'")))
 
 (defun fzf-async--bridge-defcustoms (orig-fn &rest args)
-  "Wrap a fzf-native call so the C scorer sees fzf-async-* values."
+  "Wrap fzf-native call ORIG-FN with ARGS; bridge fzf-async-* into C scorer."
   (let ((fzf-native-async-highlight  fzf-async-highlight)
         (fzf-native-max-line-length  fzf-async-max-line-length)
         (fzf-native-async-cache-size fzf-async-cache-size)
