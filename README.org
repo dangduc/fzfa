@@ -266,8 +266,9 @@ walks: for each ~SYMBOL~ it ~require~ s ~fzf-async-SYMBOL~ and calls
 | ~spotlight~ | ~fzf-async-spotlight~  | macOS ~mdfind~    | ~fzf-async-spotlight~, ~fzf-async-spotlight-apps~, ~fzf-async-spotlight-audio~                                                        |
 | ~music~     | ~fzf-async-music~      | macOS ~Music.app~ | ~fzf-async-music~, ~-by-artist~, ~-by-genre~, ~-playlist~, ~-playlist-shuffle~, ~-refresh~ — modeled on ~helm-itunes~                |
 | ~chrome~    | ~fzf-async-chrome~     | none              | ~fzf-async-chrome-bookmarks~, ~fzf-async-chrome-refresh~ — open Chromium-family bookmarks via ~browse-url~                          |
+| ~company~   | ~fzf-async-company~    | ~company~         | ~fzf-async-company~ — fuzzy-filter current ~company-mode~ candidates and finish; modeled on ~helm-company~ / ~counsel-company~ / ~consult-company~ |
 
-Default value of ~fzf-async-extensions~ is ~(pass spotlight music chrome)~.
+Default value of ~fzf-async-extensions~ is ~(pass spotlight music chrome company)~.
 Each loads without its soft dependency present — the dependency is
 only required when you invoke one of the extension's commands.  Soft
 dependencies are not declared in ~Package-Requires~ — install them
@@ -402,7 +403,7 @@ single keybinding via [[https://github.com/jojojames/matcha][matcha]].
 | ~fzf-async-max-line-length~    | 256       | Per-line character limit; nil/+N/-N (see note below). |
 | ~fzf-async-cache-size~         | 40        | Per-session LRU cache entries (see note below).       |
 | ~fzf-async-case-mode~          | ~smart~   | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.     |
-| ~fzf-async-extensions~         | ~(pass spotlight music chrome)~ | Extensions to load from ~extensions/~ during setup. |
+| ~fzf-async-extensions~         | ~(pass spotlight music chrome company)~ | Extensions to load from ~extensions/~ during setup. |
 
 ~fzf-async-highlight~ controls C-side match highlighting.  After the scoring
 pass, the C module calls ~fzf_get_positions~ for the top N candidates and

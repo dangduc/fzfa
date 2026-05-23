@@ -172,7 +172,7 @@ Read at session start; changing it does not affect running sessions."
   :type 'integer
   :group 'fzf-async)
 
-(defcustom fzf-async-extensions '(pass spotlight music chrome)
+(defcustom fzf-async-extensions '(pass spotlight music chrome company)
   "List of fzf-async extensions to load from `fzf-async-setup'.
 Each SYMBOL causes `fzf-async-setup' to `require' the feature
 `fzf-async-SYMBOL' and, if defined, call `fzf-async-SYMBOL-setup'.
@@ -182,7 +182,8 @@ that directory is added to `load-path' the first time
   :type '(set (const :tag "password-store (pass)" pass)
               (const :tag "macOS Spotlight (mdfind)" spotlight)
               (const :tag "macOS Music.app" music)
-              (const :tag "Chrome bookmarks" chrome))
+              (const :tag "Chrome bookmarks" chrome)
+              (const :tag "company-mode completions" company))
   :group 'fzf-async)
 
 (defconst fzf-async--extensions-dir
