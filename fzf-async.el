@@ -193,10 +193,7 @@ Read at session start; changing it does not affect running sessions."
   '(pass spotlight music chrome company mail notmuch)
   "List of fzf-async extensions to load from `fzf-async-setup'.
 Each SYMBOL causes `fzf-async-setup' to `require' the feature
-`fzf-async-SYMBOL' and, if defined, call `fzf-async-SYMBOL-setup'.
-Extensions live in the `extensions/' subdirectory of this package;
-that directory is added to `load-path' the first time
-`fzf-async-setup' runs."
+`fzf-async-SYMBOL' and, if defined, call `fzf-async-SYMBOL-setup'."
   :type '(set (const :tag "password-store (pass)" pass)
               (const :tag "macOS Spotlight (mdfind)" spotlight)
               (const :tag "macOS Music.app" music)
@@ -205,15 +202,6 @@ that directory is added to `load-path' the first time
               (const :tag "macOS Mail.app" mail)
               (const :tag "notmuch mail search" notmuch))
   :group 'fzf-async)
-
-(defconst fzf-async--extensions-dir
-  (when (or load-file-name buffer-file-name)
-    (expand-file-name "extensions"
-                      (file-name-directory
-                       (or load-file-name buffer-file-name))))
-  "Absolute path to the bundled `extensions/' directory.
-Captured at load time so `fzf-async-setup' can add it to `load-path'
-regardless of where it is called from.")
 
 (defvar fzf-async--setup-done nil
   "Non-nil once `fzf-async--ensure-setup' has installed registrations.
@@ -1895,9 +1883,6 @@ public entry point.
         (add-to-list 'marginalia-annotators entry)))
 
     (when fzf-async-extensions
-      (when (and fzf-async--extensions-dir
-                 (file-directory-p fzf-async--extensions-dir))
-        (add-to-list 'load-path fzf-async--extensions-dir))
       (dolist (ext fzf-async-extensions)
         (require (intern (format "fzf-async-%s" ext)))
         (let ((setup-fn (intern (format "fzf-async-%s-setup" ext))))
