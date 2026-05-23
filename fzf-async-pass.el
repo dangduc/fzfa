@@ -1,4 +1,4 @@
-;;; fzf-async-pass.el --- fzf-async interface for pass -*- lexical-binding: t; -*-
+;;; fzf-async-pass.el --- Pass interface to `fzf-async' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1

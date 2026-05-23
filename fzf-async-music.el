@@ -1,4 +1,4 @@
-;;; fzf-async-music.el --- macOS Music.app integration for fzf-async -*- lexical-binding: t; -*-
+;;; fzf-async-music.el --- MacOS Music.app integration for `fzf-async' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1

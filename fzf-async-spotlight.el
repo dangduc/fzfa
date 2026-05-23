@@ -1,4 +1,4 @@
-;;; fzf-async-spotlight.el --- Spotlight (mdfind) integration for fzf-async -*- lexical-binding: t; -*-
+;;; fzf-async-spotlight.el --- Spotlight (mdfind) integration for `fzf-async' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1

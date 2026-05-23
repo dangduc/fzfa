@@ -1,4 +1,4 @@
-;;; fzf-async-mail.el --- macOS Mail.app integration for fzf-async -*- lexical-binding: t; -*-
+;;; fzf-async-mail.el --- MacOS Mail.app integration for `fzf-async' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1

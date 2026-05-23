@@ -1,4 +1,4 @@
-;;; fzf-async-company.el --- fzf-async interface for company-mode -*- lexical-binding: t; -*-
+;;; fzf-async-company.el --- Company-mode interface to `fzf-async' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1

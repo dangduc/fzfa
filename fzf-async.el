@@ -2,7 +2,7 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1") (fzf-native "0.3") (cl-lib "0.5"))
+;; Package-Requires: ((emacs "29.1") (fzf-native "0.3"))
 ;; Keywords: matching, completion, fzf, fuzzy, fussy
 ;; Homepage: https://github.com/jojojames/fzf-async
 

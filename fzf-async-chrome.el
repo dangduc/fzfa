@@ -1,4 +1,4 @@
-;;; fzf-async-chrome.el --- Chrome bookmark search via fzf-async -*- lexical-binding: t; -*-
+;;; fzf-async-chrome.el --- Chrome bookmark search via `fzf-async' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.2

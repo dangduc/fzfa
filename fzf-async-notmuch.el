@@ -1,4 +1,4 @@
-;;; fzf-async-notmuch.el --- fzf-async interface for notmuch -*- lexical-binding: t; -*-
+;;; fzf-async-notmuch.el --- Notmuch interface to `fzf-async' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1
