@@ -9,7 +9,7 @@ FZF_NATIVE_DIR ?= ../fzf-native
 compile:
 	$(EMACS) -Q --batch \
 	  -L . -L $(FZF_NATIVE_DIR) \
-	  -f batch-byte-compile fzf-async.el
+	  -f batch-byte-compile fzfa.el
 
 # Loads the fzf-native dynamic module before running tests.  Existing
 # tests are pure-Elisp helpers and would pass without it, but loading
@@ -21,7 +21,7 @@ test:
 	  -l fzf-native \
 	  -f fzf-native-load-dyn \
 	  -l ert \
-	  -l ./fzf-async-test.el \
+	  -l ./fzfa-test.el \
 	  -f ert-run-tests-batch-and-exit
 
 clean:
