@@ -192,8 +192,8 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(ag chrome company emacs fd find git grep hg locate
-       mail music notmuch pass rg shell spotlight ugrep)
+  '(ag chrome company emacs fd find git grep hg hungry
+       locate mail music notmuch pass rg shell spotlight ugrep)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
@@ -206,6 +206,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "Git" git)
               (const :tag "POSIX grep" grep)
               (const :tag "Mercurial (hg)" hg)
+              (const :tag "Hungry (buffer-derived dirs)" hungry)
               (const :tag "locate" locate)
               (const :tag "macOS Mail.app" mail)
               (const :tag "macOS Music.app" music)
@@ -1058,9 +1059,9 @@ the other commands' sources, with each inner source keeping its own
   '(fzfa-imenu
     fzfa-buffer
     fzfa-recent-file
-    fzfa-find-hungry
+    fzfa-hungry-find
     fzfa-imenu-all-but-current
-    fzfa-swiper-hungry)
+    fzfa-hungry-swiper)
   "Commands shown by `fzfa-find-any'."
   :type '(repeat function)
   :group 'fzfa)
@@ -1116,72 +1117,6 @@ reader-side cap still runs as a backstop."
         ('ugrep (format "--width=%d" mll))
         ('ag    (format "--width=%d" mll))
         (_      "")))))
-
-;;;###autoload
-(defun fzfa-swiper-hungry ()
-  "Grep across the parent directories of all file-visiting buffers.
-Collects unique parent directories, drops any that are subdirectories of
-another in the set, then streams rg (or grep) output through fzf.
-Selecting a match opens the file and jumps to the line."
-  (interactive)
-  (let* ((raw-dirs (cl-loop for buf in (buffer-list)
-                            for file = (buffer-file-name buf)
-                            when file
-                            collect (file-name-directory (expand-file-name file))))
-         (dirs (fzfa--deduplicate-dirs raw-dirs)))
-    (unless dirs
-      (user-error "No file-visiting buffers found"))
-    (let* ((rg   (executable-find "rg"))
-           (grep (executable-find "grep"))
-           (dir-args (mapconcat #'shell-quote-argument dirs " "))
-           (command
-            (cond
-             (rg   (concat (shell-quote-argument rg)
-                           " --line-number --no-heading --with-filename '' "
-                           dir-args))
-             (grep (concat (shell-quote-argument grep)
-                           " -Rn '' "
-                           dir-args))
-             (t (user-error "Neither rg nor grep found in exec-path")))))
-      (when-let* ((r (fzfa-async-completing-read
-                      :prompt "hungry swiper: "
-                      :command command
-                      :directory default-directory
-                      :category 'fzfa-grep
-                      :group #'fzfa--grep-group)))
-        (fzfa--grep-jump r)))))
-
-;;;###autoload
-(defun fzfa-find-hungry ()
-  "Find files across the parent directories of all file-visiting buffers.
-Collects unique parent directories, drops subdirectories already covered
-by a shallower parent, then streams fd (or find) output through fzf."
-  (interactive)
-  (let* ((raw-dirs (cl-loop for buf in (buffer-list)
-                            for file = (buffer-file-name buf)
-                            when file
-                            collect (file-name-directory (expand-file-name file))))
-         (dirs (fzfa--deduplicate-dirs raw-dirs)))
-    (unless dirs
-      (user-error "No file-visiting buffers found"))
-    (let* ((fd   (executable-find "fd"))
-           (find (executable-find "find"))
-           (dir-args (mapconcat #'shell-quote-argument dirs " "))
-           (command
-            (cond
-             (fd   (concat (shell-quote-argument fd)
-                           " --no-ignore . "
-                           dir-args))
-             (find (concat (shell-quote-argument find)
-                           " "
-                           dir-args
-                           " -type f"))
-             (t (user-error "Neither fd nor find found in exec-path")))))
-      (when-let* ((result (fzfa-async-completing-read
-                           :prompt "hungry find: "
-                           :command command
-                           :directory default-directory)))
-        (find-file result)))))
 
 ;;; Helpers
 

@@ -191,8 +191,8 @@ the matching line.
 | ~fzfa-ugrep~             | —                  | —                    |
 | ~fzfa-swiper~            | ~swiper~           | ~consult-line~       |
 | ~fzfa-swiper-all~        | ~swiper-all~       | ~consult-line-multi~ |
-| ~fzfa-swiper-hungry~     | —                  | —                    |
-| ~fzfa-find-hungry~       | —                  | —                    |
+| ~fzfa-hungry-swiper~     | —                  | —                    |
+| ~fzfa-hungry-find~       | —                  | —                    |
 
 ** Hungry variants
 
@@ -204,8 +204,8 @@ directory list is passed as arguments to a single shell command.
 
 | Command                   | Tool       | What it searches                       |
 |---------------------------+------------+----------------------------------------|
-| ~fzfa-find-hungry~   | fd / find  | Files under all derived directories    |
-| ~fzfa-swiper-hungry~ | rg / grep  | Line content under all derived dirs    |
+| ~fzfa-hungry-find~   | fd / find  | Files under all derived directories    |
+| ~fzfa-hungry-swiper~ | rg / grep  | Line content under all derived dirs    |
 
 ** Multi-source
 
@@ -220,7 +220,7 @@ ranks each group by its top fzf score, and dispatches the chosen
 candidate back to the originating command's action.
 
 The command list lives in ~fzfa-find-any-commands~ — by default
-~(fzfa-buffer fzfa-recent-file fzfa-find-hungry)~.  Add
+~(fzfa-buffer fzfa-recent-file fzfa-hungry-find)~.  Add
 any other arg-less ~fzfa~ command to that list and it shows up as
 its own group, with no source plist or factory function to maintain:
 the source is *derived from the command's existing definition* via the
@@ -231,7 +231,7 @@ the source is *derived from the command's existing definition* via the
   (setq fzfa-find-any-commands
         '(fzfa-buffer
           fzfa-recent-file
-          fzfa-find-hungry
+          fzfa-hungry-find
           fzfa-spotlight-apps))
 #+end_src
 
@@ -241,7 +241,7 @@ For ad-hoc combinations, call ~fzfa-multi-read~ directly:
   (defun my/fzfa-files-only ()
     (interactive)
     (fzfa-multi-read
-     '(fzfa-recent-file fzfa-find-hungry fzfa-locate)
+     '(fzfa-recent-file fzfa-hungry-find fzfa-locate)
      :prompt "files: "))
 #+end_src
 

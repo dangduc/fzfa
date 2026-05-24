@@ -237,7 +237,7 @@ command twice per session to obtain a source plist:
 #+end_src
 
 The cost: each command runs twice per multi session.  Setup work
-(=fzfa-find-hungry='s buffer-list walk, etc.) repeats.
+(=fzfa-hungry-find='s buffer-list walk, etc.) repeats.
 Microseconds in practice.
 
 ** Mode encoding asymmetry
@@ -259,7 +259,7 @@ candidate).  Hence the dispatch:
   prompts before reaching the completing-read call): unsupported as
   multi sources — extract would prompt the user.
 - *Commands that =user-error= before the completing-read call* (e.g.
-  =fzfa-find-hungry= when no file-visiting buffers exist): the
+  =fzfa-hungry-find= when no file-visiting buffers exist): the
   =catch= returns =nil= or the =user-error= propagates; the source is
   silently skipped.
 - *Marginalia annotations*: the multi category is =fzfa-multi= (not
