@@ -192,7 +192,8 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(fd find ag rg grep ugrep hg pass spotlight music chrome company mail notmuch)
+  '(fd find ag rg grep ugrep hg git
+       pass spotlight music chrome company mail notmuch)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
@@ -203,6 +204,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "POSIX grep" grep)
               (const :tag "ugrep" ugrep)
               (const :tag "Mercurial (hg)" hg)
+              (const :tag "Git" git)
               (const :tag "password-store (pass)" pass)
               (const :tag "macOS Spotlight (mdfind)" spotlight)
               (const :tag "macOS Music.app" music)
@@ -1111,32 +1113,6 @@ reader-side cap still runs as a backstop."
         ('ugrep (format "--width=%d" mll))
         ('ag    (format "--width=%d" mll))
         (_      "")))))
-
-;;;###autoload
-(defun fzfa-git-grep ()
-  "Search file contents under `default-directory' with git grep.
-Streams all file contents as FILE:LINE:CONTENT; type to
- fuzzy-filter across them.
-Selecting a candidate opens the file at that line."
-  (interactive)
-  (unless (locate-dominating-file default-directory ".git")
-    (error "Not a Git repo"))
-  (when-let* ((r (fzfa-async-completing-read
-                  :command "git --no-pager grep -n \"\""
-                  :category 'fzfa-grep
-                  :group #'fzfa--grep-group)))
-    (fzfa--grep-jump r)))
-
-;;;###autoload
-(defun fzfa-git-ls-files ()
-  "Find a tracked file in the current Git repo using git ls-files."
-  (interactive)
-  (unless (locate-dominating-file default-directory ".git")
-    (error "Not a Git repo"))
-  (when-let* ((result (fzfa-async-completing-read
-                       :prompt "git ls files: "
-                       :command "git ls-files")))
-    (find-file result)))
 
 ;;;###autoload
 (defun fzfa-recent-file ()
