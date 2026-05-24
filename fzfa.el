@@ -192,7 +192,7 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(fd find ag rg grep pass spotlight music chrome company mail notmuch)
+  '(fd find ag rg grep ugrep pass spotlight music chrome company mail notmuch)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
@@ -201,6 +201,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "ag (the_silver_searcher)" ag)
               (const :tag "ripgrep (rg)" rg)
               (const :tag "POSIX grep" grep)
+              (const :tag "ugrep" ugrep)
               (const :tag "password-store (pass)" pass)
               (const :tag "macOS Spotlight (mdfind)" spotlight)
               (const :tag "macOS Music.app" music)
@@ -1121,21 +1122,6 @@ Selecting a candidate opens the file at that line."
     (error "Not a Git repo"))
   (when-let* ((r (fzfa-async-completing-read
                   :command "git --no-pager grep -n \"\""
-                  :category 'fzfa-grep
-                  :group #'fzfa--grep-group)))
-    (fzfa--grep-jump r)))
-
-;;;###autoload
-(defun fzfa-ugrep ()
-  "Search file contents under `default-directory' with ugrep.
-Streams all file contents as FILE:LINE:CONTENT; type to
- fuzzy-filter across them.
-
-Selecting a candidate opens the file at that line."
-  (interactive)
-  (when-let* ((r (fzfa-async-completing-read
-                  :command (format "ugrep -RIn --no-heading %s ''"
-                                   (fzfa--max-columns-flag 'ugrep))
                   :category 'fzfa-grep
                   :group #'fzfa--grep-group)))
     (fzfa--grep-jump r)))
