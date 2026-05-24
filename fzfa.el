@@ -1901,13 +1901,5 @@ public entry point.
         (let ((setup-fn (intern (format "fzfa-%s-setup" ext))))
           (when (fboundp setup-fn) (funcall setup-fn)))))))
 
-;;;###autoload
-(define-obsolete-function-alias 'fzfa-setup #'fzfa--ensure-setup "1.0"
-  "Calling `fzfa-setup' is no longer required — every fzfa
-entry point installs the necessary registrations lazily on first
-invocation.  The alias forwards to `fzfa--ensure-setup' (which is
-idempotent), so existing configs still work; new configs should drop
-the call.")
-
 (provide 'fzfa)
 ;;; fzfa.el ends here
