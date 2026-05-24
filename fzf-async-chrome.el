@@ -28,7 +28,7 @@
 ;; querying.  Chrome 127+ may app-bound-encrypt some newer entries;
 ;; those will fail to decrypt with the classic keychain key.
 ;;
-;; Bookmark commands (embark category `fzf-async-bookmark'):
+;; Bookmark commands (embark category `fzf-async-chrome-bookmark'):
 ;;
 ;;   `fzf-async-chrome-bookmarks'  Open URL with `browse-url' (default)
 ;;   `fzf-async-chrome-edit'       Open the bookmark in Chrome's editor
@@ -117,7 +117,7 @@ url nodes emit one row."
       (setq fzf-async-chrome--cache (fzf-async-chrome--load))))
 
 (defun fzf-async-chrome--group (cand transform)
-  "Group fn for `fzf-async-bookmark' candidate CAND.
+  "Group fn for `fzf-async-chrome-bookmark' candidate CAND.
 TRANSFORM nil returns the constant group key (suppresses headers
 beyond the first); TRANSFORM t returns the cleaned per-row display
 without the trailing ID field."
@@ -134,7 +134,7 @@ without the trailing ID field."
   (fzf-sync-completing-read
    :candidates (fzf-async-chrome--bookmarks)
    :prompt    prompt
-   :category  'fzf-async-bookmark
+   :category  'fzf-async-chrome-bookmark
    :group     #'fzf-async-chrome--group))
 
 ;;;###autoload
@@ -180,7 +180,7 @@ edits to the Bookmarks JSON file."
       (message "Copied: %s" url))))
 
 (defvar-keymap fzf-async-chrome-map
-  :doc "Embark keymap for `fzf-async-bookmark' candidates.
+  :doc "Embark keymap for `fzf-async-chrome-bookmark' candidates.
 Composed with `embark-general-map' via `embark-keymap-alist'."
   "b" #'fzf-async-chrome-bookmarks
   "e" #'fzf-async-chrome-edit
@@ -413,15 +413,15 @@ Composed with `embark-general-map' via `embark-keymap-alist'."
 
 ;;;###autoload
 (defun fzf-async-chrome-setup ()
-  "Register the `fzf-async-bookmark' and `fzf-async-chrome-pass' categories."
+  "Register `fzf-async-chrome-bookmark' and `fzf-async-chrome-pass' categories."
   (add-to-list 'completion-category-overrides
-               '(fzf-async-bookmark (styles fzf-async)))
+               '(fzf-async-chrome-bookmark (styles fzf-async)))
   (add-to-list 'completion-category-overrides
                '(fzf-async-chrome-pass (styles fzf-async)))
   (with-eval-after-load 'embark
     (add-to-list
      'embark-keymap-alist
-     '(fzf-async-bookmark fzf-async-chrome-map embark-general-map))
+     '(fzf-async-chrome-bookmark fzf-async-chrome-map embark-general-map))
     (add-to-list
      'embark-keymap-alist
      '(fzf-async-chrome-pass fzf-async-chrome-pass-map embark-general-map))))
