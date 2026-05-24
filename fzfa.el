@@ -192,8 +192,8 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(ag chrome company emacs fd find git grep hg mail
-       music notmuch pass rg shell spotlight ugrep)
+  '(ag chrome company emacs fd find git grep hg locate
+       mail music notmuch pass rg shell spotlight ugrep)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
@@ -206,6 +206,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "Git" git)
               (const :tag "POSIX grep" grep)
               (const :tag "Mercurial (hg)" hg)
+              (const :tag "locate" locate)
               (const :tag "macOS Mail.app" mail)
               (const :tag "macOS Music.app" music)
               (const :tag "notmuch mail search" notmuch)
@@ -1115,13 +1116,6 @@ reader-side cap still runs as a backstop."
         ('ugrep (format "--width=%d" mll))
         ('ag    (format "--width=%d" mll))
         (_      "")))))
-
-;;;###autoload
-(defun fzfa-locate ()
-  "Find a file system-wide using locate."
-  (interactive)
-  (when-let* ((result (fzfa-async-completing-read :command "locate ''")))
-    (find-file result)))
 
 ;;;###autoload
 (defun fzfa-swiper-hungry ()
