@@ -1,4 +1,4 @@
-;;; fzfa-locate.el --- locate integration for `fzfa' -*- lexical-binding: t; -*-
+;;; fzfa-locate.el --- Locate integration for `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1

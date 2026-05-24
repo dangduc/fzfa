@@ -1,4 +1,4 @@
-;;; fzfa-ugrep.el --- ugrep integration for `fzfa' -*- lexical-binding: t; -*-
+;;; fzfa-ugrep.el --- Ugrep integration for `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1

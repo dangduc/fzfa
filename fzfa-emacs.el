@@ -1,8 +1,7 @@
-;;; fzfa-emacs.el --- Built-in Emacs sources for `fzfa' -*- lexical-binding: t; -*-
+;;; fzfa-emacs.el --- Built-in completion sources for `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1
-;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, matching
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
@@ -370,4 +369,9 @@ imenu) are skipped silently."
   (fzfa--imenu 'others))
 
 (provide 'fzfa-emacs)
+
+;; Local Variables:
+;; package-lint-main-file: "fzfa.el"
+;; End:
+
 ;;; fzfa-emacs.el ends here

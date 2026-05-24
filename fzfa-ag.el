@@ -1,4 +1,4 @@
-;;; fzfa-ag.el --- ag (the_silver_searcher) integration for `fzfa' -*- lexical-binding: t; -*-
+;;; fzfa-ag.el --- Ag (the_silver_searcher) integration for `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1

@@ -1,4 +1,4 @@
-;;; fzfa-rg.el --- ripgrep integration for `fzfa' -*- lexical-binding: t; -*-
+;;; fzfa-rg.el --- Ripgrep integration for `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1

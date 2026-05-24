@@ -1,4 +1,4 @@
-;;; fzfa-find.el --- find integration for `fzfa' -*- lexical-binding: t; -*-
+;;; fzfa-find.el --- Find integration for `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1

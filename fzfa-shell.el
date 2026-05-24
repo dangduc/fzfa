@@ -2,7 +2,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1
-;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, matching, shell
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
@@ -126,4 +125,9 @@ kill ring instead.  Override the location via
           (insert result))))))
 
 (provide 'fzfa-shell)
+
+;; Local Variables:
+;; package-lint-main-file: "fzfa.el"
+;; End:
+
 ;;; fzfa-shell.el ends here
