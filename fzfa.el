@@ -192,7 +192,7 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(fd find ag rg grep ugrep pass spotlight music chrome company mail notmuch)
+  '(fd find ag rg grep ugrep hg pass spotlight music chrome company mail notmuch)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
@@ -202,6 +202,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "ripgrep (rg)" rg)
               (const :tag "POSIX grep" grep)
               (const :tag "ugrep" ugrep)
+              (const :tag "Mercurial (hg)" hg)
               (const :tag "password-store (pass)" pass)
               (const :tag "macOS Spotlight (mdfind)" spotlight)
               (const :tag "macOS Music.app" music)
@@ -1135,17 +1136,6 @@ Selecting a candidate opens the file at that line."
   (when-let* ((result (fzfa-async-completing-read
                        :prompt "git ls files: "
                        :command "git ls-files")))
-    (find-file result)))
-
-;;;###autoload
-(defun fzfa-hg-files ()
-  "Find a tracked file in the current Mercurial repo using hg files."
-  (interactive)
-  (unless (locate-dominating-file default-directory ".hg")
-    (error "Not a Mercurial repo"))
-  (when-let* ((result (fzfa-async-completing-read
-                       :prompt "hg files: "
-                       :command "hg files")))
     (find-file result)))
 
 ;;;###autoload
