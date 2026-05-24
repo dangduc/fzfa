@@ -54,10 +54,12 @@
      :category 'fzf-async-pass)))
 
 ;;;###autoload
-(defun fzf-async-pass-copy (key)
-  "Copy the password for KEY to the kill ring."
-  (interactive (list (fzf-async-pass--read "Copy password: ")))
-  (password-store-copy key))
+(defun fzf-async-pass-copy (&optional key)
+  "Copy the password for KEY to the kill ring.
+When KEY is nil (e.g. called interactively), prompt for one."
+  (interactive)
+  (when-let* ((key (or key (fzf-async-pass--read "Copy password: "))))
+    (password-store-copy key)))
 
 ;;;###autoload
 (defalias 'fzf-async-pass #'fzf-async-pass-copy

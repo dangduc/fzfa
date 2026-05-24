@@ -1073,6 +1073,17 @@ the other commands' sources, with each inner source keeping its own
   (interactive)
   (fzf-async-multi-read fzf-async-find-some-commands :prompt "some?: "))
 
+;;;###autoload
+(defun fzf-async-passwords ()
+  "Multi-source fuzzy completion over `pass' and Chrome's password manager.
+Selecting an entry copies its password to the kill ring via the
+originating source's command (`fzf-async-pass-copy' or
+`fzf-async-chrome-pass-copy')."
+  (interactive)
+  (fzf-async-multi-read
+   '(fzf-async-pass-copy fzf-async-chrome-pass-copy)
+   :prompt "passwords: "))
+
 ;;; Commands
 
 (defun fzf-async--max-columns-flag (tool)
