@@ -213,6 +213,7 @@ directory list is passed as arguments to a single shell command.
 | ~fzf-async~                 | ~consult~        |
 |-----------------------------+------------------|
 | ~fzf-async-find-any~   | ~consult-buffer~ |
+| ~fzf-async-passwords~  | (no direct analog) |
 
 ~fzf-async-find-any~ merges several sources into a single
 ~completing-read~ (groups for buffers, recent files, hungry-find, …),
@@ -245,6 +246,13 @@ For ad-hoc combinations, call ~fzf-async-multi-read~ directly:
      :prompt "files: "))
 #+end_src
 
+~fzf-async-passwords~ is a built-in multi over ~fzf-async-pass-copy~
+and ~fzf-async-chrome-pass-copy~ — one prompt covers both
+~password-store~ and Chrome's password manager, with the chosen
+entry's password copied to the kill ring via the originating source.
+Requires the ~chrome~ extension (and on macOS, the deps listed for
+Chrome passwords above).
+
 * Extensions
 
 Optional integrations ship as sibling files (~fzf-async-pass.el~,
@@ -260,7 +268,7 @@ explicitly).
 | ~pass~      | ~fzf-async-pass~       | ~password-store~  | ~fzf-async-pass~ (copy), ~fzf-async-pass-edit~, ~-rename~, ~-delete~, ~-add~, ~-generate~, ~-url~ — modeled on ~ivy-pass~ |
 | ~spotlight~ | ~fzf-async-spotlight~  | macOS ~mdfind~    | ~fzf-async-spotlight~, ~fzf-async-spotlight-apps~, ~fzf-async-spotlight-audio~                                                        |
 | ~music~     | ~fzf-async-music~      | macOS ~Music.app~ | ~fzf-async-music~, ~-by-artist~, ~-by-genre~, ~-playlist~, ~-playlist-shuffle~, ~-refresh~ — modeled on ~helm-itunes~                |
-| ~chrome~    | ~fzf-async-chrome~     | none              | ~fzf-async-chrome-bookmarks~, ~fzf-async-chrome-refresh~ — open Chromium-family bookmarks via ~browse-url~                          |
+| ~chrome~    | ~fzf-async-chrome~     | none (bookmarks); macOS ~sqlite3~ + ~security~ + ~openssl~ + ~python3~ (passwords) | bookmarks: ~fzf-async-chrome-bookmarks~ (default), ~-edit~, ~-copy-url~, ~-refresh~ — open Chromium-family bookmarks via ~browse-url~.  passwords (macOS only): ~fzf-async-chrome-pass-copy~ (default), ~-copy-username~, ~-url~, ~-refresh~ — decrypts entries from Chrome's Login Data SQLite DB using the keychain entry ~Chrome Safe Storage~ |
 | ~company~   | ~fzf-async-company~    | ~company~         | ~fzf-async-company~ — fuzzy-filter current ~company-mode~ candidates and finish; modeled on ~helm-company~ / ~counsel-company~ / ~consult-company~ |
 | ~mail~      | ~fzf-async-mail~       | macOS ~Mail.app~  | ~fzf-async-mail~, ~fzf-async-mail-refresh~ — browse and open inbox messages                                                          |
 | ~notmuch~   | ~fzf-async-notmuch~    | ~notmuch~ (CLI + Emacs package) | ~fzf-async-notmuch~, ~fzf-async-notmuch-tree~ — run a notmuch query and fuzzy-pick a thread to open; modeled on ~helm-notmuch~ / ~counsel-notmuch~ / ~consult-notmuch~ |
