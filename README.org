@@ -116,7 +116,6 @@ Recommended:
 #+begin_src emacs-lisp :tangle yes
   (use-package fzf-native
     :vc (:url "https://github.com/dangduc/fzf-native" :rev :newest)
-    ;; OR :vc (:url "https://github.com/jojojames/fzf-native" :rev :newest)
     :config
     (fzf-native-load-dyn))
 
