@@ -192,7 +192,7 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(fd find ag rg pass spotlight music chrome company mail notmuch)
+  '(fd find ag rg grep pass spotlight music chrome company mail notmuch)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
@@ -200,6 +200,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "POSIX find" find)
               (const :tag "ag (the_silver_searcher)" ag)
               (const :tag "ripgrep (rg)" rg)
+              (const :tag "POSIX grep" grep)
               (const :tag "password-store (pass)" pass)
               (const :tag "macOS Spotlight (mdfind)" spotlight)
               (const :tag "macOS Music.app" music)
@@ -1122,33 +1123,6 @@ Selecting a candidate opens the file at that line."
                   :command "git --no-pager grep -n \"\""
                   :category 'fzfa-grep
                   :group #'fzfa--grep-group)))
-    (fzfa--grep-jump r)))
-
-;;;###autoload
-(defun fzfa-grep ()
-  "Search file contents under `default-directory' with grep.
-Streams all file contents as FILE:LINE:CONTENT; type
- to fuzzy-filter across them.
-Selecting a candidate opens the file at that line."
-  (interactive)
-  (when-let* ((r (fzfa-async-completing-read
-                  :command "grep -Rn ''"
-                  :category 'fzfa-grep
-                  :group #'fzfa--grep-group)))
-    (fzfa--grep-jump r)))
-
-;;;###autoload
-(defun fzfa-grep-current-file ()
-  "Search the current buffer's file with grep.
-Streams non-blank lines as FILE:LINE:CONTENT; type to fuzzy-filter across them.
-Selecting a candidate jumps to that line in the file."
-  (interactive)
-  (unless buffer-file-name
-    (user-error "Buffer is not visiting a file"))
-  (when-let* ((r (fzfa-async-completing-read
-                  :command (format "grep -vnH '^[[:space:]]*$' %s"
-                                   (shell-quote-argument buffer-file-name))
-                  :category 'fzfa-grep)))
     (fzfa--grep-jump r)))
 
 ;;;###autoload
