@@ -1,4 +1,4 @@
-;;; fzf-async-chrome.el --- Chrome bookmark and password search via `fzf-async' -*- lexical-binding: t; -*-
+;;; fzf-async-chrome.el --- Chrome via `fzf-async' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.3
@@ -67,7 +67,8 @@
   "Path to Chrome's Bookmarks JSON file.
 Override to point at a non-Default profile or a different Chromium
 browser (Brave, Edge, Vivaldi, Arc)."
-  :type '(choice (file :tag "Bookmarks file") (const :tag "Auto/Unsupported" nil))
+  :type '(choice (file :tag "Bookmarks file")
+                 (const :tag "Auto/Unsupported" nil))
   :group 'fzf-async)
 
 (defvar fzf-async-chrome--cache nil
@@ -96,7 +97,8 @@ url nodes emit one row."
   "Parse Chrome's Bookmarks JSON; return list of tab-encoded strings."
   (unless fzf-async-chrome-bookmarks-file
     (user-error
-     "Fzf-async-chrome: no default bookmarks path for `%s'; set `fzf-async-chrome-bookmarks-file'"
+     (concat "Fzf-async-chrome: no default bookmarks path for `%s'; "
+             "set `fzf-async-chrome-bookmarks-file'")
      system-type))
   (let ((file (expand-file-name fzf-async-chrome-bookmarks-file)))
     (unless (file-readable-p file)
@@ -163,7 +165,8 @@ edits to the Bookmarks JSON file."
       (when (and id (not (string-empty-p id)))
         (let ((url (format "chrome://bookmarks/?id=%s" id)))
           (pcase system-type
-            ('darwin    (call-process "open" nil 0 nil "-a" "Google Chrome" url))
+            ('darwin    (call-process "open" nil 0 nil
+                                      "-a" "Google Chrome" url))
             ('gnu/linux (call-process "google-chrome" nil 0 nil url))
             (_          (browse-url url))))))))
 
@@ -188,14 +191,16 @@ Composed with `embark-general-map' via `embark-keymap-alist'."
 
 (defcustom fzf-async-chrome-pass-database
   (pcase system-type
-    ('darwin    "~/Library/Application Support/Google/Chrome/Default/Login Data")
+    ('darwin
+     "~/Library/Application Support/Google/Chrome/Default/Login Data")
     ('gnu/linux "~/.config/google-chrome/Default/Login Data")
     ('windows-nt
      (when-let* ((appdata (getenv "LOCALAPPDATA")))
        (concat appdata "/Google/Chrome/User Data/Default/Login Data"))))
   "Path to Chrome's Login Data SQLite database.
 Override to point at a non-Default profile or another Chromium browser."
-  :type '(choice (file :tag "Login Data file") (const :tag "Auto/Unsupported" nil))
+  :type '(choice (file :tag "Login Data file")
+                 (const :tag "Auto/Unsupported" nil))
   :group 'fzf-async)
 
 (defcustom fzf-async-chrome-pass-keychain-service "Chrome Safe Storage"
@@ -252,10 +257,11 @@ password from $CHROME_PWD; writes plaintext bytes to stdout.")
                  "-s" fzf-async-chrome-pass-keychain-service
                  "-a" fzf-async-chrome-pass-keychain-account)))
       (unless (zerop exit)
-        (user-error "Fzf-async-chrome-pass: cannot read keychain entry %s/%s: %s"
-                    fzf-async-chrome-pass-keychain-service
-                    fzf-async-chrome-pass-keychain-account
-                    (string-trim (buffer-string)))))
+        (user-error
+         "Fzf-async-chrome-pass: cannot read keychain entry %s/%s: %s"
+         fzf-async-chrome-pass-keychain-service
+         fzf-async-chrome-pass-keychain-account
+         (string-trim (buffer-string)))))
     (string-trim (buffer-string))))
 
 (defun fzf-async-chrome-pass--copy-db ()
@@ -263,7 +269,8 @@ password from $CHROME_PWD; writes plaintext bytes to stdout.")
 Chrome holds an exclusive lock while running, so queries operate on a copy."
   (unless fzf-async-chrome-pass-database
     (user-error
-     "Fzf-async-chrome-pass: no default DB path for `%s'; set `fzf-async-chrome-pass-database'"
+     (concat "Fzf-async-chrome-pass: no default DB path for `%s'; "
+             "set `fzf-async-chrome-pass-database'")
      system-type))
   (let ((src (expand-file-name fzf-async-chrome-pass-database))
         (dst (make-temp-file "fzf-async-chrome-pass-" nil ".sqlite")))
@@ -316,7 +323,9 @@ display without revealing the encrypted blob."
 (defun fzf-async-chrome-pass--decrypt (hex)
   "Decrypt HEX (hex-encoded password blob); return the plaintext string."
   (unless fzf-async-chrome-pass-python
-    (user-error "Fzf-async-chrome-pass: python3 not found; set `fzf-async-chrome-pass-python'"))
+    (user-error
+     (concat "Fzf-async-chrome-pass: python3 not found; "
+             "set `fzf-async-chrome-pass-python'")))
   (unless (executable-find "openssl")
     (user-error "Fzf-async-chrome-pass: openssl not found on PATH"))
   (let* ((key (fzf-async-chrome-pass--keychain-password))
@@ -359,10 +368,12 @@ display without revealing the encrypted blob."
   (message "Chrome password cache cleared"))
 
 ;;;###autoload
-(defun fzf-async-chrome-pass-copy (cand)
-  "Copy the password of Chrome login CAND to the kill ring."
-  (interactive (list (fzf-async-chrome-pass--pick "chrome-pass: ")))
-  (when cand
+(defun fzf-async-chrome-pass-copy (&optional cand)
+  "Copy the password of Chrome login CAND to the kill ring.
+When CAND is nil (e.g. called interactively), prompt for one."
+  (interactive)
+  (when-let* ((cand (or cand
+                        (fzf-async-chrome-pass--pick "chrome-pass: "))))
     (let* ((fields (split-string cand "\t"))
            (pwd (fzf-async-chrome-pass--decrypt (nth 2 fields))))
       (kill-new pwd)
@@ -408,10 +419,12 @@ Composed with `embark-general-map' via `embark-keymap-alist'."
   (add-to-list 'completion-category-overrides
                '(fzf-async-chrome-pass (styles fzf-async)))
   (with-eval-after-load 'embark
-    (add-to-list 'embark-keymap-alist
-                 '(fzf-async-bookmark fzf-async-chrome-map embark-general-map))
-    (add-to-list 'embark-keymap-alist
-                 '(fzf-async-chrome-pass fzf-async-chrome-pass-map embark-general-map))))
+    (add-to-list
+     'embark-keymap-alist
+     '(fzf-async-bookmark fzf-async-chrome-map embark-general-map))
+    (add-to-list
+     'embark-keymap-alist
+     '(fzf-async-chrome-pass fzf-async-chrome-pass-map embark-general-map))))
 
 (provide 'fzf-async-chrome)
 ;;; fzf-async-chrome.el ends here
