@@ -1,5 +1,8 @@
 ;;; fzfa-test.el --- Tests for fzfa  -*- lexical-binding: t; -*-
 
+;; Assisted-by: Claude:claude-opus-4-7
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
 ;;; Commentary:
 
 ;; ERT tests for fzfa.

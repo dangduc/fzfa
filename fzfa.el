@@ -5,6 +5,8 @@
 ;; Package-Requires: ((emacs "29.1") (fzf-native "0.3"))
 ;; Keywords: matching, completion, fzf, fuzzy, fussy
 ;; Homepage: https://github.com/jojojames/fzfa
+;; Assisted-by: Claude:claude-opus-4-7
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by

@@ -5,6 +5,8 @@
 ;; Package-Requires: ((emacs "29.1") (fzfa "1.0"))
 ;; Keywords: convenience, matching, password, chrome, fzf
 ;; Homepage: https://github.com/jojojames/fzfa
+;; Assisted-by: Claude:claude-opus-4-7
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
