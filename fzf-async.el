@@ -197,7 +197,7 @@ Each SYMBOL causes `fzf-async-setup' to `require' the feature
   :type '(set (const :tag "password-store (pass)" pass)
               (const :tag "macOS Spotlight (mdfind)" spotlight)
               (const :tag "macOS Music.app" music)
-              (const :tag "Chrome bookmarks" chrome)
+              (const :tag "Chrome bookmarks + passwords" chrome)
               (const :tag "company-mode completions" company)
               (const :tag "macOS Mail.app" mail)
               (const :tag "notmuch mail search" notmuch))
