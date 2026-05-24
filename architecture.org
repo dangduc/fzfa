@@ -1,11 +1,11 @@
-#+TITLE: fzf-async — Architecture Reference
+#+TITLE: fzfa — Architecture Reference
 #+AUTHOR: James Nguyen
 #+STARTUP: overview
 #+OPTIONS: toc:3
 
 * About this file
 
-Canonical reference for *how fzf-async works today*.
+Canonical reference for *how fzfa works today*.
 
 This file describes /implemented/ behavior only. Speculative redesigns
 and "this would be nice" notes belong in =project.org=, not here. When
@@ -17,19 +17,19 @@ Sibling architecture docs (read together):
   — the C module under us. Read this for
   thread/lock/arena/scoring internals.
 - [[https://github.com/jojojames/fussy/blob/HEAD/architecture.org][fussy/architecture.org]]
-  — the completion-style framework next to us. fzf-async deliberately
+  — the completion-style framework next to us. fzfa deliberately
   routes *around* fussy via its own completion category.
 
 * Place in the pipeline
 
-fzf-async is the Elisp-side =completing-read= experience built on top
+fzfa is the Elisp-side =completing-read= experience built on top
 of =fzf-native='s sync and async surfaces. It owns the user-visible
 plumbing — completion style, frontend integration, prompt overlay,
 timers, and a set of convenience commands.
 
 #+begin_src
   ┌──────────────────────┐    ┌──────────────────────┐
-  │ fzf-async-           │    │ fzf-sync-            │
+  │ fzfa-           │    │ fzf-sync-            │
   │ completing-read      │    │ completing-read      │
   │ (streaming child)    │    │ (in-memory list)     │
   └──────────┬───────────┘    └──────────┬───────────┘
@@ -49,13 +49,13 @@ UX work is right here.
 
 | Entry point                  | Backend call                      | Use when                                          |
 |------------------------------+-----------------------------------+---------------------------------------------------|
-| =fzf-async-completing-read=  | =fzf-native-async-*= (streaming)  | Candidates come from a long-running shell command (=find=, =rg=, =git ls-files=, etc.). |
-| =fzf-sync-completing-read=   | =fzf-native-score-all= (sync batch) | Candidates are an already-realized Elisp list and you just want fzf scoring + ordering. |
+| =fzfa-async-completing-read=  | =fzf-native-async-*= (streaming)  | Candidates come from a long-running shell command (=find=, =rg=, =git ls-files=, etc.). |
+| =fzfa-sync-completing-read=   | =fzf-native-score-all= (sync batch) | Candidates are an already-realized Elisp list and you just want fzf scoring + ordering. |
 
-Both wrap =completing-read=, register the =fzf-async= completion
+Both wrap =completing-read=, register the =fzfa= completion
 category, and reuse the same passthrough completion style.
 
-* Async pipeline — =fzf-async-completing-read=
+* Async pipeline — =fzfa-async-completing-read=
 
 #+begin_src
   user types "fo" in minibuffer
@@ -88,7 +88,7 @@ category, and reuse the same passthrough completion style.
        ▼
   ┌──────────────────────────────────────────────────┐
   │ Elisp: idle-timer exhibit                        │
-  │  - calls fzf-async--frontend-exhibit             │
+  │  - calls fzfa--frontend-exhibit             │
   │  - vertico/icomplete re-renders                  │
   │  - completion table re-runs, picks up new data   │
   └──────────────────────────────────────────────────┘
@@ -107,7 +107,7 @@ filter rule prevents livelock, how the arena handles teardown — see
 ** Result cache (C-side)
 
 Each session maintains an LRU result cache keyed by query string.  Its
-size is configurable via =fzf-async-cache-size= (default 40, read at
+size is configurable via =fzfa-cache-size= (default 40, read at
 session start).  Each entry stores the top-K results delivered to Elisp
 plus the *full* matched-candidate index for that query.
 
@@ -130,11 +130,11 @@ For LRU details, =SharedIdx= refcounting, the subsumption rule, and
 the parsed-pattern caching, see =fzf-native/architecture.org= §
 "Result cache".
 
-* Sync pipeline — =fzf-sync-completing-read=
+* Sync pipeline — =fzfa-sync-completing-read=
 
 When the candidate list is already an in-memory Elisp list (e.g. SSH
 host names from =~/.ssh/config=, or buffer names), there is no value
-in spinning up a child process. =fzf-sync-completing-read= is the
+in spinning up a child process. =fzfa-sync-completing-read= is the
 direct path:
 
 #+begin_src
@@ -158,7 +158,7 @@ re-scores the entire list synchronously. =fzf-native-score-all= is
 parallelized internally (see =fzf-native/architecture.org=), so this
 remains snappy for tens of thousands of candidates.
 
-* Multi-source — =fzf-async-multi-read= and =fzf-async-find-any=
+* Multi-source — =fzfa-multi-read= and =fzfa-find-any=
 
 A multi-source command merges several "sources" (each backed by either a
 sync candidate list or an async shell command) into one
@@ -168,7 +168,7 @@ order via =sort='s stability.
 
 #+begin_src
   ┌────────────────────────────────────────────────────────────────────┐
-  │ fzf-async--multi-read (orchestrator)                               │
+  │ fzfa--multi-read (orchestrator)                               │
   │   • per-source vectors: handles, sync-items, last-results,         │
   │     rank, totals, filtered, last-gen                               │
   │   • shared timer polls async generation counters                   │
@@ -181,7 +181,7 @@ order via =sort='s stability.
   │       concat last-results in sorted order                          │
   │   • affixation-function pads candidates to a uniform column        │
   │     before appending each source's :annotate output                │
-  │   • group-function reads source via fzf-async-src-idx text-prop    │
+  │   • group-function reads source via fzfa-src-idx text-prop    │
   │     and returns the source :name                                   │
   │   • on selection: source's :action is funcalled with the cand      │
   └────────────────────────────────────────────────────────────────────┘
@@ -190,81 +190,81 @@ order via =sort='s stability.
 ** Source derivation: extract / inject
 
 Sources are not duplicated as parallel data structures.  Every existing
-single-source command (e.g. =fzf-async-buffer=, =fzf-async-spotlight-apps=)
-is the source of truth; =fzf-async-multi-read= replays each
+single-source command (e.g. =fzfa-buffer=, =fzfa-spotlight-apps=)
+is the source of truth; =fzfa-multi-read= replays each
 command twice per session to obtain a source plist:
 
-1. *Extract* — a dynamic var =fzf-async--multi-mode= is bound to
+1. *Extract* — a dynamic var =fzfa--multi-mode= is bound to
    =:extract=, and the command is funcalled.  Inside
-   =fzf-async-completing-read= / =fzf-sync-completing-read=, the entry
+   =fzfa-async-completing-read= / =fzfa-sync-completing-read=, the entry
    point sees the flag and =throw='s the keyword args (=:prompt=,
    =:command= or =:items=, =:directory=, =:category=, =:annotate=).
    The command's =when-let*= fails to bind, post-action never runs.
-2. *Inject* — after the user picks =CAND=, =fzf-async--multi-mode= is
+2. *Inject* — after the user picks =CAND=, =fzfa--multi-mode= is
    bound to =(:inject . CAND)=, and the command is funcalled again.
    The completing-read entry point sees the flag and returns =CAND=
    directly.  The =when-let*= binds, and the post-action (e.g.
    =(switch-to-buffer result)=) runs.
 
 #+begin_src
-  USER: M-x fzf-async-find-any
+  USER: M-x fzfa-find-any
                 │
                 ▼
-  fzf-async-find-any
-    → fzf-async-multi-read
-          fzf-async-find-any-commands
+  fzfa-find-any
+    → fzfa-multi-read
+          fzfa-find-any-commands
 
   PHASE 1: EXTRACT  (loop over all commands)
     let multi-mode = :extract
-    catch 'fzf-async-extracted (funcall cmd)
+    catch 'fzfa-extracted (funcall cmd)
       ; inside cmd, completing-read entry sees :extract → throw args
     builds source plist:
       (:name "buffer"
        :items names
-       :category fzf-async-buffer
+       :category fzfa-buffer
        :annotate <derived from category>
        :action  λ(c). re-run cmd with (:inject . c))   ; closes over cmd
 
   PHASE 2: MULTI UI
-    fzf-async--multi-read merges all sources, user picks CAND
-    looks up source via fzf-async-src-idx text-prop, calls :action
+    fzfa--multi-read merges all sources, user picks CAND
+    looks up source via fzfa-src-idx text-prop, calls :action
 
   PHASE 3: INJECT  (one cmd is replayed)
     let multi-mode = (:inject . CAND)
-    (funcall fzf-async-buffer)
+    (funcall fzfa-buffer)
       ; inside cmd, completing-read entry returns CAND
     when-let* binds → post-action runs
 #+end_src
 
 The cost: each command runs twice per multi session.  Setup work
-(=fzf-async-find-hungry='s buffer-list walk, etc.) repeats.
+(=fzfa-find-hungry='s buffer-list walk, etc.) repeats.
 Microseconds in practice.
 
 ** Mode encoding asymmetry
 
-=fzf-async--multi-mode= is the bare symbol =:extract= for extract (no
+=fzfa--multi-mode= is the bare symbol =:extract= for extract (no
 payload), or the cons =(:inject . CAND)= for inject (carries the
 candidate).  Hence the dispatch:
 
 #+begin_src emacs-lisp
   (cond
-   ((eq fzf-async--multi-mode :extract) ...)        ; bare symbol
-   ((eq (car-safe fzf-async--multi-mode) :inject)   ; cons head
-    ... (cdr fzf-async--multi-mode) ...))           ; cons tail = CAND
+   ((eq fzfa--multi-mode :extract) ...)        ; bare symbol
+   ((eq (car-safe fzfa--multi-mode) :inject)   ; cons head
+    ... (cdr fzfa--multi-mode) ...))           ; cons tail = CAND
 #+end_src
 
 ** Edge cases
 
-- *Commands with =read-*= in body* (e.g. =fzf-async-shell-command=
+- *Commands with =read-*= in body* (e.g. =fzfa-shell-command=
   prompts before reaching the completing-read call): unsupported as
   multi sources — extract would prompt the user.
 - *Commands that =user-error= before the completing-read call* (e.g.
-  =fzf-async-find-hungry= when no file-visiting buffers exist): the
+  =fzfa-find-hungry= when no file-visiting buffers exist): the
   =catch= returns =nil= or the =user-error= propagates; the source is
   silently skipped.
-- *Marginalia annotations*: the multi category is =fzf-async-multi= (not
+- *Marginalia annotations*: the multi category is =fzfa-multi= (not
   the per-command category), so per-category marginalia registrations
-  don't apply.  =fzf-async-multi-read= synthesizes a fallback
+  don't apply.  =fzfa-multi-read= synthesizes a fallback
   =:annotate= from the extracted =:category= (=buffer= →
   =marginalia-annotate-buffer=, =file= → =marginalia-annotate-file=).
 
@@ -278,19 +278,19 @@ mangles fzf syntax. So we register a passthrough:
 
 | Function                       | Behavior                                                |
 |--------------------------------+---------------------------------------------------------|
-| =fzf-async-try-completion=     | Returns =(cons string (length string))= — no prefix expansion |
-| =fzf-async-all-completions=    | Calls =(funcall table string pred t)= — raw passthrough, no PCM or fussy re-filtering. Candidates arrive pre-scored and pre-highlighted from the C module. |
-| =fzf-async-setup= (autoload)   | Registers the style and pins it for the =fzf-async= and =fzf-async-file= categories via =completion-category-overrides= |
+| =fzfa-try-completion=     | Returns =(cons string (length string))= — no prefix expansion |
+| =fzfa-all-completions=    | Calls =(funcall table string pred t)= — raw passthrough, no PCM or fussy re-filtering. Candidates arrive pre-scored and pre-highlighted from the C module. |
+| =fzfa-setup= (autoload)   | Registers the style and pins it for the =fzfa= and =fzfa-file= categories via =completion-category-overrides= |
 
-The collection lambda's metadata returns =(category . fzf-async)= (or
-=fzf-async-file=) plus =(display-sort-function . identity)= and
+The collection lambda's metadata returns =(category . fzfa)= (or
+=fzfa-file=) plus =(display-sort-function . identity)= and
 =(cycle-sort-function . identity)= so vertico/icomplete don't re-sort.
 
-The category was deliberately named =fzf-async= (not =fzf=) to avoid
+The category was deliberately named =fzfa= (not =fzf=) to avoid
 colliding with any user config that already maps =fzf= to fussy.
 
-The =fzf-async-file= category exists so =marginalia-annotate-file= can
-attach to file commands (=fzf-async-find=, =fzf-async-fd=, etc.)
+The =fzfa-file= category exists so =marginalia-annotate-file= can
+attach to file commands (=fzfa-find=, =fzfa-fd=, etc.)
 without the marginalia → file-category override pulling them back
 into fussy's filtering. See History → "Marginalia interaction is
 broken" in =project.org= for the full diagnosis.
@@ -301,7 +301,7 @@ Matched characters are highlighted inside =fzf_native_async_candidates=
 before strings reach the Elisp layer, so no Elisp regex pass is needed.
 
 The old approach — =completion-pcm--hilit-commonality= called from
-=fzf-async-all-completions= — built a PCM pattern with one =any= token per
+=fzfa-all-completions= — built a PCM pattern with one =any= token per
 query character, which Emacs compiled to a regex with N nested =.*= groups.
 This caused exponential backtracking on non-matching candidates. For a 32-
 character query with 1038 candidates the hang was 18 seconds.
@@ -309,7 +309,7 @@ character query with 1038 candidates the hang was 18 seconds.
 The current approach:
 
 1. In =fzf_native_async_candidates=, after dispatching the scoring job, the
-   C code reads =fzf-async-highlight= via =symbol-value=:
+   C code reads =fzfa-highlight= via =symbol-value=:
    - =nil= → skip highlighting.
    - =t= → highlight all returned candidates (=hl_cap = rcount=).
    - Integer N → highlight the top N candidates (=hl_cap = N=).
@@ -339,8 +339,8 @@ Two helpers route around vertico/icomplete/ivy differences:
 
 | Function                       | Purpose                                                   |
 |--------------------------------+-----------------------------------------------------------|
-| =fzf-async--frontend-index=    | Current selection index for the active frontend, or =nil= |
-| =fzf-async--frontend-exhibit=  | Trigger the frontend to re-read the completion table     |
+| =fzfa--frontend-index=    | Current selection index for the active frontend, or =nil= |
+| =fzfa--frontend-exhibit=  | Trigger the frontend to re-read the completion table     |
 
 ivy uses a *push* model rather than pull, so it has its own dedicated
 path: a closure pushes via =ivy--set-candidates= then redraws via
@@ -352,8 +352,8 @@ Two timers, two purposes:
 
 | Timer                                         | Period | Purpose                                                     |
 |-----------------------------------------------+--------+-------------------------------------------------------------|
-| =fzf-async-refresh-delay= (regular timer)     | 0.05s  | Polls =fzf-native-async-generation=. On change, *schedules an idle timer* (=run-with-idle-timer 0 nil=) to call =fzf-async--frontend-exhibit=. Throttled by =fzf-async-input-throttle=. |
-| =fzf-async-input-debounce= (idle timer)       | 0.1s   | Self-healing: if a previous tick's exhibit was interrupted by =while-no-input=, this re-tries it after the user pauses typing.    |
+| =fzfa-refresh-delay= (regular timer)     | 0.05s  | Polls =fzf-native-async-generation=. On change, *schedules an idle timer* (=run-with-idle-timer 0 nil=) to call =fzfa--frontend-exhibit=. Throttled by =fzfa-input-throttle=. |
+| =fzfa-input-debounce= (idle timer)       | 0.1s   | Self-healing: if a previous tick's exhibit was interrupted by =while-no-input=, this re-tries it after the user pauses typing.    |
 
 The double-indirection — regular timer detects, idle timer exhibits —
 is deliberate. Regular timer ticks count as pending input from the
@@ -361,7 +361,7 @@ is deliberate. Regular timer ticks count as pending input from the
 a regular timer trips that check and aborts every scoring run. Idle
 timers fire between events.
 
-=fzf-async-input-throttle= (default 0.2s) caps how often the regular
+=fzfa-input-throttle= (default 0.2s) caps how often the regular
 timer will actually schedule an exhibit. Streaming new candidates at
 60 Hz otherwise floods the UI.
 
@@ -372,12 +372,12 @@ Format: =dir » idx/[sent](total) =
 | Field   | Source                                                      |
 |---------+-------------------------------------------------------------|
 | =dir=   | =(abbreviate-file-name default-directory)=                  |
-| =idx=   | =fzf-async--frontend-index= (1-based; omitted on icomplete) |
-| =sent=  | =min(filtered, fzf-async-max-candidates)=                   |
+| =idx=   | =fzfa--frontend-index= (1-based; omitted on icomplete) |
+| =sent=  | =min(filtered, fzfa-max-candidates)=                   |
 | =total= | =cdr= of =fzf-native-async-stats= (full pool size)          |
 
 Updated via =post-command-hook= so =idx= tracks live during
-navigation. =fzf-async-max-candidates= (default 10 000) caps =sent= so
+navigation. =fzfa-max-candidates= (default 10 000) caps =sent= so
 the cost of building the Emacs list stays bounded; =filtered= and
 =total= always report ground truth so the user is never misled.
 
@@ -420,7 +420,7 @@ mid-typing.
 
 | Input                                          | Output                                                     |
 |------------------------------------------------+------------------------------------------------------------|
-| Active minibuffer, =str=""=                    | Unfiltered =score_results= snapshot from the C module, capped at =fzf-async-max-candidates=. |
+| Active minibuffer, =str=""=                    | Unfiltered =score_results= snapshot from the C module, capped at =fzfa-max-candidates=. |
 | No active minibuffer, =str=""=                 | Cached =last-result= unchanged (timer re-exhibit case).    |
 
 ** Empty query (sync path)
@@ -433,8 +433,8 @@ mid-typing.
 
 | Event                                      | Effect                                                  |
 |--------------------------------------------+---------------------------------------------------------|
-| C-side =gen= bumps                         | 50 ms regular timer detects → schedules idle-timer exhibit (subject to =fzf-async-input-throttle=). |
-| Idle-timer exhibit fires                   | =fzf-async--frontend-exhibit= calls into the active frontend; the completion table re-runs and picks up new data. |
+| C-side =gen= bumps                         | 50 ms regular timer detects → schedules idle-timer exhibit (subject to =fzfa-input-throttle=). |
+| Idle-timer exhibit fires                   | =fzfa--frontend-exhibit= calls into the active frontend; the completion table re-runs and picks up new data. |
 
 ** Quit (=C-g= / ESC)
 
@@ -448,15 +448,15 @@ mid-typing.
 |-----------------------------------------------------------+---------------------------------------|
 | Idle-timer exhibits don't trip =while-no-input= inside =fzf-native-async-candidates=. | Idle timers don't count as pending input; regular timers do, which is why exhibits are *scheduled* by a regular timer but *fired* by an idle one. |
 | The Elisp side never blocks on the C scoring thread.      | =fzf-native-async-candidates= is non-blocking by contract — it returns the current snapshot immediately, regardless of scoring state. |
-| Marginalia annotators don't pull candidates into a different completion style. | =fzf-async-file= category routes file annotations through marginalia *and* keeps the completion style as =fzf-async=. |
+| Marginalia annotators don't pull candidates into a different completion style. | =fzfa-file= category routes file annotations through marginalia *and* keeps the completion style as =fzfa=. |
 
 * References
 
-- =fzf-async.el= — this package's full Elisp surface (~1000 lines).
+- =fzfa.el= — this package's full Elisp surface (~1000 lines).
 - =project.org= (gitignored) — chronological history, open bugs,
   decisions, transcripts of how we got here.
 - [[https://github.com/dangduc/fzf-native/blob/HEAD/architecture.org][fzf-native/architecture.org]]
   — the C internals this document defers to.
 - [[https://github.com/jojojames/fussy/blob/HEAD/architecture.org][fussy/architecture.org]]
-  — the completion-style framework that fzf-async deliberately
+  — the completion-style framework that fzfa deliberately
   bypasses.

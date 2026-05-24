@@ -1,19 +1,19 @@
-;;; fzf-async-chrome.el --- Chrome via `fzf-async' -*- lexical-binding: t; -*-
+;;; fzfa-chrome.el --- Chrome via `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.3
-;; Package-Requires: ((emacs "29.1") (fzf-async "1.0"))
+;; Package-Requires: ((emacs "29.1") (fzfa "1.0"))
 ;; Keywords: convenience, matching, password, chrome, fzf
-;; Homepage: https://github.com/jojojames/fzf-async
+;; Homepage: https://github.com/jojojames/fzfa
 
 ;;; Commentary:
 
 ;; Fuzzy-find Google Chrome bookmarks and saved passwords.
-;; Loaded automatically when `chrome' is in `fzf-async-extensions'.
+;; Loaded automatically when `chrome' is in `fzfa-extensions'.
 ;;
 ;; Bookmarks: reads Chrome's `Bookmarks' JSON file directly — no Chrome
 ;; process, shell commands, or external tools required.  Works for any
-;; Chromium-derived browser by pointing `fzf-async-chrome-bookmarks-file'
+;; Chromium-derived browser by pointing `fzfa-chrome-bookmarks-file'
 ;; at its Bookmarks file (Brave, Edge, Vivaldi, Arc, Chromium itself).
 ;;
 ;; Passwords (macOS only): Chrome stores credentials in a SQLite
@@ -28,27 +28,27 @@
 ;; querying.  Chrome 127+ may app-bound-encrypt some newer entries;
 ;; those will fail to decrypt with the classic keychain key.
 ;;
-;; Bookmark commands (embark category `fzf-async-chrome-bookmark'):
+;; Bookmark commands (embark category `fzfa-chrome-bookmark'):
 ;;
-;;   `fzf-async-chrome-bookmarks'  Open URL with `browse-url' (default)
-;;   `fzf-async-chrome-edit'       Open the bookmark in Chrome's editor
+;;   `fzfa-chrome-bookmarks'  Open URL with `browse-url' (default)
+;;   `fzfa-chrome-edit'       Open the bookmark in Chrome's editor
 ;;                                 (chrome://bookmarks/?id=N) — the
 ;;                                 supported way to rename or delete a
 ;;                                 bookmark without risking corruption
 ;;                                 of Chrome's JSON file
-;;   `fzf-async-chrome-copy-url'   Copy the URL to the kill ring
-;;   `fzf-async-chrome-refresh'    Drop the cached bookmark list
+;;   `fzfa-chrome-copy-url'   Copy the URL to the kill ring
+;;   `fzfa-chrome-refresh'    Drop the cached bookmark list
 ;;
-;; Password commands (embark category `fzf-async-chrome-pass'):
+;; Password commands (embark category `fzfa-chrome-pass'):
 ;;
-;;   `fzf-async-chrome-pass-copy'           Copy password (default)
-;;   `fzf-async-chrome-pass-copy-username'  Copy username
-;;   `fzf-async-chrome-pass-url'            Open URL with `browse-url'
-;;   `fzf-async-chrome-pass-refresh'        Drop the cached entry list
+;;   `fzfa-chrome-pass-copy'           Copy password (default)
+;;   `fzfa-chrome-pass-copy-username'  Copy username
+;;   `fzfa-chrome-pass-url'            Open URL with `browse-url'
+;;   `fzfa-chrome-pass-refresh'        Drop the cached entry list
 
 ;;; Code:
 
-(require 'fzf-async)
+(require 'fzfa)
 (require 'cl-lib)
 
 (defvar embark-keymap-alist)
@@ -57,7 +57,7 @@
 
 ;;; Bookmarks
 
-(defcustom fzf-async-chrome-bookmarks-file
+(defcustom fzfa-chrome-bookmarks-file
   (pcase system-type
     ('darwin    "~/Library/Application Support/Google/Chrome/Default/Bookmarks")
     ('gnu/linux "~/.config/google-chrome/Default/Bookmarks")
@@ -69,12 +69,12 @@ Override to point at a non-Default profile or a different Chromium
 browser (Brave, Edge, Vivaldi, Arc)."
   :type '(choice (file :tag "Bookmarks file")
                  (const :tag "Auto/Unsupported" nil))
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defvar fzf-async-chrome--cache nil
+(defvar fzfa-chrome--cache nil
   "Cached bookmark candidates (tab-encoded strings).")
 
-(defun fzf-async-chrome--walk (node folder-path)
+(defun fzfa-chrome--walk (node folder-path)
   "Collect tab-encoded candidate strings for url nodes under NODE.
 FOLDER-PATH accumulates the breadcrumb of containing folders.  Each
 emitted line has fields: FOLDER\\tNAME\\tURL\\tID.  Folder nodes recurse;
@@ -85,7 +85,7 @@ url nodes emit one row."
       ("folder"
        (let ((sub (if folder-path (concat folder-path "/" name) name)))
          (cl-loop for c in (gethash "children" node)
-                  append (fzf-async-chrome--walk c sub))))
+                  append (fzfa-chrome--walk c sub))))
       ("url"
        (list (format "%s\t%s\t%s\t%s"
                      (or folder-path "")
@@ -93,31 +93,31 @@ url nodes emit one row."
                      (gethash "url" node)
                      (or (gethash "id" node) "")))))))
 
-(defun fzf-async-chrome--load ()
+(defun fzfa-chrome--load ()
   "Parse Chrome's Bookmarks JSON; return list of tab-encoded strings."
-  (unless fzf-async-chrome-bookmarks-file
+  (unless fzfa-chrome-bookmarks-file
     (user-error
-     (concat "Fzf-async-chrome: no default bookmarks path for `%s'; "
-             "set `fzf-async-chrome-bookmarks-file'")
+     (concat "Fzfa-chrome: no default bookmarks path for `%s'; "
+             "set `fzfa-chrome-bookmarks-file'")
      system-type))
-  (let ((file (expand-file-name fzf-async-chrome-bookmarks-file)))
+  (let ((file (expand-file-name fzfa-chrome-bookmarks-file)))
     (unless (file-readable-p file)
-      (user-error "Fzf-async-chrome: cannot read %s" file))
+      (user-error "Fzfa-chrome: cannot read %s" file))
     (let* ((data (with-temp-buffer
                    (insert-file-contents file)
                    (json-parse-buffer :object-type 'hash-table
                                       :array-type  'list)))
            (roots (gethash "roots" data)))
       (cl-loop for root being the hash-values of roots
-               append (fzf-async-chrome--walk root nil)))))
+               append (fzfa-chrome--walk root nil)))))
 
-(defun fzf-async-chrome--bookmarks ()
+(defun fzfa-chrome--bookmarks ()
   "Return cached bookmark candidates, loading from disk on first use."
-  (or fzf-async-chrome--cache
-      (setq fzf-async-chrome--cache (fzf-async-chrome--load))))
+  (or fzfa-chrome--cache
+      (setq fzfa-chrome--cache (fzfa-chrome--load))))
 
-(defun fzf-async-chrome--group (cand transform)
-  "Group fn for `fzf-async-chrome-bookmark' candidate CAND.
+(defun fzfa-chrome--group (cand transform)
+  "Group fn for `fzfa-chrome-bookmark' candidate CAND.
 TRANSFORM nil returns the constant group key (suppresses headers
 beyond the first); TRANSFORM t returns the cleaned per-row display
 without the trailing ID field."
@@ -129,37 +129,37 @@ without the trailing ID field."
                 (or (nth 2 fields) ""))
       "")))
 
-(defun fzf-async-chrome--pick (prompt)
+(defun fzfa-chrome--pick (prompt)
   "Fuzzy-select a bookmark with PROMPT; return the raw tab-encoded candidate."
-  (fzf-sync-completing-read
-   :candidates (fzf-async-chrome--bookmarks)
+  (fzfa-sync-completing-read
+   :candidates (fzfa-chrome--bookmarks)
    :prompt    prompt
-   :category  'fzf-async-chrome-bookmark
-   :group     #'fzf-async-chrome--group))
+   :category  'fzfa-chrome-bookmark
+   :group     #'fzfa-chrome--group))
 
 ;;;###autoload
-(defun fzf-async-chrome-refresh ()
+(defun fzfa-chrome-refresh ()
   "Invalidate the cached bookmark list so the next call re-reads from disk."
   (interactive)
-  (setq fzf-async-chrome--cache nil)
+  (setq fzfa-chrome--cache nil)
   (message "Chrome bookmarks cache cleared"))
 
 ;;;###autoload
-(defun fzf-async-chrome-bookmarks (cand)
+(defun fzfa-chrome-bookmarks (cand)
   "Open the Chrome bookmark CAND with `browse-url'."
-  (interactive (list (fzf-async-chrome--pick "chrome: ")))
+  (interactive (list (fzfa-chrome--pick "chrome: ")))
   (when cand
     (browse-url (nth 2 (split-string cand "\t")))))
 
 ;;;###autoload
-(defun fzf-async-chrome-edit (cand)
+(defun fzfa-chrome-edit (cand)
   "Open Chrome's bookmark editor on CAND.
 Navigates to `chrome://bookmarks/?id=N' (the URL scheme only Chrome
 understands), so the request is dispatched to Chrome explicitly
 rather than via `browse-url' — which might pick Safari/Firefox.
 Chrome's UI handles renames and deletions safely, avoiding direct
 edits to the Bookmarks JSON file."
-  (interactive (list (fzf-async-chrome--pick "edit bookmark: ")))
+  (interactive (list (fzfa-chrome--pick "edit bookmark: ")))
   (when cand
     (let ((id (nth 3 (split-string cand "\t"))))
       (when (and id (not (string-empty-p id)))
@@ -171,25 +171,25 @@ edits to the Bookmarks JSON file."
             (_          (browse-url url))))))))
 
 ;;;###autoload
-(defun fzf-async-chrome-copy-url (cand)
+(defun fzfa-chrome-copy-url (cand)
   "Copy the URL of bookmark CAND to the kill ring."
-  (interactive (list (fzf-async-chrome--pick "copy url: ")))
+  (interactive (list (fzfa-chrome--pick "copy url: ")))
   (when cand
     (let ((url (nth 2 (split-string cand "\t"))))
       (kill-new url)
       (message "Copied: %s" url))))
 
-(defvar-keymap fzf-async-chrome-map
-  :doc "Embark keymap for `fzf-async-chrome-bookmark' candidates.
+(defvar-keymap fzfa-chrome-map
+  :doc "Embark keymap for `fzfa-chrome-bookmark' candidates.
 Composed with `embark-general-map' via `embark-keymap-alist'."
-  "b" #'fzf-async-chrome-bookmarks
-  "e" #'fzf-async-chrome-edit
-  "w" #'fzf-async-chrome-copy-url)
+  "b" #'fzfa-chrome-bookmarks
+  "e" #'fzfa-chrome-edit
+  "w" #'fzfa-chrome-copy-url)
 
 
 ;;; Password manager
 
-(defcustom fzf-async-chrome-pass-database
+(defcustom fzfa-chrome-pass-database
   (pcase system-type
     ('darwin
      "~/Library/Application Support/Google/Chrome/Default/Login Data")
@@ -201,33 +201,33 @@ Composed with `embark-general-map' via `embark-keymap-alist'."
 Override to point at a non-Default profile or another Chromium browser."
   :type '(choice (file :tag "Login Data file")
                  (const :tag "Auto/Unsupported" nil))
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defcustom fzf-async-chrome-pass-keychain-service "Chrome Safe Storage"
+(defcustom fzfa-chrome-pass-keychain-service "Chrome Safe Storage"
   "Keychain service name used by Chrome to store its encryption key (macOS)."
   :type 'string
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defcustom fzf-async-chrome-pass-keychain-account "Chrome"
+(defcustom fzfa-chrome-pass-keychain-account "Chrome"
   "Keychain account name for the Chrome Safe Storage entry (macOS)."
   :type 'string
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defcustom fzf-async-chrome-pass-python (executable-find "python3")
+(defcustom fzfa-chrome-pass-python (executable-find "python3")
   "Path to `python3', used for PBKDF2 key derivation and ciphertext piping."
   :type '(choice (file :tag "python3 executable") (const nil))
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defcustom fzf-async-chrome-pass-timeout 45
+(defcustom fzfa-chrome-pass-timeout 45
   "Seconds before a copied password is cleared from the kill ring.
 Set to 0 to disable auto-clearing."
   :type 'integer
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defvar fzf-async-chrome-pass--cache nil
+(defvar fzfa-chrome-pass--cache nil
   "Cached entry candidates (tab-encoded URL\\tUSER\\tHEX-PWD strings).")
 
-(defconst fzf-async-chrome-pass--py
+(defconst fzfa-chrome-pass--py
   "import os, sys, hashlib, subprocess
 hex_blob = sys.argv[1]
 pwd = os.environ['CHROME_PWD']
@@ -246,44 +246,44 @@ sys.stdout.buffer.write(r.stdout)
 Reads the hex-encoded ciphertext from argv[1] and the keychain
 password from $CHROME_PWD; writes plaintext bytes to stdout.")
 
-(defun fzf-async-chrome-pass--keychain-password ()
+(defun fzfa-chrome-pass--keychain-password ()
   "Return the Chrome Safe Storage password from the macOS keychain."
   (unless (eq system-type 'darwin)
-    (user-error "Fzf-async-chrome-pass: keychain lookup is macOS-only"))
+    (user-error "Fzfa-chrome-pass: keychain lookup is macOS-only"))
   (with-temp-buffer
     (let ((exit (call-process
                  "security" nil t nil "find-generic-password"
                  "-w"
-                 "-s" fzf-async-chrome-pass-keychain-service
-                 "-a" fzf-async-chrome-pass-keychain-account)))
+                 "-s" fzfa-chrome-pass-keychain-service
+                 "-a" fzfa-chrome-pass-keychain-account)))
       (unless (zerop exit)
         (user-error
-         "Fzf-async-chrome-pass: cannot read keychain entry %s/%s: %s"
-         fzf-async-chrome-pass-keychain-service
-         fzf-async-chrome-pass-keychain-account
+         "Fzfa-chrome-pass: cannot read keychain entry %s/%s: %s"
+         fzfa-chrome-pass-keychain-service
+         fzfa-chrome-pass-keychain-account
          (string-trim (buffer-string)))))
     (string-trim (buffer-string))))
 
-(defun fzf-async-chrome-pass--copy-db ()
+(defun fzfa-chrome-pass--copy-db ()
   "Copy the Login Data DB to a tempfile, returning its path.
 Chrome holds an exclusive lock while running, so queries operate on a copy."
-  (unless fzf-async-chrome-pass-database
+  (unless fzfa-chrome-pass-database
     (user-error
-     (concat "Fzf-async-chrome-pass: no default DB path for `%s'; "
-             "set `fzf-async-chrome-pass-database'")
+     (concat "Fzfa-chrome-pass: no default DB path for `%s'; "
+             "set `fzfa-chrome-pass-database'")
      system-type))
-  (let ((src (expand-file-name fzf-async-chrome-pass-database))
-        (dst (make-temp-file "fzf-async-chrome-pass-" nil ".sqlite")))
+  (let ((src (expand-file-name fzfa-chrome-pass-database))
+        (dst (make-temp-file "fzfa-chrome-pass-" nil ".sqlite")))
     (unless (file-readable-p src)
-      (user-error "Fzf-async-chrome-pass: cannot read %s" src))
+      (user-error "Fzfa-chrome-pass: cannot read %s" src))
     (copy-file src dst t)
     dst))
 
-(defun fzf-async-chrome-pass--load ()
+(defun fzfa-chrome-pass--load ()
   "Return list of tab-encoded URL\\tUSER\\tHEX-PWD strings for all logins."
   (unless (executable-find "sqlite3")
-    (user-error "Fzf-async-chrome-pass: sqlite3 not found on PATH"))
-  (let ((tmp (fzf-async-chrome-pass--copy-db))
+    (user-error "Fzfa-chrome-pass: sqlite3 not found on PATH"))
+  (let ((tmp (fzfa-chrome-pass--copy-db))
         (rows '()))
     (unwind-protect
         (with-temp-buffer
@@ -292,7 +292,7 @@ Chrome holds an exclusive lock while running, so queries operate on a copy."
                        (concat "SELECT origin_url, username_value, "
                                "hex(password_value) FROM logins"))))
             (unless (zerop exit)
-              (user-error "Fzf-async-chrome-pass: sqlite3 failed: %s"
+              (user-error "Fzfa-chrome-pass: sqlite3 failed: %s"
                           (string-trim (buffer-string)))))
           (goto-char (point-min))
           (while (not (eobp))
@@ -304,13 +304,13 @@ Chrome holds an exclusive lock while running, so queries operate on a copy."
       (ignore-errors (delete-file tmp)))
     (nreverse rows)))
 
-(defun fzf-async-chrome-pass--candidates ()
+(defun fzfa-chrome-pass--candidates ()
   "Return cached entry candidates, loading from disk on first use."
-  (or fzf-async-chrome-pass--cache
-      (setq fzf-async-chrome-pass--cache (fzf-async-chrome-pass--load))))
+  (or fzfa-chrome-pass--cache
+      (setq fzfa-chrome-pass--cache (fzfa-chrome-pass--load))))
 
-(defun fzf-async-chrome-pass--group (cand transform)
-  "Group fn for `fzf-async-chrome-pass' candidate CAND.
+(defun fzfa-chrome-pass--group (cand transform)
+  "Group fn for `fzfa-chrome-pass' candidate CAND.
 TRANSFORM nil suppresses headers; TRANSFORM t formats the row for
 display without revealing the encrypted blob."
   (let ((fields (split-string cand "\t")))
@@ -320,40 +320,40 @@ display without revealing the encrypted blob."
                 (or (nth 0 fields) ""))
       "")))
 
-(defun fzf-async-chrome-pass--decrypt (hex)
+(defun fzfa-chrome-pass--decrypt (hex)
   "Decrypt HEX (hex-encoded password blob); return the plaintext string."
-  (unless fzf-async-chrome-pass-python
+  (unless fzfa-chrome-pass-python
     (user-error
-     (concat "Fzf-async-chrome-pass: python3 not found; "
-             "set `fzf-async-chrome-pass-python'")))
+     (concat "Fzfa-chrome-pass: python3 not found; "
+             "set `fzfa-chrome-pass-python'")))
   (unless (executable-find "openssl")
-    (user-error "Fzf-async-chrome-pass: openssl not found on PATH"))
-  (let* ((key (fzf-async-chrome-pass--keychain-password))
+    (user-error "Fzfa-chrome-pass: openssl not found on PATH"))
+  (let* ((key (fzfa-chrome-pass--keychain-password))
          (process-environment (cons (concat "CHROME_PWD=" key)
                                     process-environment)))
     (with-temp-buffer
       (set-buffer-multibyte nil)
-      (let ((exit (call-process fzf-async-chrome-pass-python nil t nil
-                                "-c" fzf-async-chrome-pass--py hex)))
+      (let ((exit (call-process fzfa-chrome-pass-python nil t nil
+                                "-c" fzfa-chrome-pass--py hex)))
         (unless (zerop exit)
-          (user-error "Fzf-async-chrome-pass: decrypt failed: %s"
+          (user-error "Fzfa-chrome-pass: decrypt failed: %s"
                       (string-trim (buffer-string)))))
       (decode-coding-string (buffer-string) 'utf-8))))
 
-(defun fzf-async-chrome-pass--pick (prompt)
+(defun fzfa-chrome-pass--pick (prompt)
   "Fuzzy-select a Chrome login with PROMPT; return raw tab-encoded candidate."
-  (fzf-sync-completing-read
-   :candidates (fzf-async-chrome-pass--candidates)
+  (fzfa-sync-completing-read
+   :candidates (fzfa-chrome-pass--candidates)
    :prompt    prompt
-   :category  'fzf-async-chrome-pass
-   :group     #'fzf-async-chrome-pass--group))
+   :category  'fzfa-chrome-pass
+   :group     #'fzfa-chrome-pass--group))
 
-(defun fzf-async-chrome-pass--schedule-clear (secret)
+(defun fzfa-chrome-pass--schedule-clear (secret)
   "Schedule clearing SECRET from the kill ring after the configured timeout."
-  (when (and (> fzf-async-chrome-pass-timeout 0)
+  (when (and (> fzfa-chrome-pass-timeout 0)
              (stringp secret) (not (string-empty-p secret)))
     (run-at-time
-     fzf-async-chrome-pass-timeout nil
+     fzfa-chrome-pass-timeout nil
      (lambda ()
        (when (equal (ignore-errors (current-kill 0 t)) secret)
          (kill-new "" t)
@@ -361,70 +361,70 @@ display without revealing the encrypted blob."
            (ignore-errors (gui-set-selection 'CLIPBOARD ""))))))))
 
 ;;;###autoload
-(defun fzf-async-chrome-pass-refresh ()
+(defun fzfa-chrome-pass-refresh ()
   "Invalidate the cached entry list so the next call re-reads from disk."
   (interactive)
-  (setq fzf-async-chrome-pass--cache nil)
+  (setq fzfa-chrome-pass--cache nil)
   (message "Chrome password cache cleared"))
 
 ;;;###autoload
-(defun fzf-async-chrome-pass-copy (&optional cand)
+(defun fzfa-chrome-pass-copy (&optional cand)
   "Copy the password of Chrome login CAND to the kill ring.
 When CAND is nil (e.g. called interactively), prompt for one."
   (interactive)
   (when-let* ((cand (or cand
-                        (fzf-async-chrome-pass--pick "chrome-pass: "))))
+                        (fzfa-chrome-pass--pick "chrome-pass: "))))
     (let* ((fields (split-string cand "\t"))
-           (pwd (fzf-async-chrome-pass--decrypt (nth 2 fields))))
+           (pwd (fzfa-chrome-pass--decrypt (nth 2 fields))))
       (kill-new pwd)
-      (fzf-async-chrome-pass--schedule-clear pwd)
+      (fzfa-chrome-pass--schedule-clear pwd)
       (message "Copied password for %s @ %s"
                (nth 1 fields) (nth 0 fields)))))
 
 ;;;###autoload
-(defalias 'fzf-async-chrome-pass #'fzf-async-chrome-pass-copy
-  "Default `fzf-async-chrome-pass' action: copy password to the kill ring.")
+(defalias 'fzfa-chrome-pass #'fzfa-chrome-pass-copy
+  "Default `fzfa-chrome-pass' action: copy password to the kill ring.")
 
 ;;;###autoload
-(defun fzf-async-chrome-pass-copy-username (cand)
+(defun fzfa-chrome-pass-copy-username (cand)
   "Copy the username of Chrome login CAND to the kill ring."
-  (interactive (list (fzf-async-chrome-pass--pick "chrome-pass user: ")))
+  (interactive (list (fzfa-chrome-pass--pick "chrome-pass user: ")))
   (when cand
     (let ((user (nth 1 (split-string cand "\t"))))
       (kill-new user)
       (message "Copied username: %s" user))))
 
 ;;;###autoload
-(defun fzf-async-chrome-pass-url (cand)
+(defun fzfa-chrome-pass-url (cand)
   "Open the URL of Chrome login CAND with `browse-url'."
-  (interactive (list (fzf-async-chrome-pass--pick "chrome-pass url: ")))
+  (interactive (list (fzfa-chrome-pass--pick "chrome-pass url: ")))
   (when cand
     (browse-url (nth 0 (split-string cand "\t")))))
 
-(defvar-keymap fzf-async-chrome-pass-map
-  :doc "Embark keymap for `fzf-async-chrome-pass' candidates.
+(defvar-keymap fzfa-chrome-pass-map
+  :doc "Embark keymap for `fzfa-chrome-pass' candidates.
 Composed with `embark-general-map' via `embark-keymap-alist'."
-  "c" #'fzf-async-chrome-pass-copy
-  "u" #'fzf-async-chrome-pass-copy-username
-  "b" #'fzf-async-chrome-pass-url)
+  "c" #'fzfa-chrome-pass-copy
+  "u" #'fzfa-chrome-pass-copy-username
+  "b" #'fzfa-chrome-pass-url)
 
 
 ;;; Setup
 
 ;;;###autoload
-(defun fzf-async-chrome-setup ()
-  "Register `fzf-async-chrome-bookmark' and `fzf-async-chrome-pass' categories."
+(defun fzfa-chrome-setup ()
+  "Register `fzfa-chrome-bookmark' and `fzfa-chrome-pass' categories."
   (add-to-list 'completion-category-overrides
-               '(fzf-async-chrome-bookmark (styles fzf-async)))
+               '(fzfa-chrome-bookmark (styles fzfa)))
   (add-to-list 'completion-category-overrides
-               '(fzf-async-chrome-pass (styles fzf-async)))
+               '(fzfa-chrome-pass (styles fzfa)))
   (with-eval-after-load 'embark
     (add-to-list
      'embark-keymap-alist
-     '(fzf-async-chrome-bookmark fzf-async-chrome-map embark-general-map))
+     '(fzfa-chrome-bookmark fzfa-chrome-map embark-general-map))
     (add-to-list
      'embark-keymap-alist
-     '(fzf-async-chrome-pass fzf-async-chrome-pass-map embark-general-map))))
+     '(fzfa-chrome-pass fzfa-chrome-pass-map embark-general-map))))
 
-(provide 'fzf-async-chrome)
-;;; fzf-async-chrome.el ends here
+(provide 'fzfa-chrome)
+;;; fzfa-chrome.el ends here

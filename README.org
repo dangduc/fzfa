@@ -1,9 +1,9 @@
-#+TITLE: fzf-async
+#+TITLE: fzfa
 #+STARTUP: noindent
 
-[[https://github.com/jojojames/fzf-async/actions/workflows/test.yaml][https://github.com/jojojames/fzf-async/actions/workflows/test.yaml/badge.svg]]
+[[https://github.com/jojojames/fzfa/actions/workflows/test.yaml][https://github.com/jojojames/fzfa/actions/workflows/test.yaml/badge.svg]]
 
-[[./screenshots/fzf-async.png]]
+[[./screenshots/fzfa.png]]
 [[./screenshots/demo.gif]]
 
 This package provides async fuzzy completion for Emacs backed by
@@ -32,7 +32,7 @@ applies its own fuzzy or flex logic.
 
 e.g. [[https://github.com/minad/consult#asynchronous-search][consult: asynchronous search]]
 
-~fzf-async~ eliminates the two-stage problem entirely. The shell command runs
+~fzfa~ eliminates the two-stage problem entirely. The shell command runs
 *without a query* and emits candidates unconditionally. The user's query is
 given *only* to fzf, which handles both filtering and scoring in a single,
 coherent pass.
@@ -83,9 +83,9 @@ Scoring is performed by
 [[https://github.com/dangduc/fzf-native][fzf-native]],
 a C dynamic module that spawns multiple worker threads to split up the work.
 
-Both ~fussy~ and ~fzf-async~ are multithreaded at the C layer.  With ~fussy~,
+Both ~fussy~ and ~fzfa~ are multithreaded at the C layer.  With ~fussy~,
 Emacs blocks until the full candidate list is scored and returned — suitable
-for in-memory lists.  ~fzf-async~ runs the shell command in a background
+for in-memory lists.  ~fzfa~ runs the shell command in a background
 process and incrementally refreshes the completion UI as candidates arrive
 and are scored.
 
@@ -107,8 +107,8 @@ Main Repo:
 Minimal setup:
 
 #+begin_src emacs-lisp :tangle yes
-  (use-package fzf-async
-    :vc (:url "https://github.com/jojojames/fzf-async" :rev :newest))
+  (use-package fzfa
+    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest))
 #+end_src
 
 Recommended:
@@ -127,8 +127,8 @@ Recommended:
     (fussy-eglot-setup)
     (fussy-company-setup))
 
-  (use-package fzf-async
-    :vc (:url "https://github.com/jojojames/fzf-async" :rev :newest))
+  (use-package fzfa
+    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest))
 #+end_src
 
 This sets up a consistent ~completing-read~ and ~completion-in-region~
@@ -138,11 +138,11 @@ experience using ~fzf~ as the core filtering/scoring algorithm.
 
 #+begin_src emacs-lisp :tangle yes
   ;; No explicit setup needed — just call any command:
-  (fzf-async-find-any)
-  (fzf-async-rg)
-  (fzf-async-fd)
-  (fzf-async-find)
-  (fzf-async-git-ls-files)
+  (fzfa-find-any)
+  (fzfa-rg)
+  (fzfa-fd)
+  (fzfa-find)
+  (fzfa-git-ls-files)
 #+end_src
 
 * Commands
@@ -153,47 +153,47 @@ The list here is on best efforts, might be inaccurate.
 
 ** File finders
 
-| ~fzf-async~                       | ~counsel~           | ~consult~             |
+| ~fzfa~                       | ~counsel~           | ~consult~             |
 |-----------------------------------+---------------------+-----------------------|
-| ~fzf-async-find~                  | ~counsel-find-file~ | ~consult-find~        |
-| ~fzf-async-fd~                    | —                   | ~consult-fd~          |
-| ~fzf-async-rg-files~              | —                   | ~consult-find~        |
-| ~fzf-async-ag-files~              | —                   | —                     |
-| ~fzf-async-git-ls-files~          | ~counsel-git~       | —                     |
-| ~fzf-async-hg-files~              | —                   | —                     |
-| ~fzf-async-recent-file~           | ~counsel-recentf~   | ~consult-recent-file~ |
-| ~fzf-async-locate~                | ~counsel-locate~    | ~consult-locate~      |
-| ~fzf-async-shell-command~         | —                   | —                     |
-| ~fzf-async-project-shell-command~ | —                   | —                     |
+| ~fzfa-find~                  | ~counsel-find-file~ | ~consult-find~        |
+| ~fzfa-fd~                    | —                   | ~consult-fd~          |
+| ~fzfa-rg-files~              | —                   | ~consult-find~        |
+| ~fzfa-ag-files~              | —                   | —                     |
+| ~fzfa-git-ls-files~          | ~counsel-git~       | —                     |
+| ~fzfa-hg-files~              | —                   | —                     |
+| ~fzfa-recent-file~           | ~counsel-recentf~   | ~consult-recent-file~ |
+| ~fzfa-locate~                | ~counsel-locate~    | ~consult-locate~      |
+| ~fzfa-shell-command~         | —                   | —                     |
+| ~fzfa-project-shell-command~ | —                   | —                     |
 
-(macOS Spotlight commands — ~fzf-async-spotlight~, ~-spotlight-apps~,
+(macOS Spotlight commands — ~fzfa-spotlight~, ~-spotlight-apps~,
 ~-spotlight-audio~ — ship in the ~spotlight~ extension, on by default.
 See *Extensions* below.)
 
 ** Emacs based
 
-| ~fzf-async~             | ~counsel~              | ~consult~           |
+| ~fzfa~             | ~counsel~              | ~consult~           |
 |-------------------------+------------------------+---------------------|
-| ~fzf-async-buffer~      | ~ivy-switch-buffer~    | ~consult-buffer~    |
-| ~fzf-async-bookmark~    | ~counsel-bookmark~     | ~consult-bookmark~  |
+| ~fzfa-buffer~      | ~ivy-switch-buffer~    | ~consult-buffer~    |
+| ~fzfa-bookmark~    | ~counsel-bookmark~     | ~consult-bookmark~  |
 
 ** Content search
 
 Grep-style commands parse ~FILE:LINE:CONTENT~ output and jump directly to
 the matching line.
 
-| ~fzf-async~                   | ~counsel~ / ~ivy~  | ~consult~            |
+| ~fzfa~                   | ~counsel~ / ~ivy~  | ~consult~            |
 |-------------------------------+--------------------+----------------------|
-| ~fzf-async-rg~                | ~counsel-rg~       | ~consult-ripgrep~    |
-| ~fzf-async-ag~                | ~counsel-ag~       | —                    |
-| ~fzf-async-git-grep~          | ~counsel-git-grep~ | ~consult-git-grep~   |
-| ~fzf-async-grep~              | ~counsel-grep~     | ~consult-grep~       |
-| ~fzf-async-grep-current-file~ | ~counsel-grep~     | ~consult-line~       |
-| ~fzf-async-ugrep~             | —                  | —                    |
-| ~fzf-async-swiper~            | ~swiper~           | ~consult-line~       |
-| ~fzf-async-swiper-all~        | ~swiper-all~       | ~consult-line-multi~ |
-| ~fzf-async-swiper-hungry~     | —                  | —                    |
-| ~fzf-async-find-hungry~       | —                  | —                    |
+| ~fzfa-rg~                | ~counsel-rg~       | ~consult-ripgrep~    |
+| ~fzfa-ag~                | ~counsel-ag~       | —                    |
+| ~fzfa-git-grep~          | ~counsel-git-grep~ | ~consult-git-grep~   |
+| ~fzfa-grep~              | ~counsel-grep~     | ~consult-grep~       |
+| ~fzfa-grep-current-file~ | ~counsel-grep~     | ~consult-line~       |
+| ~fzfa-ugrep~             | —                  | —                    |
+| ~fzfa-swiper~            | ~swiper~           | ~consult-line~       |
+| ~fzfa-swiper-all~        | ~swiper-all~       | ~consult-line-multi~ |
+| ~fzfa-swiper-hungry~     | —                  | —                    |
+| ~fzfa-find-hungry~       | —                  | —                    |
 
 ** Hungry variants
 
@@ -205,49 +205,49 @@ directory list is passed as arguments to a single shell command.
 
 | Command                   | Tool       | What it searches                       |
 |---------------------------+------------+----------------------------------------|
-| ~fzf-async-find-hungry~   | fd / find  | Files under all derived directories    |
-| ~fzf-async-swiper-hungry~ | rg / grep  | Line content under all derived dirs    |
+| ~fzfa-find-hungry~   | fd / find  | Files under all derived directories    |
+| ~fzfa-swiper-hungry~ | rg / grep  | Line content under all derived dirs    |
 
 ** Multi-source
 
-| ~fzf-async~                 | ~consult~        |
+| ~fzfa~                 | ~consult~        |
 |-----------------------------+------------------|
-| ~fzf-async-find-any~   | ~consult-buffer~ |
-| ~fzf-async-passwords~  | (no direct analog) |
+| ~fzfa-find-any~   | ~consult-buffer~ |
+| ~fzfa-passwords~  | (no direct analog) |
 
-~fzf-async-find-any~ merges several sources into a single
+~fzfa-find-any~ merges several sources into a single
 ~completing-read~ (groups for buffers, recent files, hungry-find, …),
 ranks each group by its top fzf score, and dispatches the chosen
 candidate back to the originating command's action.
 
-The command list lives in ~fzf-async-find-any-commands~ — by default
-~(fzf-async-buffer fzf-async-recent-file fzf-async-find-hungry)~.  Add
-any other arg-less ~fzf-async~ command to that list and it shows up as
+The command list lives in ~fzfa-find-any-commands~ — by default
+~(fzfa-buffer fzfa-recent-file fzfa-find-hungry)~.  Add
+any other arg-less ~fzfa~ command to that list and it shows up as
 its own group, with no source plist or factory function to maintain:
 the source is *derived from the command's existing definition* via the
-=:extract= / =:inject= dispatch in ~fzf-async-completing-read~ and
-~fzf-sync-completing-read~ (see ~architecture.org~ for the full flow).
+=:extract= / =:inject= dispatch in ~fzfa-async-completing-read~ and
+~fzfa-sync-completing-read~ (see ~architecture.org~ for the full flow).
 
 #+begin_src emacs-lisp :tangle yes
-  (setq fzf-async-find-any-commands
-        '(fzf-async-buffer
-          fzf-async-recent-file
-          fzf-async-find-hungry
-          fzf-async-spotlight-apps))
+  (setq fzfa-find-any-commands
+        '(fzfa-buffer
+          fzfa-recent-file
+          fzfa-find-hungry
+          fzfa-spotlight-apps))
 #+end_src
 
-For ad-hoc combinations, call ~fzf-async-multi-read~ directly:
+For ad-hoc combinations, call ~fzfa-multi-read~ directly:
 
 #+begin_src emacs-lisp :tangle yes
-  (defun my/fzf-async-files-only ()
+  (defun my/fzfa-files-only ()
     (interactive)
-    (fzf-async-multi-read
-     '(fzf-async-recent-file fzf-async-find-hungry fzf-async-locate)
+    (fzfa-multi-read
+     '(fzfa-recent-file fzfa-find-hungry fzfa-locate)
      :prompt "files: "))
 #+end_src
 
-~fzf-async-passwords~ is a built-in multi over ~fzf-async-pass-copy~
-and ~fzf-async-chrome-pass-copy~ — one prompt covers both
+~fzfa-passwords~ is a built-in multi over ~fzfa-pass-copy~
+and ~fzfa-chrome-pass-copy~ — one prompt covers both
 ~password-store~ and Chrome's password manager, with the chosen
 entry's password copied to the kill ring via the originating source.
 Requires the ~chrome~ extension (and on macOS, the deps listed for
@@ -255,25 +255,25 @@ Chrome passwords above).
 
 * Extensions
 
-Optional integrations ship as sibling files (~fzf-async-pass.el~,
-~fzf-async-notmuch.el~, etc.) and are opt-in via ~fzf-async-extensions~
+Optional integrations ship as sibling files (~fzfa-pass.el~,
+~fzfa-notmuch.el~, etc.) and are opt-in via ~fzfa-extensions~
 — a list of short symbols that the lazy setup walks: for each ~SYMBOL~
-it ~require~ s ~fzf-async-SYMBOL~ and calls ~fzf-async-SYMBOL-setup~ if
+it ~require~ s ~fzfa-SYMBOL~ and calls ~fzfa-SYMBOL-setup~ if
 defined.  Extension loading happens the first time you invoke any
-fzf-async command (or up front if you call ~fzf-async-setup~
+fzfa command (or up front if you call ~fzfa-setup~
 explicitly).
 
 | Symbol      | Library                | Soft dependency   | Commands                                                                                                                              |
 |-------------+------------------------+-------------------+---------------------------------------------------------------------------------------------------------------------------------------|
-| ~pass~      | ~fzf-async-pass~       | ~password-store~  | ~fzf-async-pass~ (copy), ~fzf-async-pass-edit~, ~-rename~, ~-delete~, ~-add~, ~-generate~, ~-url~ — modeled on ~ivy-pass~ |
-| ~spotlight~ | ~fzf-async-spotlight~  | macOS ~mdfind~    | ~fzf-async-spotlight~, ~fzf-async-spotlight-apps~, ~fzf-async-spotlight-audio~                                                        |
-| ~music~     | ~fzf-async-music~      | macOS ~Music.app~ | ~fzf-async-music~, ~-by-artist~, ~-by-genre~, ~-playlist~, ~-playlist-shuffle~, ~-refresh~ — modeled on ~helm-itunes~                |
-| ~chrome~    | ~fzf-async-chrome~     | none (bookmarks); macOS ~sqlite3~ + ~security~ + ~openssl~ + ~python3~ (passwords) | bookmarks: ~fzf-async-chrome-bookmarks~ (default), ~-edit~, ~-copy-url~, ~-refresh~ — open Chromium-family bookmarks via ~browse-url~.  passwords (macOS only): ~fzf-async-chrome-pass-copy~ (default), ~-copy-username~, ~-url~, ~-refresh~ — decrypts entries from Chrome's Login Data SQLite DB using the keychain entry ~Chrome Safe Storage~ |
-| ~company~   | ~fzf-async-company~    | ~company~         | ~fzf-async-company~ — fuzzy-filter current ~company-mode~ candidates and finish; modeled on ~helm-company~ / ~counsel-company~ / ~consult-company~ |
-| ~mail~      | ~fzf-async-mail~       | macOS ~Mail.app~  | ~fzf-async-mail~, ~fzf-async-mail-refresh~ — browse and open inbox messages                                                          |
-| ~notmuch~   | ~fzf-async-notmuch~    | ~notmuch~ (CLI + Emacs package) | ~fzf-async-notmuch~, ~fzf-async-notmuch-tree~ — run a notmuch query and fuzzy-pick a thread to open; modeled on ~helm-notmuch~ / ~counsel-notmuch~ / ~consult-notmuch~ |
+| ~pass~      | ~fzfa-pass~       | ~password-store~  | ~fzfa-pass~ (copy), ~fzfa-pass-edit~, ~-rename~, ~-delete~, ~-add~, ~-generate~, ~-url~ — modeled on ~ivy-pass~ |
+| ~spotlight~ | ~fzfa-spotlight~  | macOS ~mdfind~    | ~fzfa-spotlight~, ~fzfa-spotlight-apps~, ~fzfa-spotlight-audio~                                                        |
+| ~music~     | ~fzfa-music~      | macOS ~Music.app~ | ~fzfa-music~, ~-by-artist~, ~-by-genre~, ~-playlist~, ~-playlist-shuffle~, ~-refresh~ — modeled on ~helm-itunes~                |
+| ~chrome~    | ~fzfa-chrome~     | none (bookmarks); macOS ~sqlite3~ + ~security~ + ~openssl~ + ~python3~ (passwords) | bookmarks: ~fzfa-chrome-bookmarks~ (default), ~-edit~, ~-copy-url~, ~-refresh~ — open Chromium-family bookmarks via ~browse-url~.  passwords (macOS only): ~fzfa-chrome-pass-copy~ (default), ~-copy-username~, ~-url~, ~-refresh~ — decrypts entries from Chrome's Login Data SQLite DB using the keychain entry ~Chrome Safe Storage~ |
+| ~company~   | ~fzfa-company~    | ~company~         | ~fzfa-company~ — fuzzy-filter current ~company-mode~ candidates and finish; modeled on ~helm-company~ / ~counsel-company~ / ~consult-company~ |
+| ~mail~      | ~fzfa-mail~       | macOS ~Mail.app~  | ~fzfa-mail~, ~fzfa-mail-refresh~ — browse and open inbox messages                                                          |
+| ~notmuch~   | ~fzfa-notmuch~    | ~notmuch~ (CLI + Emacs package) | ~fzfa-notmuch~, ~fzfa-notmuch-tree~ — run a notmuch query and fuzzy-pick a thread to open; modeled on ~helm-notmuch~ / ~counsel-notmuch~ / ~consult-notmuch~ |
 
-Default value of ~fzf-async-extensions~ is ~(pass spotlight music chrome company mail notmuch)~.
+Default value of ~fzfa-extensions~ is ~(pass spotlight music chrome company mail notmuch)~.
 Each loads without its soft dependency present — the dependency is
 only required when you invoke one of the extension's commands.  Soft
 dependencies are not declared in ~Package-Requires~ — install them
@@ -286,27 +286,27 @@ yourself if you use the extension:
 To disable extension loading entirely:
 
 #+begin_src emacs-lisp :tangle yes
-  (use-package fzf-async
-    :vc (:url "https://github.com/jojojames/fzf-async" :rev :newest)
-    :custom (fzf-async-extensions nil))
+  (use-package fzfa
+    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest)
+    :custom (fzfa-extensions nil))
 #+end_src
 
 * Completion style compatibility
 
-~fzf-async~ registers and uses its own ~completion-style~ named ~fzf-async~.
+~fzfa~ registers and uses its own ~completion-style~ named ~fzfa~.
 This style is only a passthrough: it accepts the query string as-is and forwards
 it directly to the ~fzf~ scoring layer without applying any transformation.
 
 *This style must not be added to the global ~completion-styles~ list.*
 Doing so applies it to every ~completing-read~ in the session, including
 callers that pass a plain list or hash-table as the collection, which will
-trigger an error.  fzf-async wires the style correctly via
-~completion-category-overrides~ for the ~fzf-async~ category only.  Other
+trigger an error.  fzfa wires the style correctly via
+~completion-category-overrides~ for the ~fzfa~ category only.  Other
 ~completion-styles~ packages (e.g. ~orderless~, ~hotfuzz~) may override
 this.
 
-Do not set ~fzf-async~ as a fallback in ~completion-styles~.  Do not combine
-it with ~orderless~, ~fussy~, ~flex~, or any other style for the ~fzf-async~
+Do not set ~fzfa~ as a fallback in ~completion-styles~.  Do not combine
+it with ~orderless~, ~fussy~, ~flex~, or any other style for the ~fzfa~
 category — the results are already scored and sorted by fzf; re-filtering
 by another style corrupts the ranking.
 
@@ -315,14 +315,14 @@ by another style corrupts the ranking.
 The recommended companion package is
 [[https://github.com/jojojames/fussy][fussy]],
 for general ~completing-read~ and ~completion-at-point~ (e.g. code
-completion).  Both ~fussy~ and ~fzf-async~ are backed by the same
+completion).  Both ~fussy~ and ~fzfa~ are backed by the same
 [[https://github.com/dangduc/fzf-native][fzf-native]]
 module, giving you consistent fuzzy matching semantics with ~fzf~ across
 both synchronous and asynchronous contexts.
 
 ~fussy~ operates synchronously on in-memory candidate lists and integrates
 with ~company~, ~corfu~, ~eglot~, and all standard ~completing-read~
-frontends.  ~fzf-async~ handles the case where candidates come from a shell
+frontends.  ~fzfa~ handles the case where candidates come from a shell
 command (e.g. ~find~ or ~ripgrep~) and must be streamed incrementally.
 
 #+begin_src emacs-lisp :tangle yes
@@ -340,13 +340,13 @@ command (e.g. ~find~ or ~ripgrep~) and must be streamed incrementally.
     (fussy-company-setup))
 
   ;; Async fuzzy completion for large file/grep searches.
-  (use-package fzf-async
-    :vc (:url "https://github.com/jojojames/fzf-async" :rev :newest))
+  (use-package fzfa
+    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest))
 #+end_src
 
 * Integrations
 
-~fzf-async~ works through the standard Emacs ~completing-read~ API and is
+~fzfa~ works through the standard Emacs ~completing-read~ API and is
 compatible with any frontend that calls the completion table function on
 each input change.
 
@@ -363,18 +363,18 @@ other completion systems.
 ** ivy / counsel
 Ivy uses a *push model*: the completion UI holds its own internal candidate
 list (~ivy--all-candidates~) and does not re-call the collection function
-on each display refresh.  This conflicts with ~fzf-async~'s pull model,
+on each display refresh.  This conflicts with ~fzfa~'s pull model,
 where vertico re-calls our collection lambda to get fresh scored results.
 
-~fzf-async~ handles this with a dedicated push path.  The polling timer
+~fzfa~ handles this with a dedicated push path.  The polling timer
 calls ~fzf-native-async-candidates~ directly, pushes the results via
 ~ivy--set-candidates~, and redraws via ~ivy--exhibit~ — the same approach
 used by counsel's async commands.  The stats prompt (directory, selection
 index, filtered/total counts) is delivered via ~ivy-pre-prompt-function~,
 which ivy prepends to the prompt string on each redraw.
 ** helm
-When ~helm-mode~ is active, ~fzf-async-completing-read~ automatically
-dispatches to a dedicated ~fzf-async--helm-completing-read~ path — no
+When ~helm-mode~ is active, ~fzfa-async-completing-read~ automatically
+dispatches to a dedicated ~fzfa--helm-completing-read~ path — no
 extra configuration is needed.
 
 Helm uses a ~helm-source-sync~ source with ~:match-dynamic t~, which tells
@@ -384,30 +384,30 @@ apply its own highlighting on top of the C-side ~completions-common-part~
 faces already embedded in the candidate strings.
 
 A polling timer checks ~fzf-native-async-generation~ at
-~fzf-async-refresh-delay~ intervals and calls ~helm-force-update~ whenever
+~fzfa-refresh-delay~ intervals and calls ~helm-force-update~ whenever
 the background scoring thread has produced new results, keeping the helm
 buffer live as candidates stream in.
 ** transient
-A [[https://github.com/jojojames/matcha/blob/master/matcha-fzf-async.el][matcha transient]] is
- defined for invoking all ~fzf-async~ commands from a
+A [[https://github.com/jojojames/matcha/blob/master/matcha-fzfa.el][matcha transient]] is
+ defined for invoking all ~fzfa~ commands from a
 single keybinding via [[https://github.com/jojojames/matcha][matcha]].
 * Customization
 
 | Variable                       | Default   | Description                                            |
 |--------------------------------+-----------+--------------------------------------------------------|
-| ~fzf-async-max-candidates~     | 10000     | Max candidates returned to Elisp (see note below).    |
-| ~fzf-async-refresh-delay~      | 0.05      | Seconds between generation polls.                     |
-| ~fzf-async-input-debounce~     | 0.1       | Idle seconds to retry after an interrupted scoring.   |
-| ~fzf-async-input-throttle~     | 0.2       | Min seconds between UI refreshes driven by new data.  |
-| ~fzf-async-directory~          | ~nil~     | Per-call directory override; supersedes project backend (see note below). |
-| ~fzf-async-project-backend~    | ~project~ | How to resolve the root directory (see note below).   |
-| ~fzf-async-highlight~          | 200       | C-side match highlighting; nil/t/N (see note below).  |
-| ~fzf-async-max-line-length~    | 256       | Per-line character limit; nil/+N/-N (see note below). |
-| ~fzf-async-cache-size~         | 40        | Per-session LRU cache entries (see note below).       |
-| ~fzf-async-case-mode~          | ~smart~   | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.     |
-| ~fzf-async-extensions~         | ~(pass spotlight music chrome company mail notmuch)~ | Extensions to ~require~ during setup. |
+| ~fzfa-max-candidates~     | 10000     | Max candidates returned to Elisp (see note below).    |
+| ~fzfa-refresh-delay~      | 0.05      | Seconds between generation polls.                     |
+| ~fzfa-input-debounce~     | 0.1       | Idle seconds to retry after an interrupted scoring.   |
+| ~fzfa-input-throttle~     | 0.2       | Min seconds between UI refreshes driven by new data.  |
+| ~fzfa-directory~          | ~nil~     | Per-call directory override; supersedes project backend (see note below). |
+| ~fzfa-project-backend~    | ~project~ | How to resolve the root directory (see note below).   |
+| ~fzfa-highlight~          | 200       | C-side match highlighting; nil/t/N (see note below).  |
+| ~fzfa-max-line-length~    | 256       | Per-line character limit; nil/+N/-N (see note below). |
+| ~fzfa-cache-size~         | 40        | Per-session LRU cache entries (see note below).       |
+| ~fzfa-case-mode~          | ~smart~   | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.     |
+| ~fzfa-extensions~         | ~(pass spotlight music chrome company mail notmuch)~ | Extensions to ~require~ during setup. |
 
-~fzf-async-highlight~ controls C-side match highlighting.  After the scoring
+~fzfa-highlight~ controls C-side match highlighting.  After the scoring
 pass, the C module calls ~fzf_get_positions~ for the top N candidates and
 applies the ~completions-common-part~ face to each contiguous run of matched
 characters via ~put-text-property~.  This happens entirely inside the C module
@@ -426,12 +426,12 @@ Setting a cap rather than always highlighting all candidates is intentional:
 ~20–50 candidates without scrolling.  200 provides comfortable headroom.
 
 #+begin_src emacs-lisp :tangle yes
-  (setq fzf-async-highlight nil)   ; disable entirely
-  (setq fzf-async-highlight t)     ; highlight all returned candidates
-  (setq fzf-async-highlight 500)   ; highlight top 500
+  (setq fzfa-highlight nil)   ; disable entirely
+  (setq fzfa-highlight t)     ; highlight all returned candidates
+  (setq fzfa-highlight 500)   ; highlight top 500
 #+end_src
 
-~fzf-async-max-line-length~ filters lines from the subprocess before they
+~fzfa-max-line-length~ filters lines from the subprocess before they
 enter the candidate pool.  Minified JavaScript, base64 payloads, and other
 pathologically long lines slow scoring and produce unreadable candidates.
 Lowering this number can be a huge performance improvement.
@@ -446,12 +446,12 @@ The check fires in the reader thread immediately after ANSI stripping, before
 any allocation, so oversized lines never reach the scoring path.
 
 #+begin_src emacs-lisp :tangle yes
-  (setq fzf-async-max-line-length nil)   ; no limit
-  (setq fzf-async-max-line-length 300)   ; exclude lines > 300 chars
-  (setq fzf-async-max-line-length -300)  ; truncate to 300 chars, keep all
+  (setq fzfa-max-line-length nil)   ; no limit
+  (setq fzfa-max-line-length 300)   ; exclude lines > 300 chars
+  (setq fzfa-max-line-length -300)  ; truncate to 300 chars, keep all
 #+end_src
 
-~fzf-async-max-candidates~ caps only the number of strings consed into the
+~fzfa-max-candidates~ caps only the number of strings consed into the
 Emacs list returned to the completion UI.  The C layer always scores and
 sorts *all* candidates: every matching string is passed through the fzf
 scoring threads, the full scored set is counting-sorted, and then only the
@@ -459,7 +459,7 @@ top N are handed back to Elisp.  The ~[FILTERED]~ count in the prompt
 always reflects the true number of matches, not the capped return value.
 Lowering this number can be a huge performance improvement.
 
-~fzf-async-cache-size~ controls a per-session LRU result cache inside the
+~fzfa-cache-size~ controls a per-session LRU result cache inside the
 C module.  Each entry stores the top-K results and the full matched-
 candidate index for one query.  Three lookup outcomes:
 
@@ -489,7 +489,7 @@ can be a burden when the total collection size is millions of candidates.
 In practice, the cap should not be an issue (and is configurable anyways)
 since it's returning the top N candidates at any one time.
 
-~fzf-async-case-mode~ controls how the fzf scorer treats letter case.
+~fzfa-case-mode~ controls how the fzf scorer treats letter case.
 Read on every scoring call; changes take effect immediately.
 
 | Value      | Behavior                                                          |
@@ -499,26 +499,26 @@ Read on every scoring call; changes take effect immediately.
 | ~respect~  | Always case-sensitive.                                           |
 
 #+begin_src emacs-lisp :tangle yes
-  (setq fzf-async-case-mode 'smart)    ; default
-  (setq fzf-async-case-mode 'ignore)
-  (setq fzf-async-case-mode 'respect)
+  (setq fzfa-case-mode 'smart)    ; default
+  (setq fzfa-case-mode 'ignore)
+  (setq fzfa-case-mode 'respect)
 #+end_src
 
-~fzf-async-directory~ is a ~let~-bindable override that takes priority over
+~fzfa-directory~ is a ~let~-bindable override that takes priority over
 project detection.  Use it when extending a built-in command that you want
 to run in the current directory rather than the project root:
 
 #+begin_src emacs-lisp :tangle yes
   (defun my-rg-here ()
     (interactive)
-    (let ((fzf-async-directory default-directory))
-      (fzf-async-rg)))
+    (let ((fzfa-directory default-directory))
+      (fzfa-rg)))
 #+end_src
 
 The full priority chain is:
-~fzf-async-directory~ > ~fzf-async-project-backend~ > ~default-directory~
+~fzfa-directory~ > ~fzfa-project-backend~ > ~default-directory~
 
-~fzf-async-project-backend~ controls which directory file-search and grep
+~fzfa-project-backend~ controls which directory file-search and grep
 commands run in.  The default ~project~ matches the behavior of ~consult~.
 Available values:
 
@@ -532,7 +532,7 @@ Available values:
 Example with a custom function:
 
 #+begin_src emacs-lisp :tangle yes
-  (setq fzf-async-project-backend
+  (setq fzfa-project-backend
         (lambda () (locate-dominating-file default-directory ".git")))
 #+end_src
 
@@ -547,8 +547,8 @@ The prompt overlay shows live status during a search:
 
 * Custom commands
 
-~fzf-async~ is designed to be extensible.  New commands are thin wrappers
-around ~fzf-async-completing-read~, which accepts keyword arguments:
+~fzfa~ is designed to be extensible.  New commands are thin wrappers
+around ~fzfa-async-completing-read~, which accepts keyword arguments:
 
 | Argument                 | Default                            | Description                                                                 |
 |--------------------------+------------------------------------+-----------------------------------------------------------------------------|
@@ -561,24 +561,24 @@ around ~fzf-async-completing-read~, which accepts keyword arguments:
 The command string is passed verbatim to ~shell-file-name~ (~-c~), so pipes,
 redirections, and shell quoting all work as expected.
 
-~fzf-async-completing-read~ automatically checks that the first token of
+~fzfa-async-completing-read~ automatically checks that the first token of
 ~:command~ is present in ~exec-path~ (via ~executable-find~) before starting
 the session.  Pass ~:skip-executable-check t~ when the command uses a shell
 builtin, alias, or has already been validated by the caller.
-~fzf-async-shell-command~ skips the check because the user's shell resolves
+~fzfa-shell-command~ skips the check because the user's shell resolves
 aliases and builtins that ~executable-find~ cannot see.
 
-For one-off queries, ~fzf-async-shell-command~ prompts for a command
+For one-off queries, ~fzfa-shell-command~ prompts for a command
 interactively and runs it in ~default-directory~;
-~fzf-async-project-shell-command~ does the same from the project root.
+~fzfa-project-shell-command~ does the same from the project root.
 
 #+begin_src emacs-lisp :tangle yes
 ;;;###autoload
-(defun fzf-async-spotlight-pdfs ()
+(defun fzfa-spotlight-pdfs ()
   "Find a PDF file system-wide using Spotlight.
 Opens the selected PDF with `open'."
   (interactive)
-  (when-let* ((result (fzf-async-completing-read
+  (when-let* ((result (fzfa-async-completing-read
                        :prompt "spotlight pdfs: "
                        :command "mdfind 'kMDItemFSName == \"*.pdf\"'"
                        :directory default-directory)))
@@ -589,7 +589,7 @@ Opens the selected PDF with `open'."
 
 - ~fussy~ serves a similar role to ~orderless~: scoring and filtering for
   general ~completing-read~ (M-x, buffers, code completion, etc.).
-- ~fzf-async~ serves a similar role to ~consult~/~counsel~, e.g.
+- ~fzfa~ serves a similar role to ~consult~/~counsel~, e.g.
   ~counsel-rg~ / ~counsel-git~ / ~consult-ripgrep~ / ~consult-find~
   for file and content search.
 - [[https://github.com/bling/fzf.el][fzf.el]] is another alternative that
@@ -603,7 +603,7 @@ Opens the selected PDF with `open'."
   ~consult~-related commands: each keystroke triggers a new filter query
   to the underlying binary.
 - [[https://github.com/minad/affe][affe]] is the closest architectural cousin.
-  Like ~fzf-async~, it runs a producer process in the background and filters
+  Like ~fzfa~, it runs a producer process in the background and filters
   candidates asynchronously.  The key differences:
   ([[https://github.com/minad/affe#details][affe: details]]):
   - *Matching*: affe transforms the query into a list of regular expressions
@@ -613,14 +613,14 @@ Opens the selected PDF with `open'."
   - *Performance*: affe calls out to an external process for the initial
     filtering but a lot of postprocessing runs in Elisp. (e.g. calculating
     highlights or general list processing)
-  A quick eye test against the home directory using ~affe-grep~ vs ~fzf-async-rg~
+  A quick eye test against the home directory using ~affe-grep~ vs ~fzfa-rg~
   shows about 1-2 million candidates processed after a few seconds compared to
-  ~fzf-async~ which hits 10-20 million in the same time span.
+  ~fzfa~ which hits 10-20 million in the same time span.
 
 (This comparison is on best efforts, so might be inaccurate. :))
 
 In comparison to similar pre-existing packages like ~consult~ / ~counsel~ / ~helm~,
-~fzf-async~ provides:
+~fzfa~ provides:
 
 *Speed.* fzf scoring runs multithreaded in C with a counting-sort final
 pass that is O(n + max_score).  Results stream incrementally so the UI
@@ -631,12 +631,12 @@ or exceed the performance of ~fzf~ in the terminal from within Emacs.
 and scoring in one pass — no two-stage conflict, no mismatches between
 what the shell tool matched and what the completion framework ranked.
 
-*Simplicity.* ~fzf-async.el~ is roughly 2000 lines of Emacs Lisp, most of
+*Simplicity.* ~fzfa.el~ is roughly 2000 lines of Emacs Lisp, most of
 which declares the built-in commands and ~fzf-native-module.c~ is also
 roughly 2000 lines.
 
 ** Downsides
-~fzf-async~ requires
+~fzfa~ requires
 [[https://github.com/dangduc/fzf-native][fzf-native]],
 a compiled C dynamic module that requires a C compiler and CMake to build.
 
@@ -661,13 +661,13 @@ For the Elisp pipeline this package owns — async and sync
 abstraction, timer model, prompt overlay — see
 [[file:architecture.org][architecture.org]].
 
-The C scoring module under ~fzf-async~ is documented separately in
+The C scoring module under ~fzfa~ is documented separately in
 [[https://github.com/dangduc/fzf-native/blob/HEAD/architecture.org][fzf-native's architecture overview]]
 (thread/lock model, ~AsyncSession~, arena allocator, counting sort,
 ~score_abort~ rule).
 
 For ~fussy~, the broader fuzzy completion-style framework that
-~fzf-async~ deliberately bypasses, see
+~fzfa~ deliberately bypasses, see
 [[https://github.com/jojojames/fussy/blob/HEAD/architecture.org][fussy's architecture overview]].
 * Acknowledgements
 [[https://github.com/abo-abo/swiper][counsel]]

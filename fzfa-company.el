@@ -1,17 +1,17 @@
-;;; fzf-async-company.el --- Company-mode interface to `fzf-async' -*- lexical-binding: t; -*-
+;;; fzfa-company.el --- Company-mode interface to `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1
-;; Package-Requires: ((emacs "29.1") (fzf-async "1.0"))
+;; Package-Requires: ((emacs "29.1") (fzfa "1.0"))
 ;; Keywords: company, completion, convenience
-;; Homepage: https://github.com/jojojames/fzf-async
+;; Homepage: https://github.com/jojojames/fzfa
 
 ;;; Commentary:
 
-;; fzf-async interface to `company-mode'.
+;; fzfa interface to `company-mode'.
 ;;
-;; Loaded automatically when `company' is in `fzf-async-extensions' and
-;; `fzf-async-setup' has been called.  Requires the `company' package
+;; Loaded automatically when `company' is in `fzfa-extensions' and
+;; `fzfa-setup' has been called.  Requires the `company' package
 ;; to be installed and available on `load-path'; it is loaded lazily
 ;; on first use.
 ;;
@@ -23,12 +23,12 @@
 ;;
 ;; With embark configured, these actions are available on a candidate:
 ;;
-;;   d  show documentation   (`fzf-async-company-show-doc')
-;;   l  show source location (`fzf-async-company-show-location')
+;;   d  show documentation   (`fzfa-company-show-doc')
+;;   l  show source location (`fzfa-company-show-location')
 
 ;;; Code:
 
-(require 'fzf-async)
+(require 'fzfa)
 
 (defvar embark-keymap-alist)
 (defvar embark-general-map)
@@ -45,16 +45,16 @@
 (declare-function evil-insert-state    "evil-states")
 (declare-function evil-change-state    "evil-core")
 
-(defvar fzf-async-company--source-buffer nil
-  "Buffer that originated the current `fzf-async-company' session.
+(defvar fzfa-company--source-buffer nil
+  "Buffer that originated the current `fzfa-company' session.
 Let-bound during the read so the annotation function and embark
 actions can call `company-call-backend' in the buffer where the
 session is alive — `company-backend' is buffer-local and is nil
 inside the minibuffer.")
 
-(defun fzf-async-company--annotate (cand)
+(defun fzfa-company--annotate (cand)
   "Return the annotation string company would show for CAND, or nil."
-  (when-let* ((buf (or fzf-async-company--source-buffer (current-buffer)))
+  (when-let* ((buf (or fzfa-company--source-buffer (current-buffer)))
               ((buffer-live-p buf))
               (ann (with-current-buffer buf
                      (ignore-errors
@@ -62,7 +62,7 @@ inside the minibuffer.")
     (concat " " (propertize ann 'face 'completions-annotations))))
 
 ;;;###autoload
-(defun fzf-async-company ()
+(defun fzfa-company ()
   "Fuzzy-select from `company-mode' candidates and complete the selection.
 
 In modal-editing states where point sits on a character (e.g. evil
@@ -103,12 +103,12 @@ original point is restored as well."
               (company-manual-begin)))
           (unless company-candidates
             (user-error "No company candidates available"))
-          (let ((fzf-async-company--source-buffer (current-buffer)))
-            (let ((selection (fzf-sync-completing-read
+          (let ((fzfa-company--source-buffer (current-buffer)))
+            (let ((selection (fzfa-sync-completing-read
                               :candidates company-candidates
                               :prompt "Company: "
-                              :category 'fzf-async-company
-                              :annotate #'fzf-async-company--annotate)))
+                              :category 'fzfa-company
+                              :annotate #'fzfa-company--annotate)))
               (when (and selection (not (string-empty-p selection)))
                 (company-finish (substring-no-properties selection))
                 (setq finished t)))))
@@ -120,10 +120,10 @@ original point is restored as well."
         (evil-change-state orig-state)))))
 
 ;;;###autoload
-(defun fzf-async-company-show-doc (cand)
+(defun fzfa-company-show-doc (cand)
   "Show the documentation buffer for company candidate CAND."
   (interactive "sCandidate: ")
-  (let* ((buf (or fzf-async-company--source-buffer (current-buffer)))
+  (let* ((buf (or fzfa-company--source-buffer (current-buffer)))
          (doc (when (buffer-live-p buf)
                 (with-current-buffer buf
                   (let ((company-candidates (list cand)))
@@ -135,10 +135,10 @@ original point is restored as well."
       (display-buffer b))))
 
 ;;;###autoload
-(defun fzf-async-company-show-location (cand)
+(defun fzfa-company-show-location (cand)
   "Pop to the source location of company candidate CAND."
   (interactive "sCandidate: ")
-  (let* ((buf (or fzf-async-company--source-buffer (current-buffer)))
+  (let* ((buf (or fzfa-company--source-buffer (current-buffer)))
          (loc (when (buffer-live-p buf)
                 (with-current-buffer buf
                   (let ((company-candidates (list cand)))
@@ -155,21 +155,21 @@ original point is restored as well."
              (forward-line (1- target)))
             ((markerp target) (goto-char target))))))
 
-(defvar-keymap fzf-async-company-map
-  :doc "Embark keymap for `fzf-async-company' candidates.
+(defvar-keymap fzfa-company-map
+  :doc "Embark keymap for `fzfa-company' candidates.
 Composed with `embark-general-map' via `embark-keymap-alist'."
-  "d" #'fzf-async-company-show-doc
-  "l" #'fzf-async-company-show-location)
+  "d" #'fzfa-company-show-doc
+  "l" #'fzfa-company-show-location)
 
 ;;;###autoload
-(defun fzf-async-company-setup ()
-  "Register the `fzf-async-company' completion category and embark keymap."
+(defun fzfa-company-setup ()
+  "Register the `fzfa-company' completion category and embark keymap."
   (add-to-list 'completion-category-overrides
-               '(fzf-async-company (styles fzf-async)))
+               '(fzfa-company (styles fzfa)))
   (with-eval-after-load 'embark
     (add-to-list 'embark-keymap-alist
-                 '(fzf-async-company
-                   fzf-async-company-map embark-general-map))))
+                 '(fzfa-company
+                   fzfa-company-map embark-general-map))))
 
-(provide 'fzf-async-company)
-;;; fzf-async-company.el ends here
+(provide 'fzfa-company)
+;;; fzfa-company.el ends here

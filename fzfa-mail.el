@@ -1,26 +1,26 @@
-;;; fzf-async-mail.el --- MacOS Mail.app integration for `fzf-async' -*- lexical-binding: t; -*-
+;;; fzfa-mail.el --- MacOS Mail.app integration for `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1
-;; Package-Requires: ((emacs "29.1") (fzf-async "1.0"))
+;; Package-Requires: ((emacs "29.1") (fzfa "1.0"))
 ;; Keywords: mail, matching, fzf
-;; Homepage: https://github.com/jojojames/fzf-async
+;; Homepage: https://github.com/jojojames/fzfa
 
 ;;; Commentary:
 
-;; Browse and open macOS Mail.app inbox messages via fzf-async.
+;; Browse and open macOS Mail.app inbox messages via fzfa.
 ;;
-;; Loaded automatically when `mail' is in `fzf-async-extensions' and
-;; `fzf-async-setup' has been called.  Requires macOS — uses
+;; Loaded automatically when `mail' is in `fzfa-extensions' and
+;; `fzfa-setup' has been called.  Requires macOS — uses
 ;; `osascript' (JXA) to enumerate messages and to open the selection
 ;; in Mail.app.
 ;;
 ;; Strategy: bulk-fetch every inbox message's date/sender/subject and
 ;; message-id via JXA into one cached list, present via
-;; `fzf-sync-completing-read', open the selection in Mail.app by
+;; `fzfa-sync-completing-read', open the selection in Mail.app by
 ;; `message id'.  The initial dump is slow for large inboxes (10–30s
 ;; depending on size), so it is cached for the session.  Run
-;; `fzf-async-mail-refresh' after new mail arrives.
+;; `fzfa-mail-refresh' after new mail arrives.
 ;;
 ;; Why not stream via `mdfind' or `find'?  Spotlight does not index
 ;; `~/Library/Mail/' on most machines (depends on the user's Spotlight
@@ -29,21 +29,21 @@
 ;; every default install at the cost of an upfront wait.
 ;;
 ;; Commands:
-;;   `fzf-async-mail'           Fuzzy-select and open an inbox message
-;;   `fzf-async-mail-refresh'   Drop the cached message list
+;;   `fzfa-mail'           Fuzzy-select and open an inbox message
+;;   `fzfa-mail-refresh'   Drop the cached message list
 
 ;;; Code:
 
-(require 'fzf-async)
+(require 'fzfa)
 (require 'cl-lib)
 
-(defcustom fzf-async-mail-dump-timeout 120
+(defcustom fzfa-mail-dump-timeout 120
   "Seconds to wait for the Mail.app dump before giving up.
 Large inboxes (10k+ messages) can take 30s+ to enumerate."
   :type 'number
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defconst fzf-async-mail--dump-script
+(defconst fzfa-mail--dump-script
   "var Mail = Application('Mail');
    var msgs = Mail.inbox.messages;
    var ids = msgs.messageId();
@@ -59,28 +59,28 @@ Large inboxes (10k+ messages) can take 30s+ to enumerate."
    out.join('\\n');"
   "JXA snippet returning tab-separated id/date/sender/subject lines.")
 
-(defvar fzf-async-mail--cache nil
+(defvar fzfa-mail--cache nil
   "Cached messages.
 Each entry is a plist with `:id', `:date', `:from', and `:subject' keys.")
 
-(defun fzf-async-mail--osascript-lines (script)
+(defun fzfa-mail--osascript-lines (script)
   "Run JXA SCRIPT via `osascript', return non-empty stdout lines."
   (unless (eq system-type 'darwin)
-    (user-error "Fzf-async-mail requires macOS"))
+    (user-error "Fzfa-mail requires macOS"))
   (with-temp-buffer
-    (let ((rc (with-timeout (fzf-async-mail-dump-timeout
+    (let ((rc (with-timeout (fzfa-mail-dump-timeout
                              (user-error "Mail.app query timed out after %ss"
-                                         fzf-async-mail-dump-timeout))
+                                         fzfa-mail-dump-timeout))
                 (call-process "osascript" nil t nil
                               "-l" "JavaScript" "-e" script))))
       (unless (zerop rc)
         (user-error "Osascript failed (exit %s): %s" rc (buffer-string)))
       (split-string (buffer-string) "\n" t))))
 
-(defun fzf-async-mail--dump ()
+(defun fzfa-mail--dump ()
   "Dump Mail.app's inbox into a list of plists."
-  (cl-loop for line in (fzf-async-mail--osascript-lines
-                        fzf-async-mail--dump-script)
+  (cl-loop for line in (fzfa-mail--osascript-lines
+                        fzfa-mail--dump-script)
            for parts = (split-string line "\t")
            when (>= (length parts) 4)
            collect (list :id      (nth 0 parts)
@@ -88,25 +88,25 @@ Each entry is a plist with `:id', `:date', `:from', and `:subject' keys.")
                          :from    (nth 2 parts)
                          :subject (nth 3 parts))))
 
-(defun fzf-async-mail--messages ()
+(defun fzfa-mail--messages ()
   "Return cached message list, dumping Mail.app on first use."
-  (or fzf-async-mail--cache
-      (setq fzf-async-mail--cache
+  (or fzfa-mail--cache
+      (setq fzfa-mail--cache
             (with-temp-message "Loading Mail.app inbox (first call is slow)..."
-              (fzf-async-mail--dump)))))
+              (fzfa-mail--dump)))))
 
 ;;;###autoload
-(defun fzf-async-mail-refresh ()
+(defun fzfa-mail-refresh ()
   "Invalidate the cached Mail.app inbox so the next call re-dumps."
   (interactive)
-  (setq fzf-async-mail--cache nil)
+  (setq fzfa-mail--cache nil)
   (message "Mail.app cache cleared"))
 
 ;;;###autoload
-(defun fzf-async-mail ()
+(defun fzfa-mail ()
   "Fuzzy-select and open a Mail.app inbox message."
   (interactive)
-  (let* ((msgs (fzf-async-mail--messages))
+  (let* ((msgs (fzfa-mail--messages))
          (map (make-hash-table :test #'equal))
          (cands (mapcar (lambda (m)
                           (let ((d (format "%s — %s — %s"
@@ -115,10 +115,10 @@ Each entry is a plist with `:id', `:date', `:from', and `:subject' keys.")
                                            (plist-get m :subject))))
                             (puthash d m map) d))
                         msgs)))
-    (when-let* ((sel (fzf-sync-completing-read
+    (when-let* ((sel (fzfa-sync-completing-read
                       :candidates cands
                       :prompt "mail: "
-                      :category 'fzf-async-mail))
+                      :category 'fzfa-mail))
                 (item (gethash sel map)))
       ;; `open -a Mail' reliably brings Mail to the foreground (macOS
       ;; treats it as a user-initiated launch), then the AppleScript
@@ -131,10 +131,10 @@ Each entry is a plist with `:id', `:date', `:from', and `:subject' keys.")
         (plist-get item :id))))))
 
 ;;;###autoload
-(defun fzf-async-mail-setup ()
-  "Register the `fzf-async-mail' completion category."
+(defun fzfa-mail-setup ()
+  "Register the `fzfa-mail' completion category."
   (add-to-list 'completion-category-overrides
-               '(fzf-async-mail (styles fzf-async))))
+               '(fzfa-mail (styles fzfa))))
 
-(provide 'fzf-async-mail)
-;;; fzf-async-mail.el ends here
+(provide 'fzfa-mail)
+;;; fzfa-mail.el ends here

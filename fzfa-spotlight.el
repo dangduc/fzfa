@@ -1,42 +1,42 @@
-;;; fzf-async-spotlight.el --- Spotlight (mdfind) integration for `fzf-async' -*- lexical-binding: t; -*-
+;;; fzfa-spotlight.el --- Spotlight (mdfind) integration for `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1
-;; Package-Requires: ((emacs "29.1") (fzf-async "1.0"))
+;; Package-Requires: ((emacs "29.1") (fzfa "1.0"))
 ;; Keywords: convenience, files, matching
-;; Homepage: https://github.com/jojojames/fzf-async
+;; Homepage: https://github.com/jojojames/fzfa
 
 ;;; Commentary:
 
-;; macOS Spotlight (mdfind) commands for fzf-async.
+;; macOS Spotlight (mdfind) commands for fzfa.
 ;;
-;; Loaded automatically when `spotlight' is in `fzf-async-extensions'
-;; (the default) and `fzf-async-setup' has been called.  No setup
+;; Loaded automatically when `spotlight' is in `fzfa-extensions'
+;; (the default) and `fzfa-setup' has been called.  No setup
 ;; function is registered — the commands are usable immediately.
 ;;
 ;; Commands:
-;;   `fzf-async-spotlight'        Find any indexed file or .app bundle
-;;   `fzf-async-spotlight-apps'   Find an installed application
-;;   `fzf-async-spotlight-audio'  Find audio and play it with the default app
+;;   `fzfa-spotlight'        Find any indexed file or .app bundle
+;;   `fzfa-spotlight-apps'   Find an installed application
+;;   `fzfa-spotlight-audio'  Find audio and play it with the default app
 
 ;;; Code:
 
-(require 'fzf-async)
+(require 'fzfa)
 
-(defcustom fzf-async-spotlight-audio-directories
+(defcustom fzfa-spotlight-audio-directories
   '("~/Music" "~/Downloads" "~/Desktop")
-  "Directories searched by `fzf-async-spotlight-audio'.
+  "Directories searched by `fzfa-spotlight-audio'.
 Each directory is passed to `mdfind -onlyin'; results are concatenated.
 Set to nil to search the whole index."
   :type '(repeat directory)
-  :group 'fzf-async)
+  :group 'fzfa)
 
 ;;;###autoload
-(defun fzf-async-spotlight ()
+(defun fzfa-spotlight ()
   "Find a file system-wide using Spotlight (mdfind).
 .app bundles are opened with `open'; all other results open with `find-file'."
   (interactive)
-  (when-let* ((result (fzf-async-completing-read
+  (when-let* ((result (fzfa-async-completing-read
                        :prompt "spotlight: "
                        :command "mdfind 'kMDItemFSName != \"\"'")))
     (if (string-suffix-p ".app" result)
@@ -44,38 +44,38 @@ Set to nil to search the whole index."
       (find-file result))))
 
 ;;;###autoload
-(defun fzf-async-spotlight-apps ()
+(defun fzfa-spotlight-apps ()
   "Find an installed application using Spotlight.
 Opens the selection with `open'."
   (interactive)
   (when-let*
       ((result
-        (fzf-async-completing-read
+        (fzfa-async-completing-read
          :prompt "spotlight: "
          :command
          "mdfind 'kMDItemContentTypeTree == \"com.apple.application-bundle\"'")))
     (start-process "default-app" nil "open" result)))
 
 ;;;###autoload
-(defun fzf-async-spotlight-audio ()
+(defun fzfa-spotlight-audio ()
   "Find audio and play it using Spotlight.
-Constrained to `fzf-async-spotlight-audio-directories'."
+Constrained to `fzfa-spotlight-audio-directories'."
   (interactive)
   (let* ((query "'kMDItemContentTypeTree == \"public.audio\"'")
          (command
-          (if fzf-async-spotlight-audio-directories
+          (if fzfa-spotlight-audio-directories
               (mapconcat
                (lambda (dir)
                  (format "mdfind -onlyin %s %s"
                          (shell-quote-argument (expand-file-name dir))
                          query))
-               fzf-async-spotlight-audio-directories
+               fzfa-spotlight-audio-directories
                "; ")
             (concat "mdfind " query))))
-    (when-let* ((result (fzf-async-completing-read
+    (when-let* ((result (fzfa-async-completing-read
                          :prompt "spotlight: "
                          :command command)))
       (start-process "default-app" nil "open" result))))
 
-(provide 'fzf-async-spotlight)
-;;; fzf-async-spotlight.el ends here
+(provide 'fzfa-spotlight)
+;;; fzfa-spotlight.el ends here

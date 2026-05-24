@@ -1,44 +1,44 @@
-;;; fzf-async-music.el --- MacOS Music.app integration for `fzf-async' -*- lexical-binding: t; -*-
+;;; fzfa-music.el --- MacOS Music.app integration for `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1
-;; Package-Requires: ((emacs "29.1") (fzf-async "1.0"))
+;; Package-Requires: ((emacs "29.1") (fzfa "1.0"))
 ;; Keywords: multimedia, matching, fzf
-;; Homepage: https://github.com/jojojames/fzf-async
+;; Homepage: https://github.com/jojojames/fzfa
 
 ;;; Commentary:
 
-;; A `fzf-async' extension to interact with OSX's Music app.
+;; A `fzfa' extension to interact with OSX's Music app.
 ;;
-;; Loaded automatically when `music' is in `fzf-async-extensions' and
-;; `fzf-async-setup' has been called.  Requires macOS — uses
+;; Loaded automatically when `music' is in `fzfa-extensions' and
+;; `fzfa-setup' has been called.  Requires macOS — uses
 ;; `osascript' (JXA) to dump the Music.app library and to play tracks.
 ;;
 ;; Strategy: dump the entire library once via JXA, present via
-;; `fzf-sync-completing-read', play the selection by persistent ID.
+;; `fzfa-sync-completing-read', play the selection by persistent ID.
 ;;
 ;; Commands:
-;;   `fzf-async-music'             Flat list of all tracks
-;;   `fzf-async-music-by-artist'   Tracks grouped under per-artist headers
-;;   `fzf-async-music-by-genre'    Tracks grouped under per-genre headers
+;;   `fzfa-music'             Flat list of all tracks
+;;   `fzfa-music-by-artist'   Tracks grouped under per-artist headers
+;;   `fzfa-music-by-genre'    Tracks grouped under per-genre headers
 ;;                                 (candidate prefix includes the genre, so
 ;;                                 typing e.g. \"rock\" narrows by genre)
-;;   `fzf-async-music-playlist'    Pick a playlist and play it
-;;   `fzf-async-music-refresh'     Drop the cached library and playlists
+;;   `fzfa-music-playlist'    Pick a playlist and play it
+;;   `fzfa-music-refresh'     Drop the cached library and playlists
 ;;
 ;; Tracks and playlists are cached separately for the session.
 
 ;;; Code:
 
-(require 'fzf-async)
+(require 'fzfa)
 (require 'cl-lib)
 
-(defcustom fzf-async-music-dump-timeout 30
+(defcustom fzfa-music-dump-timeout 30
   "Seconds to wait for the Music.app library dump before giving up."
   :type 'number
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defconst fzf-async-music--dump-script
+(defconst fzfa-music--dump-script
   "var m = Application('Music');
    var t = m.tracks;
    var ids = t.persistentID();
@@ -53,15 +53,15 @@
    out.join('\\n');"
   "JXA snippet returning tab-separated id/artist/album/name/genre lines.")
 
-(defvar fzf-async-music--cache nil
+(defvar fzfa-music--cache nil
   "Cached tracks.
 Each entry is a plist with `:id', `:artist', `:album', `:name', and
 `:genre' keys.")
 
-(defvar fzf-async-music--playlists-cache nil
+(defvar fzfa-music--playlists-cache nil
   "Cached playlists, each entry a plist with `:id' and `:name' keys.")
 
-(defconst fzf-async-music--playlists-script
+(defconst fzfa-music--playlists-script
   "var m = Application('Music');
    var p = m.playlists;
    var ids = p.persistentID();
@@ -73,29 +73,29 @@ Each entry is a plist with `:id', `:artist', `:album', `:name', and
    out.join('\\n');"
   "JXA snippet returning tab-separated id/name lines for each playlist.")
 
-(defvar fzf-async-music--items nil
+(defvar fzfa-music--items nil
   "Dynamic per-call hash table mapping candidate string -> track plist.
-Bound by `fzf-async-music--read' so the `:group' callback can look up
+Bound by `fzfa-music--read' so the `:group' callback can look up
 metadata for the candidate currently being rendered.")
 
-(defun fzf-async-music--osascript-lines (script)
+(defun fzfa-music--osascript-lines (script)
   "Run JXA SCRIPT via `osascript', return non-empty stdout lines."
   (unless (eq system-type 'darwin)
-    (user-error "Fzf-async-music requires macOS"))
+    (user-error "Fzfa-music requires macOS"))
   (with-temp-buffer
-    (let ((rc (with-timeout (fzf-async-music-dump-timeout
+    (let ((rc (with-timeout (fzfa-music-dump-timeout
                              (user-error "Music.app query timed out after %ss"
-                                         fzf-async-music-dump-timeout))
+                                         fzfa-music-dump-timeout))
                 (call-process "osascript" nil t nil
                               "-l" "JavaScript" "-e" script))))
       (unless (zerop rc)
         (user-error "Osascript failed (exit %s): %s" rc (buffer-string)))
       (split-string (buffer-string) "\n" t))))
 
-(defun fzf-async-music--dump ()
+(defun fzfa-music--dump ()
   "Dump Music.app's track library into a list of plists."
-  (cl-loop for line in (fzf-async-music--osascript-lines
-                        fzf-async-music--dump-script)
+  (cl-loop for line in (fzfa-music--osascript-lines
+                        fzfa-music--dump-script)
            for parts = (split-string line "\t")
            when (>= (length parts) 4)
            collect (list :id     (nth 0 parts)
@@ -104,30 +104,30 @@ metadata for the candidate currently being rendered.")
                          :name   (nth 3 parts)
                          :genre  (or (nth 4 parts) ""))))
 
-(defun fzf-async-music--dump-playlists ()
+(defun fzfa-music--dump-playlists ()
   "Dump Music.app's playlists into a list of plists."
-  (cl-loop for line in (fzf-async-music--osascript-lines
-                        fzf-async-music--playlists-script)
+  (cl-loop for line in (fzfa-music--osascript-lines
+                        fzfa-music--playlists-script)
            for parts = (split-string line "\t")
            when (= (length parts) 2)
            collect (list :id (nth 0 parts) :name (nth 1 parts))))
 
-(defun fzf-async-music--tracks ()
+(defun fzfa-music--tracks ()
   "Return cached track list, dumping Music.app on first use."
-  (or fzf-async-music--cache
-      (setq fzf-async-music--cache
+  (or fzfa-music--cache
+      (setq fzfa-music--cache
             (with-temp-message "Loading Music.app library..."
-              (fzf-async-music--dump)))))
+              (fzfa-music--dump)))))
 
-(defun fzf-async-music--playlists ()
+(defun fzfa-music--playlists ()
   "Return cached playlist list, dumping Music.app on first use."
-  (or fzf-async-music--playlists-cache
-      (setq fzf-async-music--playlists-cache
+  (or fzfa-music--playlists-cache
+      (setq fzfa-music--playlists-cache
             (with-temp-message "Loading Music.app playlists..."
-              (fzf-async-music--dump-playlists)))))
+              (fzfa-music--dump-playlists)))))
 
-(defun fzf-async-music--read (tracks group-key prompt)
-  "Read TRACKS via `fzf-sync-completing-read'; return the chosen plist.
+(defun fzfa-music--read (tracks group-key prompt)
+  "Read TRACKS via `fzfa-sync-completing-read'; return the chosen plist.
 PROMPT is shown in the minibuffer.
 GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
 - TRACKS are sorted by GROUP-KEY so consecutive same-key entries cluster.
@@ -156,11 +156,11 @@ GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
                (puthash cand p map)
                cand))
            sorted))
-         (fzf-async-music--items map)
+         (fzfa-music--items map)
          (group-fn
           (when group-key
             (lambda (cand transform)
-              (let ((p (gethash cand fzf-async-music--items)))
+              (let ((p (gethash cand fzfa-music--items)))
                 (cond
                  ((null p) cand)
                  ((null transform)
@@ -176,17 +176,17 @@ GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
                   (format "%s — %s"
                           (plist-get p :album) (plist-get p :name)))
                  (t cand)))))))
-    (when-let* ((sel (fzf-sync-completing-read
+    (when-let* ((sel (fzfa-sync-completing-read
                       :candidates cands
                       :prompt prompt
-                      :category 'fzf-async-music
+                      :category 'fzfa-music
                       :group group-fn)))
-      (gethash sel fzf-async-music--items))))
+      (gethash sel fzfa-music--items))))
 
-(defun fzf-async-music--pick-and-play (group-key prompt)
+(defun fzfa-music--pick-and-play (group-key prompt)
   "Pick a track grouped by GROUP-KEY (or flat) with PROMPT, then play it."
-  (when-let* ((item (fzf-async-music--read
-                     (fzf-async-music--tracks) group-key prompt)))
+  (when-let* ((item (fzfa-music--read
+                     (fzfa-music--tracks) group-key prompt)))
     (call-process
      "osascript" nil 0 nil "-e"
      (format
@@ -194,28 +194,28 @@ GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
       (plist-get item :id)))))
 
 ;;;###autoload
-(defun fzf-async-music-refresh ()
+(defun fzfa-music-refresh ()
   "Invalidate cached Music.app library and playlists so they re-dump."
   (interactive)
-  (setq fzf-async-music--cache           nil
-        fzf-async-music--playlists-cache nil)
+  (setq fzfa-music--cache           nil
+        fzfa-music--playlists-cache nil)
   (message "Music.app caches cleared"))
 
-(defun fzf-async-music--pick-playlist (prompt)
+(defun fzfa-music--pick-playlist (prompt)
   "Fuzzy-select a Music.app playlist with PROMPT; return its plist or nil."
-  (let* ((playlists (fzf-async-music--playlists))
+  (let* ((playlists (fzfa-music--playlists))
          (map (make-hash-table :test #'equal))
          (cands (mapcar (lambda (p)
                           (let ((n (plist-get p :name)))
                             (puthash n p map) n))
                         playlists)))
-    (when-let* ((sel (fzf-sync-completing-read
+    (when-let* ((sel (fzfa-sync-completing-read
                       :candidates cands
                       :prompt prompt
-                      :category 'fzf-async-music)))
+                      :category 'fzfa-music)))
       (gethash sel map))))
 
-(defun fzf-async-music--play-playlist (item shuffle)
+(defun fzfa-music--play-playlist (item shuffle)
   "Play playlist ITEM with shuffle on or off per SHUFFLE."
   (call-process
    "osascript" nil 0 nil "-e"
@@ -225,45 +225,45 @@ GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
     (plist-get item :id))))
 
 ;;;###autoload
-(defun fzf-async-music-playlist ()
+(defun fzfa-music-playlist ()
   "Fuzzy-select a Music.app playlist and play it sequentially.
 Explicitly disables shuffle so this command always plays in order,
-even if `fzf-async-music-playlist-shuffle' was used previously."
+even if `fzfa-music-playlist-shuffle' was used previously."
   (interactive)
-  (when-let* ((item (fzf-async-music--pick-playlist "playlist: ")))
-    (fzf-async-music--play-playlist item nil)))
+  (when-let* ((item (fzfa-music--pick-playlist "playlist: ")))
+    (fzfa-music--play-playlist item nil)))
 
 ;;;###autoload
-(defun fzf-async-music-playlist-shuffle ()
+(defun fzfa-music-playlist-shuffle ()
   "Fuzzy-select a Music.app playlist and play it in shuffle mode."
   (interactive)
-  (when-let* ((item (fzf-async-music--pick-playlist "playlist (shuffle): ")))
-    (fzf-async-music--play-playlist item t)))
+  (when-let* ((item (fzfa-music--pick-playlist "playlist (shuffle): ")))
+    (fzfa-music--play-playlist item t)))
 
 ;;;###autoload
-(defun fzf-async-music ()
+(defun fzfa-music ()
   "Fuzzy-select and play a track from the macOS Music.app library."
   (interactive)
-  (fzf-async-music--pick-and-play nil "music: "))
+  (fzfa-music--pick-and-play nil "music: "))
 
 ;;;###autoload
-(defun fzf-async-music-by-artist ()
+(defun fzfa-music-by-artist ()
   "Fuzzy-select and play a track, with results grouped by artist."
   (interactive)
-  (fzf-async-music--pick-and-play :artist "music (by artist): "))
+  (fzfa-music--pick-and-play :artist "music (by artist): "))
 
 ;;;###autoload
-(defun fzf-async-music-by-genre ()
+(defun fzfa-music-by-genre ()
   "Fuzzy-select and play a track, with results grouped by genre.
 Genre is prefixed to each candidate, so typing the genre narrows results."
   (interactive)
-  (fzf-async-music--pick-and-play :genre "music (by genre): "))
+  (fzfa-music--pick-and-play :genre "music (by genre): "))
 
 ;;;###autoload
-(defun fzf-async-music-setup ()
-  "Register the `fzf-async-music' completion category."
+(defun fzfa-music-setup ()
+  "Register the `fzfa-music' completion category."
   (add-to-list 'completion-category-overrides
-               '(fzf-async-music (styles fzf-async))))
+               '(fzfa-music (styles fzfa))))
 
-(provide 'fzf-async-music)
-;;; fzf-async-music.el ends here
+(provide 'fzfa-music)
+;;; fzfa-music.el ends here

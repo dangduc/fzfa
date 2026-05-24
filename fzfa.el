@@ -1,10 +1,10 @@
-;;; fzf-async.el --- Async fuzzy completion via `fzf-native' -*- lexical-binding: t; -*-
+;;; fzfa.el --- Async fuzzy completion via `fzf-native' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
 ;; Package-Requires: ((emacs "29.1") (fzf-native "0.3"))
 ;; Keywords: matching, completion, fzf, fuzzy, fussy
-;; Homepage: https://github.com/jojojames/fzf-async
+;; Homepage: https://github.com/jojojames/fzfa
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -27,18 +27,18 @@
 ;; while-no-input responsiveness, a candidate cap, and a live stats overlay.
 ;;
 ;; Quick start:
-;;   (fzf-async-setup)   ; register completion style + category override
-;;   (fzf-async-find-files)
+;;   (fzfa-setup)   ; register completion style + category override
+;;   (fzfa-find-files)
 
 (require 'cl-lib)
 (require 'fzf-native)
 
 ;;; Code:
 
-(defgroup fzf-async nil
+(defgroup fzfa nil
   "Async fuzzy completion via fzf-native."
   :group 'completion
-  :link '(url-link :tag "GitHub" "https://github.com/jojojames/fzf-async"))
+  :link '(url-link :tag "GitHub" "https://github.com/jojojames/fzfa"))
 
 (defvar embark-keymap-alist)
 (defvar embark-default-action-overrides)
@@ -86,53 +86,53 @@
 
 ;;; Debug logging
 
-(defvar fzf-async-debug nil
-  "When non-nil at load time, compile debug logging into fzf-async.
-Set before loading or re-evaluating fzf-async.el; toggling at runtime
+(defvar fzfa-debug nil
+  "When non-nil at load time, compile debug logging into fzfa.
+Set before loading or re-evaluating fzfa.el; toggling at runtime
 has no effect (the check is macro-expanded at load time, like #ifdef).")
 
-(defmacro fzf-async--log (fmt &rest args)
-  "Emit a debug message FMT with ARGS if `fzf-async-debug' is non-nil at load.
+(defmacro fzfa--log (fmt &rest args)
+  "Emit a debug message FMT with ARGS if `fzfa-debug' is non-nil at load.
 Expands to nothing when disabled — zero runtime cost."
-  (when (bound-and-true-p fzf-async-debug) `(message ,fmt ,@args)))
+  (when (bound-and-true-p fzfa-debug) `(message ,fmt ,@args)))
 
 ;;; Customization
 
-(defcustom fzf-async-max-candidates 10000
-  "Max candidates returned to Elisp from `fzf-async-completing-read'.
+(defcustom fzfa-max-candidates 10000
+  "Max candidates returned to Elisp from `fzfa-async-completing-read'.
 The full filtered/total counts are still tracked and shown in the prompt.
 Set to nil or 0 to disable the cap (may be slow for very large result sets)."
   :type '(choice (const  :tag "No cap" nil)
                  (integer :tag "Max candidates"))
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defcustom fzf-async-refresh-delay 0.05
+(defcustom fzfa-refresh-delay 0.05
   "Seconds between polls for new C-side candidate generations.
 The background reader thread increments a generation counter as lines
 arrive; this timer checks that counter and schedules a display refresh
 when new data is available.  Lower values feel more responsive but burn
 more CPU on the polling loop.  Analogous to `consult-async-refresh-delay'."
   :type 'float
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defcustom fzf-async-input-debounce 0.1
+(defcustom fzfa-input-debounce 0.1
   "Seconds of idle time to wait before retrying after interrupted scoring.
 When the user types fast, `while-no-input' aborts the scoring call.  This
 idle timer fires once typing pauses and re-triggers the display so results
 self-heal."
   :type 'float
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defcustom fzf-async-input-throttle 0.2
+(defcustom fzfa-input-throttle 0.2
   "Minimum seconds between display refreshes driven by new incoming data.
 Even when new candidate generations arrive continuously (e.g. a fast `find'
 streaming thousands of files), the completion UI is only re-exhibited once
 per this interval.  The debounce retry path is unaffected — after the user
 pauses typing the display always self-heals regardless of this value."
   :type 'float
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defcustom fzf-async-highlight 200
+(defcustom fzfa-highlight 200
   "Controls C-side match highlighting of completion candidates.
 nil or a negative integer — no highlighting.
 t                        — highlight every returned candidate.
@@ -142,9 +142,9 @@ run of matched bytes via fzf_get_positions."
   :type '(choice (const   :tag "Disabled" nil)
                  (const   :tag "All candidates" t)
                  (integer :tag "Top N candidates"))
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defcustom fzf-async-max-line-length 256
+(defcustom fzfa-max-line-length 256
   "Maximum character length of a candidate line.
 nil           — no limit.
 positive N    — exclude lines longer than N characters.
@@ -158,9 +158,9 @@ For the rg / ag / ugrep grep-style commands the cap is also pushed
 upstream into the search tool itself (via `--max-columns' / `--width')."
   :type '(choice (const   :tag "No limit" nil)
                  (integer :tag "N (positive = exclude, negative = truncate)"))
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defcustom fzf-async-case-mode 'smart
+(defcustom fzfa-case-mode 'smart
   "Case-sensitivity mode propagated to `fzf-native-case-mode'.
 
 Mirrors fzf-native's enum:
@@ -171,9 +171,9 @@ respect  Always case-sensitive."
   :type '(choice (const :tag "Smart case (default)" smart)
                  (const :tag "Ignore case"          ignore)
                  (const :tag "Respect case"         respect))
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defcustom fzf-async-cache-size 40
+(defcustom fzfa-cache-size 40
   "Maximum number of scored snapshots cached per async session.
 Each entry stores the top-K results and the full matched-candidate
 index for one query, enabling exact-fresh hits (skip scoring) and
@@ -187,13 +187,13 @@ unrelated lookups.
 
 Read at session start; changing it does not affect running sessions."
   :type 'integer
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defcustom fzf-async-extensions
+(defcustom fzfa-extensions
   '(pass spotlight music chrome company mail notmuch)
-  "List of fzf-async extensions to load from `fzf-async-setup'.
-Each SYMBOL causes `fzf-async-setup' to `require' the feature
-`fzf-async-SYMBOL' and, if defined, call `fzf-async-SYMBOL-setup'."
+  "List of fzfa extensions to load from `fzfa-setup'.
+Each SYMBOL causes `fzfa-setup' to `require' the feature
+`fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
   :type '(set (const :tag "password-store (pass)" pass)
               (const :tag "macOS Spotlight (mdfind)" spotlight)
               (const :tag "macOS Music.app" music)
@@ -201,28 +201,28 @@ Each SYMBOL causes `fzf-async-setup' to `require' the feature
               (const :tag "company-mode completions" company)
               (const :tag "macOS Mail.app" mail)
               (const :tag "notmuch mail search" notmuch))
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defvar fzf-async--setup-done nil
-  "Non-nil once `fzf-async--ensure-setup' has installed registrations.
+(defvar fzfa--setup-done nil
+  "Non-nil once `fzfa--ensure-setup' has installed registrations.
 Reset to nil to force a re-setup on the next entry-point call.")
 
-(defvar fzf-async--multi-mode nil
-  "Dispatch flag for `fzf-async-completing-read' / `fzf-sync-completing-read'.
-- `:extract'         — throw `fzf-async-extracted' with the call's keyword args.
+(defvar fzfa--multi-mode nil
+  "Dispatch flag for `fzfa-async-completing-read' / `fzfa-sync-completing-read'.
+- `:extract'         — throw `fzfa-extracted' with the call's keyword args.
 - (`:inject' . CAND) — return CAND directly without prompting.
-Bound by `fzf-async-multi-read' to derive multi-source sources from
+Bound by `fzfa-multi-read' to derive multi-source sources from
 existing single-source commands without modifying their definitions.")
 
-(defvar fzf-async-directory nil
-  "Per-call directory override for fzf-async commands.
-When non-nil, supersedes `fzf-async-project-backend' and `default-directory'.
+(defvar fzfa-directory nil
+  "Per-call directory override for fzfa commands.
+When non-nil, supersedes `fzfa-project-backend' and `default-directory'.
 Intended for `let'-binding when extending built-in commands:
 
-Priority: `fzf-async-directory' > project backend > `default-directory'.")
+Priority: `fzfa-directory' > project backend > `default-directory'.")
 
-(defcustom fzf-async-project-backend 'project
-  "How to resolve the root directory for fzf-async commands.
+(defcustom fzfa-project-backend 'project
+  "How to resolve the root directory for fzfa commands.
 project    Use `project.el' to find the project root (default, matches consult).
 projectile Use `projectile-project-root'.
 nil        Use `default-directory' (no project detection).
@@ -231,24 +231,24 @@ function   Call the function with no arguments; Returns a directory string."
                  (const :tag "Projectile" projectile)
                  (const :tag "None (default-directory)" nil)
                  (function :tag "Custom function"))
-  :group 'fzf-async)
+  :group 'fzfa)
 
 ;;; Completion style
 
-(defun fzf-async-try-completion (string _table _pred _point)
-  "Try-completion for the fzf-async completion style.
+(defun fzfa-try-completion (string _table _pred _point)
+  "Try-completion for the fzfa completion style.
 Always accepts STRING as-is; scoring is done in C."
   (cons string (length string)))
 
-(defun fzf-async-all-completions (string table pred _point)
-  "All-completions for the fzf-async completion style.
+(defun fzfa-all-completions (string table pred _point)
+  "All-completions for the fzfa completion style.
 Passes STRING through to the collection TABLE filtered by PRED.
-Highlighting is applied by the C layer (see `fzf-async-highlight')."
+Highlighting is applied by the C layer (see `fzfa-highlight')."
   (funcall table string pred t))
 
 ;;; Frontend abstraction
 
-(defun fzf-async--frontend-index ()
+(defun fzfa--frontend-index ()
   "Return the active completion UI's selection index (0-based), or nil.
 Returns nil for frontends that do not expose a selection index (e.g. icomplete)."
   (cond
@@ -256,9 +256,9 @@ Returns nil for frontends that do not expose a selection index (e.g. icomplete).
    ((bound-and-true-p ivy-mode) (and (boundp 'ivy--index) (max 0 ivy--index)))
    (t nil)))
 
-(defun fzf-async--frontend-candidate ()
+(defun fzfa--frontend-candidate ()
   "Return the currently highlighted candidate string in the active UI, or nil.
-Used to implement live preview (e.g. `fzf-async-theme')."
+Used to implement live preview (e.g. `fzfa-theme')."
   (cond
    ((bound-and-true-p vertico-mode)
     (when (and (boundp 'vertico--candidates) vertico--candidates)
@@ -269,7 +269,7 @@ Used to implement live preview (e.g. `fzf-async-theme')."
    ((bound-and-true-p icomplete-mode)
     (car (completion-all-sorted-completions)))))
 
-(defun fzf-async--frontend-exhibit ()
+(defun fzfa--frontend-exhibit ()
   "Trigger a display refresh in the active completion UI.
 Handles vertico and icomplete.  `ivy' is handled separately."
   (when-let* ((win (active-minibuffer-window)))
@@ -281,7 +281,7 @@ Handles vertico and icomplete.  `ivy' is handled separately."
        ((bound-and-true-p icomplete-mode)
         (icomplete-exhibit))))))
 
-(defun fzf-async--commas (n)
+(defun fzfa--commas (n)
   "Format integer N with comma thousand-separators.
 
 e.g., 1234567 → 1,234,567."
@@ -294,9 +294,9 @@ e.g., 1234567 → 1,234,567."
 
 ;;; Completing-read
 
-(cl-defun fzf-async--helm-completing-read (&key prompt command directory
+(cl-defun fzfa--helm-completing-read (&key prompt command directory
                                                 skip-executable-check)
-  "Helm path for `fzf-async-completing-read'.
+  "Helm path for `fzfa-async-completing-read'.
 PROMPT is shown in the minibuffer.  COMMAND is the producer shell command run
 in DIRECTORY.  SKIP-EXECUTABLE-CHECK bypasses the `executable-find' guard.
 Starts an fzf-native async session and opens a helm buffer driven by a
@@ -315,9 +315,9 @@ Returns the selected candidate string, or nil on cancel."
                         (concat (car (split-string command nil t)) ": "))))
          (dir     (expand-file-name (or directory default-directory)))
          (handle  (fzf-native-async-start command dir))
-         (limit   (and fzf-async-max-candidates
-                       (> fzf-async-max-candidates 0)
-                       fzf-async-max-candidates))
+         (limit   (and fzfa-max-candidates
+                       (> fzfa-max-candidates 0)
+                       fzfa-max-candidates))
          (last-gen -1)
          (stopped  nil)
          (result   nil)
@@ -328,7 +328,7 @@ Returns the selected candidate string, or nil on cancel."
          timer)
     (setq timer
           (run-with-timer
-           0 fzf-async-refresh-delay
+           0 fzfa-refresh-delay
            (lambda ()
              (when helm-alive-p
                (let ((gen (fzf-native-async-generation handle)))
@@ -340,7 +340,7 @@ Returns the selected candidate string, or nil on cancel."
           (helm
            :sources
            (helm-make-source
-            (or prompt "fzf-async") 'helm-source-sync
+            (or prompt "fzfa") 'helm-source-sync
             :header-name
             (lambda (name)
               (format "%s [%s]" name (abbreviate-file-name dir)))
@@ -355,12 +355,12 @@ Returns the selected candidate string, or nil on cancel."
             :candidate-number-limit (or limit 10000)
             :cleanup cleanup
             :action (lambda (cand) (setq result cand)))
-           :buffer "*helm fzf-async*"))
+           :buffer "*helm fzfa*"))
       (cancel-timer timer)
       (funcall cleanup))
     result))
 
-(defun fzf-async--maybe-expand (result directory resolve-paths)
+(defun fzfa--maybe-expand (result directory resolve-paths)
   "Return RESULT expanded against DIRECTORY when RESOLVE-PATHS is non-nil.
 
 For RESOLVE-PATHS=t the whole RESULT is passed through `expand-file-name'
@@ -373,11 +373,11 @@ when RESOLVE-PATHS is nil."
     result))
 
 ;;;###autoload
-(cl-defun fzf-async-completing-read (&key
+(cl-defun fzfa-async-completing-read (&key
                                      prompt
                                      command
-                                     (directory (fzf-async--default-dir))
-                                     (category 'fzf-async-file)
+                                     (directory (fzfa--default-dir))
+                                     (category 'fzfa-file)
                                      group
                                      (resolve-paths t)
                                      skip-executable-check)
@@ -387,12 +387,12 @@ when RESOLVE-PATHS is nil."
                         COMMAND (e.g. \"find: \" for \"find .\") when omitted.
 :COMMAND                Shell command whose stdout lines become candidates.
 :DIRECTORY              Working directory for COMMAND.  Defaults to
-                        `fzf-async--default-dir' (respects
-                        `fzf-async-project-backend').
+                        `fzfa--default-dir' (respects
+                        `fzfa-project-backend').
 :CATEGORY               Completion category symbol.  Defaults to
-                        `fzf-async-file' (most async commands return file
-                        paths).  Pass `fzf-async-grep' for FILE:LINE:CONTENT
-                        candidates, `fzf-async-misc' for non-file output, etc.
+                        `fzfa-file' (most async commands return file
+                        paths).  Pass `fzfa-grep' for FILE:LINE:CONTENT
+                        candidates, `fzfa-misc' for non-file output, etc.
 :RESOLVE-PATHS          When non-nil (the default), the returned
                         candidate is passed through `expand-file-name'
                         against :DIRECTORY before being handed back to the
@@ -408,7 +408,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
   IDX      — current selection index (omitted for frontends without one)
   FILTERED — candidates matching the current query
   TOTAL    — total candidates collected so far"
-  (fzf-async--ensure-setup)
+  (fzfa--ensure-setup)
   (unless skip-executable-check
     (when-let* ((prog (and command (car (split-string command nil t)))))
       (unless (executable-find prog)
@@ -417,20 +417,20 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                     (when command
                       (concat (car (split-string command nil t)) ": ")))))
     (cond
-     ((eq fzf-async--multi-mode :extract)
-      (throw 'fzf-async-extracted
+     ((eq fzfa--multi-mode :extract)
+      (throw 'fzfa-extracted
              (list :prompt prompt :command command
                    :directory directory :category category :group group
                    :resolve-paths resolve-paths)))
-     ((eq (car-safe fzf-async--multi-mode) :inject)
-      (cl-return-from fzf-async-completing-read
-        (fzf-async--maybe-expand (cdr fzf-async--multi-mode)
+     ((eq (car-safe fzfa--multi-mode) :inject)
+      (cl-return-from fzfa-async-completing-read
+        (fzfa--maybe-expand (cdr fzfa--multi-mode)
                                  directory resolve-paths))))
-    (fzf-async--check-completion-setup)
+    (fzfa--check-completion-setup)
     (when (bound-and-true-p helm-mode)
-      (cl-return-from fzf-async-completing-read
-        (fzf-async--maybe-expand
-         (fzf-async--helm-completing-read
+      (cl-return-from fzfa-async-completing-read
+        (fzfa--maybe-expand
+         (fzfa--helm-completing-read
           :prompt prompt :command command :directory directory
           :skip-executable-check skip-executable-check)
          directory resolve-paths)))
@@ -442,16 +442,16 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
            (stats-overlay nil)
            (last-filtered 0)
            (last-total 0)
-           (limit (and fzf-async-max-candidates
-                       (> fzf-async-max-candidates 0)
-                       fzf-async-max-candidates))
+           (limit (and fzfa-max-candidates
+                       (> fzfa-max-candidates 0)
+                       fzfa-max-candidates))
            (last-exhibit-scheduled 0.0)
            (refresh-overlay
             (lambda ()
               (when (and stats-overlay (active-minibuffer-window))
                 (with-selected-window (active-minibuffer-window)
-                  (let ((idx (fzf-async--frontend-index)))
-                    (fzf-async--log "DEBUG: %s%s %s[%d](%d) "
+                  (let ((idx (fzfa--frontend-index)))
+                    (fzfa--log "DEBUG: %s%s %s[%d](%d) "
                                     prompt dir
                                     (if idx (format "%d/" (1+ idx)) "")
                                     last-filtered last-total)
@@ -459,15 +459,15 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                  (if idx
                                      (format "%s%s %d/[%s](%s) "
                                              prompt dir (1+ idx)
-                                             (fzf-async--commas last-filtered)
-                                             (fzf-async--commas last-total))
+                                             (fzfa--commas last-filtered)
+                                             (fzfa--commas last-total))
                                    (format "%s%s [%s](%s) "
                                            prompt dir
-                                           (fzf-async--commas last-filtered)
-                                           (fzf-async--commas last-total)))))))))
+                                           (fzfa--commas last-filtered)
+                                           (fzfa--commas last-total)))))))))
            ;; Ivy push path: score the current query and push into
            ;; `ivy--all-candidates' directly. Used instead of
-           ;; `fzf-async--frontend-exhibit' for ivy because
+           ;; `fzfa--frontend-exhibit' for ivy because
            ;; ivy does not re-call the collection lambda on timer ticks.
            (ivy-push
             (lambda ()
@@ -488,28 +488,28 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
            timer)
       (setq timer
             (run-with-timer
-             0 fzf-async-refresh-delay
+             0 fzfa-refresh-delay
              (lambda ()
                (when handle
                  (let ((gen (fzf-native-async-generation handle)))
                    (when (and gen (not (= gen last-gen)) (not (input-pending-p)))
                      (when (>= (- (float-time) last-exhibit-scheduled)
-                               fzf-async-input-throttle)
+                               fzfa-input-throttle)
                        (setq last-gen gen)
                        (setq last-exhibit-scheduled (float-time))
                        (run-with-idle-timer
                         0 nil
                         (if (bound-and-true-p ivy-mode)
                             ivy-push
-                          #'fzf-async--frontend-exhibit)))))))))
+                          #'fzfa--frontend-exhibit)))))))))
       (add-hook 'post-command-hook refresh-overlay)
-      (sit-for fzf-async-refresh-delay)
-      (fzf-async--maybe-expand
+      (sit-for fzfa-refresh-delay)
+      (fzfa--maybe-expand
        (unwind-protect
            (minibuffer-with-setup-hook
                (lambda ()
                  ;; Bind the minibuffer's default-directory so that callers
-                 ;; running outside fzf-async (notably embark, which captures
+                 ;; running outside fzfa (notably embark, which captures
                  ;; default-directory and rebinds it around the action) resolve
                  ;; relative candidates against the working directory the
                  ;; command actually ran in.
@@ -528,16 +528,16 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                    (ivy-pre-prompt-function
                     (when (bound-and-true-p ivy-mode)
                       (lambda ()
-                        (let ((idx (fzf-async--frontend-index)))
+                        (let ((idx (fzfa--frontend-index)))
                           (if idx
                               (format "%s %d/[%s](%s) "
                                       dir (1+ idx)
-                                      (fzf-async--commas last-filtered)
-                                      (fzf-async--commas last-total))
+                                      (fzfa--commas last-filtered)
+                                      (fzfa--commas last-total))
                             (format "%s [%s](%s) "
                                     dir
-                                    (fzf-async--commas last-filtered)
-                                    (fzf-async--commas last-total))))))))
+                                    (fzfa--commas last-filtered)
+                                    (fzfa--commas last-total))))))))
                (completing-read
                 prompt
                 (lambda (str _pred action)
@@ -568,12 +568,12 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                     (when retry-timer (cancel-timer retry-timer))
                                     (setq retry-timer
                                           (run-with-idle-timer
-                                           fzf-async-input-debounce nil
+                                           fzfa-input-debounce nil
                                            (lambda ()
                                              (setq retry-timer nil)
                                              (if (bound-and-true-p ivy-mode)
                                                  (funcall ivy-push)
-                                               (fzf-async--frontend-exhibit))))))
+                                               (fzfa--frontend-exhibit))))))
                                 (when-let* ((stats (fzf-native-async-stats handle)))
                                   (setq last-filtered (car stats)
                                         last-total    (cdr stats)))
@@ -604,10 +604,10 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
              (run-at-time 0 nil (lambda () (fzf-native-async-stop h))))))
        directory resolve-paths))))
 
-(cl-defun fzf-sync-completing-read (&key
+(cl-defun fzfa-sync-completing-read (&key
                                     candidates
                                     (prompt "fzf > ")
-                                    (category 'fzf-async-misc)
+                                    (category 'fzfa-misc)
                                     annotate
                                     affix
                                     group)
@@ -615,8 +615,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
 
 :CANDIDATES List of strings to score with `fzf-native-score-all'.
 :PROMPT     Minibuffer prompt string.  Defaults to \"fzf > \".
-:CATEGORY   Completion category symbol.  Defaults to `fzf-async-misc'.
-            Use `fzf-async-file' for file-path candidates so marginalia
+:CATEGORY   Completion category symbol.  Defaults to `fzfa-misc'.
+            Use `fzfa-file' for file-path candidates so marginalia
             can annotate them with file metadata.
 :ANNOTATE   Optional function (CANDIDATE) -> string appended after each
             candidate.  Exposed as `annotation-function' in completion
@@ -631,17 +631,17 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
             TRANSFORM is nil return the group name; when non-nil return
             the display string for CANDIDATE within its group.  Frontends
             like vertico render group headers between sections."
-  (fzf-async--ensure-setup)
+  (fzfa--ensure-setup)
   (cond
-   ((eq fzf-async--multi-mode :extract)
-    (throw 'fzf-async-extracted
+   ((eq fzfa--multi-mode :extract)
+    (throw 'fzfa-extracted
            ;; Translate :candidates → :items so multi consumes one key.
            (list :items candidates :prompt prompt :category category
                  :annotate annotate :affix affix :group group)))
-   ((eq (car-safe fzf-async--multi-mode) :inject)
-    (cl-return-from fzf-sync-completing-read
-      (cdr fzf-async--multi-mode))))
-  (fzf-async--check-completion-setup)
+   ((eq (car-safe fzfa--multi-mode) :inject)
+    (cl-return-from fzfa-sync-completing-read
+      (cdr fzfa--multi-mode))))
+  (fzfa--check-completion-setup)
   (completing-read
    prompt
    (lambda (str _pred action)
@@ -663,28 +663,28 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                               (minibuffer-contents-no-properties))))))
              (if (or (null query) (string-empty-p query))
                  candidates
-               (fzf-async--bridge-defcustoms
+               (fzfa--bridge-defcustoms
                 #'fzf-native-score-all candidates query))))))
    nil t nil nil nil))
 
 ;;; Multi-source
 
-(defun fzf-async--multi-tag (cand idx hash)
+(defun fzfa--multi-tag (cand idx hash)
   "Tag CAND with source IDX (text-prop + HASH lookup table); return CAND."
   (when (> (length cand) 0)
-    (put-text-property 0 1 'fzf-async-src-idx idx cand))
+    (put-text-property 0 1 'fzfa-src-idx idx cand))
   (puthash cand idx hash)
   cand)
 
-(defun fzf-async--multi-source-of (cand sources-v hash)
+(defun fzfa--multi-source-of (cand sources-v hash)
   "Return the source plist responsible for CAND, or nil.
 SOURCES-V is the vector of source plists; HASH maps CAND to source index."
   (and (stringp cand) (> (length cand) 0)
-       (let ((idx (or (get-text-property 0 'fzf-async-src-idx cand)
+       (let ((idx (or (get-text-property 0 'fzfa-src-idx cand)
                       (gethash cand hash))))
          (and idx (aref sources-v idx)))))
 
-(defun fzf-async--multi-rank (results query async-p)
+(defun fzfa--multi-rank (results query async-p)
   "Top fzf score for RESULTS under QUERY.
 For async sources (ASYNC-P non-nil) the C async path does not attach
 `completion-score' text properties, so we re-score the top candidate
@@ -693,16 +693,16 @@ the property set by `fzf-native-score-all'.  Returns 0 on empty input."
   (cond
    ((or (null results) (string-empty-p query)) 0)
    (async-p
-    (or (car (fzf-async--bridge-defcustoms
+    (or (car (fzfa--bridge-defcustoms
               #'fzf-native-score (car results) query))
         0))
    (t (or (get-text-property 0 'completion-score (car results)) 0))))
 
-(cl-defun fzf-async--multi-read (sources &key (prompt "fzf-multi: "))
-  "Run `completing-read' across multiple SOURCES, fzf-async style.
+(cl-defun fzfa--multi-read (sources &key (prompt "fzf-multi: "))
+  "Run `completing-read' across multiple SOURCES, fzfa style.
 PROMPT is shown in the minibuffer.
 
-Internal — users should call `fzf-async-multi-read' which derives sources
+Internal — users should call `fzfa-multi-read' which derives sources
 from existing single-source commands.  This function takes pre-built
 source plists directly.
 
@@ -723,16 +723,16 @@ Per-source plist keys:
              omitted, the raw selection string is returned."
   (cond
    ;; Composability: when this multi is being extracted by an outer
-   ;; `fzf-async-multi-read', throw our merged SOURCES so the
+   ;; `fzfa-multi-read', throw our merged SOURCES so the
    ;; outer can flatten them into its own source list.  Each source
    ;; already carries its own :action closure, so dispatch from the
    ;; outer multi routes back to the correct underlying command.
-   ((eq fzf-async--multi-mode :extract)
-    (throw 'fzf-async-extracted (list :multi-sources sources)))
-   ((eq (car-safe fzf-async--multi-mode) :inject)
-    (cl-return-from fzf-async--multi-read (cdr fzf-async--multi-mode))))
+   ((eq fzfa--multi-mode :extract)
+    (throw 'fzfa-extracted (list :multi-sources sources)))
+   ((eq (car-safe fzfa--multi-mode) :inject)
+    (cl-return-from fzfa--multi-read (cdr fzfa--multi-mode))))
   (when (bound-and-true-p helm-mode)
-    (user-error "Fzf-async--multi-read does not yet support helm-mode"))
+    (user-error "Fzfa--multi-read does not yet support helm-mode"))
   (let* ((n            (length sources))
          (sources-v    (vconcat sources))
          (handles      (make-vector n nil))
@@ -742,9 +742,9 @@ Per-source plist keys:
          (totals       (make-vector n 0))
          (filtered     (make-vector n 0))
          (last-gen     (make-vector n -1))
-         (limit        (and fzf-async-max-candidates
-                            (> fzf-async-max-candidates 0)
-                            fzf-async-max-candidates))
+         (limit        (and fzfa-max-candidates
+                            (> fzfa-max-candidates 0)
+                            fzfa-max-candidates))
          (cand->src    (make-hash-table :test 'equal :size 1024))
          (last-exhibit 0.0)
          (stats-overlay nil)
@@ -757,10 +757,10 @@ Per-source plist keys:
           (lambda ()
             (when (and stats-overlay (active-minibuffer-window))
               (with-selected-window (active-minibuffer-window)
-                (let* ((idx (fzf-async--frontend-index))
-                       (f   (fzf-async--commas
+                (let* ((idx (fzfa--frontend-index))
+                       (f   (fzfa--commas
                              (cl-loop for x across filtered sum x)))
-                       (tot (fzf-async--commas
+                       (tot (fzfa--commas
                              (cl-loop for x across totals sum x)))
                        (text (if idx
                                  (format "%s%d/[%s](%s) "
@@ -783,7 +783,7 @@ Per-source plist keys:
          (items
           (let ((tagged
                  (mapcar (lambda (s)
-                           (fzf-async--multi-tag (copy-sequence s) i cand->src))
+                           (fzfa--multi-tag (copy-sequence s) i cand->src))
                          (if (functionp items) (funcall items) items))))
             (aset sync-items i tagged)
             (aset totals i (length tagged))
@@ -792,7 +792,7 @@ Per-source plist keys:
         (progn
           (setq timer
                 (run-with-timer
-                 0 fzf-async-refresh-delay
+                 0 fzfa-refresh-delay
                  (lambda ()
                    (when (active-minibuffer-window)
                      (let (bumped)
@@ -804,12 +804,12 @@ Per-source plist keys:
                              (setq bumped t))))
                        (when (and bumped (not (input-pending-p))
                                   (>= (- (float-time) last-exhibit)
-                                      fzf-async-input-throttle))
+                                      fzfa-input-throttle))
                          (setq last-exhibit (float-time))
                          (run-with-idle-timer
-                          0 nil #'fzf-async--frontend-exhibit)))))))
+                          0 nil #'fzfa--frontend-exhibit)))))))
           (add-hook 'post-command-hook refresh-overlay)
-          (sit-for fzf-async-refresh-delay)
+          (sit-for fzfa-refresh-delay)
           (setq result
                 (minibuffer-with-setup-hook
                     (lambda ()
@@ -830,7 +830,7 @@ Per-source plist keys:
                                     (when (> (length s) 0)
                                       (setq selected-idx
                                             (get-text-property
-                                             0 'fzf-async-src-idx s)))))
+                                             0 'fzfa-src-idx s)))))
                                 nil 'local))
                   (completing-read
                    prompt
@@ -838,12 +838,12 @@ Per-source plist keys:
                      (pcase action
                        ('metadata
                         `(metadata
-                          (category . fzf-async-multi)
+                          (category . fzfa-multi)
                           (display-sort-function . identity)
                           (cycle-sort-function . identity)
                           (group-function
                            . ,(lambda (cand transform)
-                                (let ((src (fzf-async--multi-source-of
+                                (let ((src (fzfa--multi-source-of
                                             cand sources-v cand->src)))
                                   (if transform
                                       ;; Per-source :group transform —
@@ -864,7 +864,7 @@ Per-source plist keys:
                                 (let* ((displays
                                         (mapcar
                                          (lambda (c)
-                                           (let* ((src (fzf-async--multi-source-of
+                                           (let* ((src (fzfa--multi-source-of
                                                         c sources-v cand->src))
                                                   (g (and src (plist-get src :group))))
                                              (or (and g (funcall g c t)) c)))
@@ -874,7 +874,7 @@ Per-source plist keys:
                                                             displays))))
                                   (cl-mapcar
                                    (lambda (cand display)
-                                     (let* ((src (fzf-async--multi-source-of
+                                     (let* ((src (fzfa--multi-source-of
                                                   cand sources-v cand->src))
                                             (ann (and src (plist-get src :annotate)))
                                             (s   (and ann (funcall ann cand)))
@@ -910,7 +910,7 @@ Per-source plist keys:
                                       (if (string-empty-p query)
                                           items
                                         (while-no-input
-                                          (fzf-async--bridge-defcustoms
+                                          (fzfa--bridge-defcustoms
                                            #'fzf-native-score-all
                                            items query)))))))
                               (cond
@@ -921,10 +921,10 @@ Per-source plist keys:
                                 ;; out may be nil (zero matches) — still valid.
                                 (when h
                                   (dolist (c out)
-                                    (fzf-async--multi-tag c i cand->src)))
+                                    (fzfa--multi-tag c i cand->src)))
                                 (aset last-results i out)
                                 (aset rank i
-                                      (fzf-async--multi-rank out query h))
+                                      (fzfa--multi-rank out query h))
                                 (cond
                                  (h (when-let* ((s (fzf-native-async-stats h)))
                                       (aset filtered i (car s))
@@ -934,10 +934,10 @@ Per-source plist keys:
                             (when retry-timer (cancel-timer retry-timer))
                             (setq retry-timer
                                   (run-with-idle-timer
-                                   fzf-async-input-debounce nil
+                                   fzfa-input-debounce nil
                                    (lambda ()
                                      (setq retry-timer nil)
-                                     (fzf-async--frontend-exhibit)))))
+                                     (fzfa--frontend-exhibit)))))
                           (when-let* ((win (active-minibuffer-window)))
                             (with-selected-window win
                               (unless stats-overlay
@@ -965,7 +965,7 @@ Per-source plist keys:
       (remove-hook 'post-command-hook refresh-overlay)
       (when stats-overlay (delete-overlay stats-overlay))
       ;; Defer the async-stops so ESC returns instantly — see the same
-      ;; comment in `fzf-async-completing-read'.  Stops are scheduled
+      ;; comment in `fzfa-async-completing-read'.  Stops are scheduled
       ;; together so the runtime can decide its own scheduling, and the
       ;; closure owns the handle vector to keep it alive across the gap.
       (let ((live nil))
@@ -978,32 +978,32 @@ Per-source plist keys:
                          (dolist (h live) (fzf-native-async-stop h)))))))
     (when result
       (let* ((src    (or (and selected-idx (aref sources-v selected-idx))
-                         (fzf-async--multi-source-of
+                         (fzfa--multi-source-of
                           result sources-v cand->src)))
              (action (and src (plist-get src :action))))
         (if action (funcall action result) result)))))
 
 ;;;###autoload
-(defun fzf-async-multi-read (commands &rest options)
+(defun fzfa-multi-read (commands &rest options)
   "Run a multi-source completing-read over COMMANDS.
 Each command in COMMANDS is funcalled twice per multi session — once in
 `:extract' mode (capture keyword args, abort), once in `:inject' mode after
 the user picks (so the command's post-action runs).  OPTIONS is forwarded
-to `fzf-async--multi-read'.  Commands whose body does not reach
-`fzf-async-completing-read' or `fzf-sync-completing-read' are skipped.
+to `fzfa--multi-read'.  Commands whose body does not reach
+`fzfa-async-completing-read' or `fzfa-sync-completing-read' are skipped.
 Commands must be arg-less (no interactive `read-*' prompts in their body).
 
-Composes: if a command in COMMANDS itself calls `fzf-async--multi-read'
-\(e.g. `fzf-async-find-any'), its inner sources are flattened in alongside
+Composes: if a command in COMMANDS itself calls `fzfa--multi-read'
+\(e.g. `fzfa-find-any'), its inner sources are flattened in alongside
 the other commands' sources, with each inner source keeping its own
 :action."
-  (fzf-async--ensure-setup)
+  (fzfa--ensure-setup)
   (let* ((source-lists
           (mapcar
            (lambda (cmd)
              (let ((args (condition-case nil
-                             (catch 'fzf-async-extracted
-                               (let ((fzf-async--multi-mode :extract))
+                             (catch 'fzfa-extracted
+                               (let ((fzfa--multi-mode :extract))
                                  (funcall cmd))
                                nil)
                            (error nil))))
@@ -1015,11 +1015,11 @@ the other commands' sources, with each inner source keeping its own
                    (let* ((cat (plist-get args :category))
                           (default-annotate
                            (cond
-                            ((memq cat '(fzf-async-buffer buffer))
+                            ((memq cat '(fzfa-buffer buffer))
                              (lambda (c)
                                (when (fboundp 'marginalia-annotate-buffer)
                                  (marginalia-annotate-buffer c))))
-                            ((memq cat '(fzf-async-file file))
+                            ((memq cat '(fzfa-file file))
                              (lambda (c)
                                (when (fboundp 'marginalia-annotate-file)
                                  (marginalia-annotate-file c)))))))
@@ -1028,65 +1028,65 @@ the other commands' sources, with each inner source keeping its own
                      (list
                       (append
                        (list :name (replace-regexp-in-string
-                                    "^fzf-async-" "" (symbol-name cmd))
+                                    "^fzfa-" "" (symbol-name cmd))
                              :annotate (or (plist-get args :annotate)
                                            default-annotate)
                              :action (lambda (cand)
-                                       (let ((fzf-async--multi-mode
+                                       (let ((fzfa--multi-mode
                                               (cons :inject cand)))
                                          (funcall cmd))))
                        args)))))))
            commands))
          (sources (apply #'append (delq nil source-lists))))
-    (apply #'fzf-async--multi-read sources options)))
+    (apply #'fzfa--multi-read sources options)))
 
-(defcustom fzf-async-find-any-commands
-  '(fzf-async-imenu
-    fzf-async-buffer
-    fzf-async-recent-file
-    fzf-async-find-hungry
-    fzf-async-imenu-all-but-current
-    fzf-async-swiper-hungry)
-  "Commands shown by `fzf-async-find-any'."
+(defcustom fzfa-find-any-commands
+  '(fzfa-imenu
+    fzfa-buffer
+    fzfa-recent-file
+    fzfa-find-hungry
+    fzfa-imenu-all-but-current
+    fzfa-swiper-hungry)
+  "Commands shown by `fzfa-find-any'."
   :type '(repeat function)
-  :group 'fzf-async)
+  :group 'fzfa)
 
-(defcustom fzf-async-find-some-commands
-  '(fzf-async-imenu
-    fzf-async-buffer
-    fzf-async-recent-file
-    fzf-async-find
-    fzf-async-swiper)
-  "Commands shown by `fzf-async-find-some'."
+(defcustom fzfa-find-some-commands
+  '(fzfa-imenu
+    fzfa-buffer
+    fzfa-recent-file
+    fzfa-find
+    fzfa-swiper)
+  "Commands shown by `fzfa-find-some'."
   :type '(repeat function)
-  :group 'fzf-async)
+  :group 'fzfa)
 
 ;;;###autoload
-(defun fzf-async-find-any ()
-  "Multi-source fuzzy completion over `fzf-async-find-any-commands'."
+(defun fzfa-find-any ()
+  "Multi-source fuzzy completion over `fzfa-find-any-commands'."
   (interactive)
-  (fzf-async-multi-read fzf-async-find-any-commands :prompt "any?: "))
+  (fzfa-multi-read fzfa-find-any-commands :prompt "any?: "))
 
 ;;;###autoload
-(defun fzf-async-find-some ()
-  "Multi-source fuzzy completion over `fzf-async-find-some-commands'."
+(defun fzfa-find-some ()
+  "Multi-source fuzzy completion over `fzfa-find-some-commands'."
   (interactive)
-  (fzf-async-multi-read fzf-async-find-some-commands :prompt "some?: "))
+  (fzfa-multi-read fzfa-find-some-commands :prompt "some?: "))
 
 ;;;###autoload
-(defun fzf-async-passwords ()
+(defun fzfa-passwords ()
   "Multi-source fuzzy completion over `pass' and Chrome's password manager.
 Selecting an entry copies its password to the kill ring via the
-originating source's command (`fzf-async-pass-copy' or
-`fzf-async-chrome-pass-copy')."
+originating source's command (`fzfa-pass-copy' or
+`fzfa-chrome-pass-copy')."
   (interactive)
-  (fzf-async-multi-read
-   '(fzf-async-pass-copy fzf-async-chrome-pass-copy)
+  (fzfa-multi-read
+   '(fzfa-pass-copy fzfa-chrome-pass-copy)
    :prompt "passwords: "))
 
 ;;; Commands
 
-(defun fzf-async--max-columns-flag (tool)
+(defun fzfa--max-columns-flag (tool)
   "Return a max-line-length CLI flag string for grep-style TOOL.
 
 Note: rg's `--max-columns' DROPS the line; ag's and ugrep's
@@ -1094,7 +1094,7 @@ Note: rg's `--max-columns' DROPS the line; ag's and ugrep's
 is similar (bounded line length into our pipe), but the
 underlying semantics differ slightly.  Either way the
 reader-side cap still runs as a backstop."
-  (let ((mll fzf-async-max-line-length))
+  (let ((mll fzfa-max-line-length))
     (if (not (and (integerp mll) (> mll 0)))
         ""                                ; nil / 0 / negative → no flag
       (pcase tool
@@ -1104,67 +1104,67 @@ reader-side cap still runs as a backstop."
         (_      "")))))
 
 ;;;###autoload
-(defun fzf-async-find ()
+(defun fzfa-find ()
   "Find a file under `default-directory' using find."
   (interactive)
-  (when-let* ((result (fzf-async-completing-read :command "find .")))
+  (when-let* ((result (fzfa-async-completing-read :command "find .")))
     (find-file result)))
 
 ;;;###autoload
-(defun fzf-async-fd ()
+(defun fzfa-fd ()
   "Find a file under `default-directory' using fd."
   (interactive)
-  (when-let* ((result (fzf-async-completing-read :command "fd --no-ignore")))
+  (when-let* ((result (fzfa-async-completing-read :command "fd --no-ignore")))
     (find-file result)))
 
 ;;;###autoload
-(defun fzf-async-rg-files ()
+(defun fzfa-rg-files ()
   "Find a file under `default-directory' using rg --files."
   (interactive)
-  (when-let* ((result (fzf-async-completing-read
+  (when-let* ((result (fzfa-async-completing-read
                        :prompt "rg files: " :command "rg --files")))
     (find-file result)))
 
 ;;;###autoload
-(defun fzf-async-ag-files ()
+(defun fzfa-ag-files ()
   "Find a file under `default-directory' using ag."
   (interactive)
-  (when-let* ((result (fzf-async-completing-read
+  (when-let* ((result (fzfa-async-completing-read
                        :prompt "ag files: " :command "ag -g .")))
     (find-file result)))
 
 ;;;###autoload
-(defun fzf-async-rg ()
+(defun fzfa-rg ()
   "Search file contents under `default-directory' with rg.
 Streams all file contents as FILE:LINE:CONTENT; type to
  fuzzy-filter across them.
 Selecting a candidate opens the file at that line."
   (interactive)
-  (when-let* ((r (fzf-async-completing-read
+  (when-let* ((r (fzfa-async-completing-read
                   :command (format
                             "rg --line-number --no-heading --with-filename %s ''"
-                            (fzf-async--max-columns-flag 'rg))
-                  :category 'fzf-async-grep
-                  :group #'fzf-async--grep-group)))
-    (fzf-async--grep-jump r)))
+                            (fzfa--max-columns-flag 'rg))
+                  :category 'fzfa-grep
+                  :group #'fzfa--grep-group)))
+    (fzfa--grep-jump r)))
 
 ;;;###autoload
-(defun fzf-async-ag ()
+(defun fzfa-ag ()
   "Search file contents under `default-directory' with ag.
 Streams all file contents as FILE:LINE:CONTENT; type to
  fuzzy-filter across them.
 Selecting a candidate opens the file at that line."
   (interactive)
-  (when-let* ((r (fzf-async-completing-read
+  (when-let* ((r (fzfa-async-completing-read
                   :command (format
                             "ag --nocolor --nogroup --line-number %s \".\""
-                            (fzf-async--max-columns-flag 'ag))
-                  :category 'fzf-async-grep
-                  :group #'fzf-async--grep-group)))
-    (fzf-async--grep-jump r)))
+                            (fzfa--max-columns-flag 'ag))
+                  :category 'fzfa-grep
+                  :group #'fzfa--grep-group)))
+    (fzfa--grep-jump r)))
 
 ;;;###autoload
-(defun fzf-async-git-grep ()
+(defun fzfa-git-grep ()
   "Search file contents under `default-directory' with git grep.
 Streams all file contents as FILE:LINE:CONTENT; type to
  fuzzy-filter across them.
@@ -1172,104 +1172,104 @@ Selecting a candidate opens the file at that line."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
     (error "Not a Git repo"))
-  (when-let* ((r (fzf-async-completing-read
+  (when-let* ((r (fzfa-async-completing-read
                   :command "git --no-pager grep -n \"\""
-                  :category 'fzf-async-grep
-                  :group #'fzf-async--grep-group)))
-    (fzf-async--grep-jump r)))
+                  :category 'fzfa-grep
+                  :group #'fzfa--grep-group)))
+    (fzfa--grep-jump r)))
 
 ;;;###autoload
-(defun fzf-async-grep ()
+(defun fzfa-grep ()
   "Search file contents under `default-directory' with grep.
 Streams all file contents as FILE:LINE:CONTENT; type
  to fuzzy-filter across them.
 Selecting a candidate opens the file at that line."
   (interactive)
-  (when-let* ((r (fzf-async-completing-read
+  (when-let* ((r (fzfa-async-completing-read
                   :command "grep -Rn ''"
-                  :category 'fzf-async-grep
-                  :group #'fzf-async--grep-group)))
-    (fzf-async--grep-jump r)))
+                  :category 'fzfa-grep
+                  :group #'fzfa--grep-group)))
+    (fzfa--grep-jump r)))
 
 ;;;###autoload
-(defun fzf-async-grep-current-file ()
+(defun fzfa-grep-current-file ()
   "Search the current buffer's file with grep.
 Streams non-blank lines as FILE:LINE:CONTENT; type to fuzzy-filter across them.
 Selecting a candidate jumps to that line in the file."
   (interactive)
   (unless buffer-file-name
     (user-error "Buffer is not visiting a file"))
-  (when-let* ((r (fzf-async-completing-read
+  (when-let* ((r (fzfa-async-completing-read
                   :command (format "grep -vnH '^[[:space:]]*$' %s"
                                    (shell-quote-argument buffer-file-name))
-                  :category 'fzf-async-grep)))
-    (fzf-async--grep-jump r)))
+                  :category 'fzfa-grep)))
+    (fzfa--grep-jump r)))
 
 ;;;###autoload
-(defun fzf-async-ugrep ()
+(defun fzfa-ugrep ()
   "Search file contents under `default-directory' with ugrep.
 Streams all file contents as FILE:LINE:CONTENT; type to
  fuzzy-filter across them.
 
 Selecting a candidate opens the file at that line."
   (interactive)
-  (when-let* ((r (fzf-async-completing-read
+  (when-let* ((r (fzfa-async-completing-read
                   :command (format "ugrep -RIn --no-heading %s ''"
-                                   (fzf-async--max-columns-flag 'ugrep))
-                  :category 'fzf-async-grep
-                  :group #'fzf-async--grep-group)))
-    (fzf-async--grep-jump r)))
+                                   (fzfa--max-columns-flag 'ugrep))
+                  :category 'fzfa-grep
+                  :group #'fzfa--grep-group)))
+    (fzfa--grep-jump r)))
 
 ;;;###autoload
-(defun fzf-async-git-ls-files ()
+(defun fzfa-git-ls-files ()
   "Find a tracked file in the current Git repo using git ls-files."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
     (error "Not a Git repo"))
-  (when-let* ((result (fzf-async-completing-read
+  (when-let* ((result (fzfa-async-completing-read
                        :prompt "git ls files: "
                        :command "git ls-files")))
     (find-file result)))
 
 ;;;###autoload
-(defun fzf-async-hg-files ()
+(defun fzfa-hg-files ()
   "Find a tracked file in the current Mercurial repo using hg files."
   (interactive)
   (unless (locate-dominating-file default-directory ".hg")
     (error "Not a Mercurial repo"))
-  (when-let* ((result (fzf-async-completing-read
+  (when-let* ((result (fzfa-async-completing-read
                        :prompt "hg files: "
                        :command "hg files")))
     (find-file result)))
 
 ;;;###autoload
-(defun fzf-async-recent-file ()
+(defun fzfa-recent-file ()
   "Find a recently visited file using `recentf'."
   (interactive)
   (require 'recentf)
   (recentf-mode 1)
   (unless recentf-list
     (user-error "No recent files"))
-  (when-let* ((result (fzf-sync-completing-read :candidates recentf-list
+  (when-let* ((result (fzfa-sync-completing-read :candidates recentf-list
                                                 :prompt "recent: "
-                                                :category 'fzf-async-file)))
+                                                :category 'fzfa-file)))
     (find-file result)))
 
 ;;;###autoload
-(defun fzf-async-buffer ()
+(defun fzfa-buffer ()
   "Switch to an open buffer."
   (interactive)
   (let* ((names (cl-loop for b in (buffer-list)
                          unless (or (minibufferp b)
                                     (string-prefix-p " " (buffer-name b)))
                          collect (buffer-name b))))
-    (when-let* ((result (fzf-sync-completing-read
+    (when-let* ((result (fzfa-sync-completing-read
                          :candidates names :prompt "buffer: "
-                         :category 'fzf-async-buffer)))
+                         :category 'fzfa-buffer)))
       (switch-to-buffer result))))
 
 ;;;###autoload
-(defun fzf-async-yank-pop ()
+(defun fzfa-yank-pop ()
   "Yank from `kill-ring' using fzf for selection.
 When invoked immediately after a yank command, replaces the previously
 yanked text with the selection (mirroring `yank-pop' / `consult-yank-pop')."
@@ -1297,7 +1297,7 @@ yanked text with the selection (mirroring `yank-pop' / `consult-yank-pop')."
                (setq display (concat display " ")))
              (puthash display s lookup)
              display))))
-    (when-let* ((result (fzf-sync-completing-read
+    (when-let* ((result (fzfa-sync-completing-read
                          :candidates entries
                          :prompt "yank-pop: "))
                 (text (gethash result lookup)))
@@ -1316,21 +1316,21 @@ yanked text with the selection (mirroring `yank-pop' / `consult-yank-pop')."
         (insert-for-yank text)))
       (setq this-command 'yank))))
 
-(defcustom fzf-async-shell-history-file nil
+(defcustom fzfa-shell-history-file nil
   "Path to a shell history file (bash or zsh).
 When nil, defaults to `$HISTFILE' if set, otherwise `~/.zsh_history'."
   :type '(choice (const :tag "Auto ($HISTFILE or ~/.zsh_history)" nil)
                  file)
-  :group 'fzf-async)
+  :group 'fzfa)
 
 ;;;###autoload
-(defun fzf-async-shell-history ()
+(defun fzfa-shell-history ()
   "Select a command from the shell history file and insert it at point.
 Supports bash and zsh history file formats (including zsh
 `EXTENDED_HISTORY' and bash `HISTTIMEFORMAT' timestamp comments).
 If the current buffer is read-only the selection is copied to the
 kill ring instead.  Override the location via
-`fzf-async-shell-history-file'."
+`fzfa-shell-history-file'."
   (interactive)
   (cl-labels
       ((parse-entry (raw)
@@ -1361,21 +1361,21 @@ kill ring instead.  Override the location via
                  (unless (eobp) (forward-char 1)))))
            results)))
     (let* ((file (expand-file-name
-                  (or fzf-async-shell-history-file
+                  (or fzfa-shell-history-file
                       (getenv "HISTFILE")
                       "~/.zsh_history")))
            (cmds (and (or (file-readable-p file)
                           (user-error "Cannot read shell history: %s" file))
                       (or (read-entries file)
                           (user-error "Shell history is empty")))))
-      (when-let* ((result (fzf-sync-completing-read
+      (when-let* ((result (fzfa-sync-completing-read
                            :candidates cmds :prompt "shell-history: ")))
         (if buffer-read-only
             (progn (kill-new result) (message "Copied: %s" result))
           (insert result))))))
 
 ;;;###autoload
-(defun fzf-async-bookmark ()
+(defun fzfa-bookmark ()
   "Jump to a bookmark."
   (interactive)
   (require 'bookmark)
@@ -1383,13 +1383,13 @@ kill ring instead.  Override the location via
   (let ((names (bookmark-all-names)))
     (unless names
       (user-error "No bookmarks defined"))
-    (when-let* ((result (fzf-sync-completing-read
+    (when-let* ((result (fzfa-sync-completing-read
                          :candidates names :prompt "bookmark: "
-                         :category 'fzf-async-bookmark)))
+                         :category 'fzfa-bookmark)))
       (bookmark-jump result))))
 
 ;;;###autoload
-(defun fzf-async-theme ()
+(defun fzfa-theme ()
   "Prompt for a theme to enable, previewing each candidate live.
 Aborting (e.g. \\[keyboard-quit]) restores the themes that were enabled
 when the command was invoked.  Selecting \"default\" disables all themes."
@@ -1405,7 +1405,7 @@ when the command was invoked.  Selecting \"default\" disables all themes."
            (last 'unset)
            (preview
             (lambda ()
-              (when-let* ((cand (fzf-async--frontend-candidate)))
+              (when-let* ((cand (fzfa--frontend-candidate)))
                 (unless (equal cand last)
                   (setq last cand)
                   (condition-case _
@@ -1417,26 +1417,26 @@ when the command was invoked.  Selecting \"default\" disables all themes."
               (lambda ()
                 (add-hook 'post-command-hook preview nil t))
             (setq selection
-                  (fzf-sync-completing-read
+                  (fzfa-sync-completing-read
                    :candidates (cons "default"
                                      (mapcar #'symbol-name
                                              (custom-available-themes)))
                    :prompt "theme: "
-                   :category 'fzf-async-theme)))
+                   :category 'fzfa-theme)))
         (if selection
             (switch (and (not (equal selection "default")) (intern selection)))
           (mapc #'disable-theme custom-enabled-themes)
           (mapc #'enable-theme (reverse saved)))))))
 
 ;;;###autoload
-(defun fzf-async-locate ()
+(defun fzfa-locate ()
   "Find a file system-wide using locate."
   (interactive)
-  (when-let* ((result (fzf-async-completing-read :command "locate ''")))
+  (when-let* ((result (fzfa-async-completing-read :command "locate ''")))
     (find-file result)))
 
 ;;;###autoload
-(defun fzf-async-tramp ()
+(defun fzfa-tramp ()
   "Connect to a remote host via TRAMP, with hosts from ~/.ssh/config."
   (interactive)
   (cl-labels ((ssh-hosts ()
@@ -1453,12 +1453,12 @@ when the command was invoked.  Selecting \"default\" disables all themes."
                   (nreverse hosts))))
     (when-let* ((hosts (or (ssh-hosts)
                            (user-error "No SSH hosts in ~/.ssh/config")))
-                (host (fzf-sync-completing-read
+                (host (fzfa-sync-completing-read
                        :candidates hosts :prompt "ssh: ")))
       (find-file (concat "/ssh:" host ":")))))
 
 ;;;###autoload
-(defun fzf-async-swiper ()
+(defun fzfa-swiper ()
   "Search lines of the current buffer using fzf."
   (interactive)
   (let* ((source (or (buffer-file-name) (buffer-name)))
@@ -1476,12 +1476,12 @@ when the command was invoked.  Selecting \"default\" disables all themes."
                   (forward-line 1)
                   (cl-incf i))))
             (nreverse lines))))
-    (when-let* ((r (fzf-sync-completing-read :candidates candidates :prompt "swiper: "
-                                             :category 'fzf-async-grep)))
-      (fzf-async--grep-jump r))))
+    (when-let* ((r (fzfa-sync-completing-read :candidates candidates :prompt "swiper: "
+                                             :category 'fzfa-grep)))
+      (fzfa--grep-jump r))))
 
 ;;;###autoload
-(defun fzf-async-swiper-all ()
+(defun fzfa-swiper-all ()
   "Search lines across all open buffers using fzf.
 Candidates are formatted as SOURCE:LINE:CONTENT where SOURCE is the
 buffer's file path when file-backed, else its buffer name.  Buffer
@@ -1512,15 +1512,15 @@ may parse ambiguously — a rare-enough hazard to accept."
                             (forward-line 1)
                             (cl-incf j))))
                       (nreverse lines))))))
-    (when-let* ((r (fzf-sync-completing-read
+    (when-let* ((r (fzfa-sync-completing-read
                     :candidates candidates
                     :prompt "swiper-all: "
-                    :category 'fzf-async-grep
-                    :group #'fzf-async--grep-group)))
-      (fzf-async--grep-jump r))))
+                    :category 'fzfa-grep
+                    :group #'fzfa--grep-group)))
+      (fzfa--grep-jump r))))
 
-(defun fzf-async--imenu (scope)
-  "Implementation of `fzf-async-imenu' / `fzf-async-imenu-all'.
+(defun fzfa--imenu (scope)
+  "Implementation of `fzfa-imenu' / `fzfa-imenu-all'.
 SCOPE selects which buffers to walk:
   nil / `current'  — just the current buffer.
   `all'            — every live non-internal buffer.
@@ -1580,13 +1580,13 @@ Display differences:
     (unless entries
       (user-error "No imenu entries%s" (if multi " in any buffer" "")))
     (when-let* ((result
-                 (fzf-sync-completing-read
+                 (fzfa-sync-completing-read
                   :candidates (nreverse entries)
                   :prompt (pcase scope
                             ('all    "imenu-all: ")
                             ('others "imenu-others: ")
                             (_       "imenu: "))
-                  :category 'fzf-async-imenu
+                  :category 'fzfa-imenu
                   :group
                   (lambda (cand transform)
                     (cond
@@ -1613,29 +1613,29 @@ Display differences:
       (imenu (cdr hit)))))
 
 ;;;###autoload
-(defun fzf-async-imenu ()
+(defun fzfa-imenu ()
   "Jump to an imenu entry in the current buffer using fzf."
   (interactive)
-  (fzf-async--imenu 'current))
+  (fzfa--imenu 'current))
 
 ;;;###autoload
-(defun fzf-async-imenu-all ()
+(defun fzfa-imenu-all ()
   "Jump to an imenu entry across all open buffers using fzf.
 Buffers without an imenu index (or whose major mode does not support
 imenu) are skipped silently."
   (interactive)
-  (fzf-async--imenu 'all))
+  (fzfa--imenu 'all))
 
 ;;;###autoload
-(defun fzf-async-imenu-all-but-current ()
+(defun fzfa-imenu-all-but-current ()
   "Jump to an imenu entry across all open buffers except the current one.
 Buffers without an imenu index (or whose major mode does not support
 imenu) are skipped silently."
   (interactive)
-  (fzf-async--imenu 'others))
+  (fzfa--imenu 'others))
 
 ;;;###autoload
-(defun fzf-async-swiper-hungry ()
+(defun fzfa-swiper-hungry ()
   "Grep across the parent directories of all file-visiting buffers.
 Collects unique parent directories, drops any that are subdirectories of
 another in the set, then streams rg (or grep) output through fzf.
@@ -1645,7 +1645,7 @@ Selecting a match opens the file and jumps to the line."
                             for file = (buffer-file-name buf)
                             when file
                             collect (file-name-directory (expand-file-name file))))
-         (dirs (fzf-async--deduplicate-dirs raw-dirs)))
+         (dirs (fzfa--deduplicate-dirs raw-dirs)))
     (unless dirs
       (user-error "No file-visiting buffers found"))
     (let* ((rg   (executable-find "rg"))
@@ -1660,16 +1660,16 @@ Selecting a match opens the file and jumps to the line."
                            " -Rn '' "
                            dir-args))
              (t (user-error "Neither rg nor grep found in exec-path")))))
-      (when-let* ((r (fzf-async-completing-read
+      (when-let* ((r (fzfa-async-completing-read
                       :prompt "hungry swiper: "
                       :command command
                       :directory default-directory
-                      :category 'fzf-async-grep
-                      :group #'fzf-async--grep-group)))
-        (fzf-async--grep-jump r)))))
+                      :category 'fzfa-grep
+                      :group #'fzfa--grep-group)))
+        (fzfa--grep-jump r)))))
 
 ;;;###autoload
-(defun fzf-async-find-hungry ()
+(defun fzfa-find-hungry ()
   "Find files across the parent directories of all file-visiting buffers.
 Collects unique parent directories, drops subdirectories already covered
 by a shallower parent, then streams fd (or find) output through fzf."
@@ -1678,7 +1678,7 @@ by a shallower parent, then streams fd (or find) output through fzf."
                             for file = (buffer-file-name buf)
                             when file
                             collect (file-name-directory (expand-file-name file))))
-         (dirs (fzf-async--deduplicate-dirs raw-dirs)))
+         (dirs (fzfa--deduplicate-dirs raw-dirs)))
     (unless dirs
       (user-error "No file-visiting buffers found"))
     (let* ((fd   (executable-find "fd"))
@@ -1694,7 +1694,7 @@ by a shallower parent, then streams fd (or find) output through fzf."
                            dir-args
                            " -type f"))
              (t (user-error "Neither fd nor find found in exec-path")))))
-      (when-let* ((result (fzf-async-completing-read
+      (when-let* ((result (fzfa-async-completing-read
                            :prompt "hungry find: "
                            :command command
                            :directory default-directory)))
@@ -1702,13 +1702,13 @@ by a shallower parent, then streams fd (or find) output through fzf."
 
 ;;; Helpers
 
-(defconst fzf-async--grep-line-regexp "\\`\\(.*?\\):\\([0-9]+\\):"
-  "Lazy parser for `fzf-async-grep' category candidates.
+(defconst fzfa--grep-line-regexp "\\`\\(.*?\\):\\([0-9]+\\):"
+  "Lazy parser for `fzfa-grep' category candidates.
 Group 1 is SOURCE (file path or buffer name).  Group 2 is LINE.
 Lazy match anchors on the first `:DIGITS:' boundary so a colon-bearing
 buffer name does not corrupt the split.")
 
-(defun fzf-async--goto-source (source line)
+(defun fzfa--goto-source (source line)
   "Open SOURCE and jump to LINE.
 SOURCE is a file path when `file-exists-p'; otherwise it is treated as
 a buffer name."
@@ -1719,38 +1719,38 @@ a buffer name."
   (goto-char (point-min))
   (forward-line (1- line)))
 
-(defun fzf-async--grep-jump (cand)
+(defun fzfa--grep-jump (cand)
   "Open the SOURCE and jump to the LINE referenced by CAND.
 Used both by the grep commands' selected-candidate handling and by the
-embark default action for the `fzf-async-grep' category."
-  (when (string-match fzf-async--grep-line-regexp cand)
-    (fzf-async--goto-source
+embark default action for the `fzfa-grep' category."
+  (when (string-match fzfa--grep-line-regexp cand)
+    (fzfa--goto-source
      (match-string 1 cand)
      (string-to-number (match-string 2 cand)))))
 
-(defvar-keymap fzf-async-grep-map
-  :doc "Embark keymap for `fzf-async-grep' candidates.
+(defvar-keymap fzfa-grep-map
+  :doc "Embark keymap for `fzfa-grep' candidates.
 Composed with `embark-general-map' via `embark-keymap-alist'.")
 
-(defun fzf-async--grep-group (cand transform)
+(defun fzfa--grep-group (cand transform)
   "Group function for FILE:LINE:CONTENT grep candidate CAND.
 TRANSFORM nil  → return the filename as the section header.
 TRANSFORM non-nil → strip the filename prefix; display LINE:CONTENT only."
-  (if (string-match fzf-async--grep-line-regexp cand)
+  (if (string-match fzfa--grep-line-regexp cand)
       (if transform
           (substring cand (match-beginning 2))
         (match-string 1 cand))
     cand))
 
-(defun fzf-async--default-dir ()
-  "Return the working directory for fzf-async commands.
-Priority: `fzf-async-directory' >
-          `fzf-async-project-backend' >
+(defun fzfa--default-dir ()
+  "Return the working directory for fzfa commands.
+Priority: `fzfa-directory' >
+          `fzfa-project-backend' >
           `default-directory'."
-  (or fzf-async-directory
-      (pcase fzf-async-project-backend
+  (or fzfa-directory
+      (pcase fzfa-project-backend
         ((pred functionp)
-         (funcall fzf-async-project-backend))
+         (funcall fzfa-project-backend))
         ('project
          (when-let* ((pr (project-current)))
            (project-root pr)))
@@ -1759,7 +1759,7 @@ Priority: `fzf-async-directory' >
            (projectile-project-root))))
       default-directory))
 
-(defun fzf-async--deduplicate-dirs (dirs)
+(defun fzfa--deduplicate-dirs (dirs)
   "Remove duplicates and subdirectory entries from DIRS.
 If directory A is a prefix of directory B, B is dropped — A's recursive
 search already covers it.  Exception: B is kept when it is itself a git
@@ -1776,11 +1776,11 @@ descend from A may exclude files the user expects to search."
 
 ;;; Shell command
 
-(defvar fzf-async-shell-command-history nil
-  "Minibuffer history for `fzf-async-shell-command'.")
+(defvar fzfa-shell-command-history nil
+  "Minibuffer history for `fzfa-shell-command'.")
 
 ;;;###autoload
-(defun fzf-async-shell-command (command &optional directory)
+(defun fzfa-shell-command (command &optional directory)
   "Fuzzy-search the output of a user-provided shell COMMAND.
 Runs in DIRECTORY, defaulting to `default-directory'.
 COMMAND is passed verbatim to `shell-file-name', so pipes,
@@ -1789,16 +1789,16 @@ candidate is opened as a file if it exists relative to the working
 directory; otherwise it is placed in the kill ring."
   (interactive
    (list (read-shell-command "Shell command: " nil
-                             'fzf-async-shell-command-history)))
+                             'fzfa-shell-command-history)))
   (let* ((cmd (string-trim command))
          (dir (or directory default-directory)))
     (when (string-empty-p cmd)
       (user-error "Command cannot be empty"))
-    (when-let* ((result (fzf-async-completing-read
+    (when-let* ((result (fzfa-async-completing-read
                          :prompt (format "%s » " cmd)
                          :command cmd
                          :directory dir
-                         :category 'fzf-async-misc
+                         :category 'fzfa-misc
                          :resolve-paths nil
                          :skip-executable-check t)))
       (let ((path (expand-file-name result dir)))
@@ -1808,104 +1808,104 @@ directory; otherwise it is placed in the kill ring."
           (message "%s" result))))))
 
 ;;;###autoload
-(defun fzf-async-project-shell-command (command)
+(defun fzfa-project-shell-command (command)
   "Fuzzy-search the output of a user-provided shell COMMAND.
-Like `fzf-async-shell-command' but runs in the project root."
+Like `fzfa-shell-command' but runs in the project root."
   (interactive
    (list (read-shell-command "Shell command: "
-                             nil 'fzf-async-shell-command-history)))
-  (fzf-async-shell-command command (fzf-async--default-dir)))
+                             nil 'fzfa-shell-command-history)))
+  (fzfa-shell-command command (fzfa--default-dir)))
 
 ;;; Setup
 
-(defconst fzf-async--categories
-  '(fzf-async-misc
-    fzf-async-file
-    fzf-async-buffer
-    fzf-async-grep
-    fzf-async-bookmark
-    fzf-async-theme
-    fzf-async-imenu
-    fzf-async-multi)
-  "Completion categories owned by fzf-async.
+(defconst fzfa--categories
+  '(fzfa-misc
+    fzfa-file
+    fzfa-buffer
+    fzfa-grep
+    fzfa-bookmark
+    fzfa-theme
+    fzfa-imenu
+    fzfa-multi)
+  "Completion categories owned by fzfa.
 Each is registered in `completion-category-overrides' so the
 pre-scored passthrough style runs instead of style re-filtering.")
 
-(defun fzf-async--check-completion-setup ()
-  "Signal a user-error if `fzf-async' has been added to global `completion-styles'.
+(defun fzfa--check-completion-setup ()
+  "Signal a user-error if `fzfa' has been added to global `completion-styles'.
 That applies the passthrough style to every `completing-read', including
 ones that pass a plain list/hash-table — which the style errors on.
-fzf-async wires itself in via `completion-category-overrides' only;
-`fzf-async--ensure-setup' guarantees that, so the per-category check
+fzfa wires itself in via `completion-category-overrides' only;
+`fzfa--ensure-setup' guarantees that, so the per-category check
 that used to live here is no longer needed."
-  (when (memq 'fzf-async completion-styles)
+  (when (memq 'fzfa completion-styles)
     (user-error
-     "Fzf-async must not be in `completion-styles' globally (it is).  \
-Remove it; fzf-async wires itself in via `completion-category-overrides'")))
+     "Fzfa must not be in `completion-styles' globally (it is).  \
+Remove it; fzfa wires itself in via `completion-category-overrides'")))
 
-(defun fzf-async--bridge-defcustoms (orig-fn &rest args)
-  "Wrap fzf-native call ORIG-FN with ARGS; bridge fzf-async-* into C scorer."
-  (let ((fzf-native-async-highlight  fzf-async-highlight)
-        (fzf-native-max-line-length  fzf-async-max-line-length)
-        (fzf-native-async-cache-size fzf-async-cache-size)
-        (fzf-native-case-mode        fzf-async-case-mode))
+(defun fzfa--bridge-defcustoms (orig-fn &rest args)
+  "Wrap fzf-native call ORIG-FN with ARGS; bridge fzfa-* into C scorer."
+  (let ((fzf-native-async-highlight  fzfa-highlight)
+        (fzf-native-max-line-length  fzfa-max-line-length)
+        (fzf-native-async-cache-size fzfa-cache-size)
+        (fzf-native-case-mode        fzfa-case-mode))
     (apply orig-fn args)))
 
-(defun fzf-async--ensure-setup ()
-  "Install fzf-async's registrations exactly once.
+(defun fzfa--ensure-setup ()
+  "Install fzfa's registrations exactly once.
 Idempotent: subsequent calls are a flag check.  Called from every
 public entry point.
 
  e.g.
- `fzf-async-completing-read',
- `fzf-sync-completing-read',
- `fzf-async-multi-read'."
-  (unless fzf-async--setup-done
-    (setq fzf-async--setup-done t)
+ `fzfa-async-completing-read',
+ `fzfa-sync-completing-read',
+ `fzfa-multi-read'."
+  (unless fzfa--setup-done
+    (setq fzfa--setup-done t)
     (add-to-list 'completion-styles-alist
-                 '(fzf-async
-                   fzf-async-try-completion fzf-async-all-completions
+                 '(fzfa
+                   fzfa-try-completion fzfa-all-completions
                    "Passthrough style for pre-scored async fzf completions."))
 
-    (advice-add 'fzf-native-async-start      :around #'fzf-async--bridge-defcustoms)
-    (advice-add 'fzf-native-async-candidates :around #'fzf-async--bridge-defcustoms)
+    (advice-add 'fzf-native-async-start      :around #'fzfa--bridge-defcustoms)
+    (advice-add 'fzf-native-async-candidates :around #'fzfa--bridge-defcustoms)
 
-    ;; Register each fzf-async category with the passthrough style so other
+    ;; Register each fzfa category with the passthrough style so other
     ;; styles (e.g. fussy on `file', `basic' on multi) don't re-filter our
     ;; pre-scored candidates or cache them client-side past the first call.
-    (dolist (cat fzf-async--categories)
-      (add-to-list 'completion-category-overrides `(,cat (styles fzf-async))))
+    (dolist (cat fzfa--categories)
+      (add-to-list 'completion-category-overrides `(,cat (styles fzfa))))
 
     (with-eval-after-load 'embark
-      (dolist (entry '((fzf-async-file     . embark-file-map)
-                       (fzf-async-buffer   . embark-buffer-map)
-                       (fzf-async-bookmark . embark-bookmark-map)
-                       (fzf-async-grep     fzf-async-grep-map embark-general-map)))
+      (dolist (entry '((fzfa-file     . embark-file-map)
+                       (fzfa-buffer   . embark-buffer-map)
+                       (fzfa-bookmark . embark-bookmark-map)
+                       (fzfa-grep     fzfa-grep-map embark-general-map)))
         (add-to-list 'embark-keymap-alist entry))
-      (setf (alist-get 'fzf-async-grep embark-default-action-overrides)
-            #'fzf-async--grep-jump))
+      (setf (alist-get 'fzfa-grep embark-default-action-overrides)
+            #'fzfa--grep-jump))
 
     (with-eval-after-load 'marginalia
-      (dolist (entry '((fzf-async-file     marginalia-annotate-file     none)
-                       (fzf-async-buffer   marginalia-annotate-buffer   none)
-                       (fzf-async-bookmark marginalia-annotate-bookmark none)
-                       (fzf-async-theme    marginalia-annotate-theme    none)
-                       (fzf-async-imenu    marginalia-annotate-imenu    none)))
+      (dolist (entry '((fzfa-file     marginalia-annotate-file     none)
+                       (fzfa-buffer   marginalia-annotate-buffer   none)
+                       (fzfa-bookmark marginalia-annotate-bookmark none)
+                       (fzfa-theme    marginalia-annotate-theme    none)
+                       (fzfa-imenu    marginalia-annotate-imenu    none)))
         (add-to-list 'marginalia-annotators entry)))
 
-    (when fzf-async-extensions
-      (dolist (ext fzf-async-extensions)
-        (require (intern (format "fzf-async-%s" ext)))
-        (let ((setup-fn (intern (format "fzf-async-%s-setup" ext))))
+    (when fzfa-extensions
+      (dolist (ext fzfa-extensions)
+        (require (intern (format "fzfa-%s" ext)))
+        (let ((setup-fn (intern (format "fzfa-%s-setup" ext))))
           (when (fboundp setup-fn) (funcall setup-fn)))))))
 
 ;;;###autoload
-(define-obsolete-function-alias 'fzf-async-setup #'fzf-async--ensure-setup "1.0"
-  "Calling `fzf-async-setup' is no longer required — every fzf-async
+(define-obsolete-function-alias 'fzfa-setup #'fzfa--ensure-setup "1.0"
+  "Calling `fzfa-setup' is no longer required — every fzfa
 entry point installs the necessary registrations lazily on first
-invocation.  The alias forwards to `fzf-async--ensure-setup' (which is
+invocation.  The alias forwards to `fzfa--ensure-setup' (which is
 idempotent), so existing configs still work; new configs should drop
 the call.")
 
-(provide 'fzf-async)
-;;; fzf-async.el ends here
+(provide 'fzfa)
+;;; fzfa.el ends here
