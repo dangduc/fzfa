@@ -11,6 +11,7 @@
 
 (require 'ert)
 (require 'fzfa)
+(require 'fzfa-emacs)
 
 ;;; fzfa--deduplicate-dirs
 
