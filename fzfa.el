@@ -192,13 +192,14 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(fd find ag pass spotlight music chrome company mail notmuch)
+  '(fd find ag rg pass spotlight music chrome company mail notmuch)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
   :type '(set (const :tag "fd (find alternative)" fd)
               (const :tag "POSIX find" find)
               (const :tag "ag (the_silver_searcher)" ag)
+              (const :tag "ripgrep (rg)" rg)
               (const :tag "password-store (pass)" pass)
               (const :tag "macOS Spotlight (mdfind)" spotlight)
               (const :tag "macOS Music.app" music)
@@ -1107,29 +1108,6 @@ reader-side cap still runs as a backstop."
         ('ugrep (format "--width=%d" mll))
         ('ag    (format "--width=%d" mll))
         (_      "")))))
-
-;;;###autoload
-(defun fzfa-rg-files ()
-  "Find a file under `default-directory' using rg --files."
-  (interactive)
-  (when-let* ((result (fzfa-async-completing-read
-                       :prompt "rg files: " :command "rg --files")))
-    (find-file result)))
-
-;;;###autoload
-(defun fzfa-rg ()
-  "Search file contents under `default-directory' with rg.
-Streams all file contents as FILE:LINE:CONTENT; type to
- fuzzy-filter across them.
-Selecting a candidate opens the file at that line."
-  (interactive)
-  (when-let* ((r (fzfa-async-completing-read
-                  :command (format
-                            "rg --line-number --no-heading --with-filename %s ''"
-                            (fzfa--max-columns-flag 'rg))
-                  :category 'fzfa-grep
-                  :group #'fzfa--grep-group)))
-    (fzfa--grep-jump r)))
 
 ;;;###autoload
 (defun fzfa-git-grep ()
