@@ -192,11 +192,12 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(pass spotlight music chrome company mail notmuch)
+  '(fd pass spotlight music chrome company mail notmuch)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
-  :type '(set (const :tag "password-store (pass)" pass)
+  :type '(set (const :tag "fd (find alternative)" fd)
+              (const :tag "password-store (pass)" pass)
               (const :tag "macOS Spotlight (mdfind)" spotlight)
               (const :tag "macOS Music.app" music)
               (const :tag "Chrome bookmarks + passwords" chrome)
@@ -1110,13 +1111,6 @@ reader-side cap still runs as a backstop."
   "Find a file under `default-directory' using find."
   (interactive)
   (when-let* ((result (fzfa-async-completing-read :command "find .")))
-    (find-file result)))
-
-;;;###autoload
-(defun fzfa-fd ()
-  "Find a file under `default-directory' using fd."
-  (interactive)
-  (when-let* ((result (fzfa-async-completing-read :command "fd --no-ignore")))
     (find-file result)))
 
 ;;;###autoload
