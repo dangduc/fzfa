@@ -192,29 +192,28 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(fd find ag rg grep ugrep hg git
-       emacs shell
-       pass spotlight music chrome company mail notmuch)
+  '(ag chrome company emacs fd find git grep hg mail
+       music notmuch pass rg shell spotlight ugrep)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
-  :type '(set (const :tag "fd (find alternative)" fd)
-              (const :tag "POSIX find" find)
-              (const :tag "ag (the_silver_searcher)" ag)
-              (const :tag "ripgrep (rg)" rg)
-              (const :tag "POSIX grep" grep)
-              (const :tag "ugrep" ugrep)
-              (const :tag "Mercurial (hg)" hg)
-              (const :tag "Git" git)
-              (const :tag "Emacs built-in sources" emacs)
-              (const :tag "Shell command + history" shell)
-              (const :tag "password-store (pass)" pass)
-              (const :tag "macOS Spotlight (mdfind)" spotlight)
-              (const :tag "macOS Music.app" music)
+  :type '(set (const :tag "ag (the_silver_searcher)" ag)
               (const :tag "Chrome bookmarks + passwords" chrome)
               (const :tag "company-mode completions" company)
+              (const :tag "Emacs built-in sources" emacs)
+              (const :tag "fd (find alternative)" fd)
+              (const :tag "POSIX find" find)
+              (const :tag "Git" git)
+              (const :tag "POSIX grep" grep)
+              (const :tag "Mercurial (hg)" hg)
               (const :tag "macOS Mail.app" mail)
-              (const :tag "notmuch mail search" notmuch))
+              (const :tag "macOS Music.app" music)
+              (const :tag "notmuch mail search" notmuch)
+              (const :tag "password-store (pass)" pass)
+              (const :tag "ripgrep (rg)" rg)
+              (const :tag "Shell command + history" shell)
+              (const :tag "macOS Spotlight (mdfind)" spotlight)
+              (const :tag "ugrep" ugrep))
   :group 'fzfa)
 
 (defvar fzfa--setup-done nil
