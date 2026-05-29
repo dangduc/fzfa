@@ -307,7 +307,7 @@ e.g., 1234567 → 1,234,567."
             s   (substring s 0 -3)))
     (concat s out)))
 
-;;; Completing-read
+;;; Async `completing-read'
 
 (cl-defun fzfa--helm-completing-read (&key prompt command directory
                                                 skip-executable-check)
@@ -682,7 +682,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                 #'fzf-native-score-all candidates query))))))
    nil t nil nil nil))
 
-;;; Multi-source
+;;; Multi-source `completing-read'
 
 (defun fzfa--multi-tag (cand idx hash)
   "Tag CAND with source IDX (text-prop + HASH lookup table); return CAND."
@@ -1191,8 +1191,6 @@ descend from A may exclude files the user expects to search."
                                          (string-prefix-p other dir)))
                                   unique))
              collect dir)))
-
-;;; Shell command
 
 ;;; Setup
 
