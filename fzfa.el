@@ -1071,7 +1071,7 @@ the other commands' sources, with each inner source keeping its own
     fzfa-buffer
     fzfa-recent-file
     fzfa-find
-    fzfa-swiper)
+    fzfa-rg)
   "Commands shown by `fzfa-find-some'."
   :type '(repeat function)
   :group 'fzfa)
