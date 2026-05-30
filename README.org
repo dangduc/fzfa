@@ -171,10 +171,12 @@ See *Extensions* below.)
 
 ** Emacs based
 
-| ~fzfa~             | ~counsel~              | ~consult~           |
-|-------------------------+------------------------+---------------------|
-| ~fzfa-buffer~      | ~ivy-switch-buffer~    | ~consult-buffer~    |
-| ~fzfa-bookmark~    | ~counsel-bookmark~     | ~consult-bookmark~  |
+| ~fzfa~                | ~counsel~              | ~consult~                              |
+|-----------------------+------------------------+----------------------------------------|
+| ~fzfa-buffer~         | ~ivy-switch-buffer~    | ~consult-buffer~                       |
+| ~fzfa-bookmark~       | ~counsel-bookmark~     | ~consult-bookmark~                     |
+| ~fzfa-M-x~            | ~counsel-M-x~          | —                                      |
+| ~fzfa-M-x-for-buffer~ | —                      | ~consult-mode-command~                 |
 
 ** Content search
 

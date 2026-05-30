@@ -29,6 +29,8 @@
 ;;   `fzfa-imenu'                    Jump to an imenu entry in this buffer
 ;;   `fzfa-imenu-all'                Jump to an imenu entry across buffers
 ;;   `fzfa-imenu-all-but-current'    Like `fzfa-imenu-all' but skip current
+;;   `fzfa-M-x'                      Run an extended command (like \\[execute-extended-command])
+;;   `fzfa-M-x-for-buffer'           Run an extended command applicable to the current mode
 
 ;;; Code:
 
@@ -367,6 +369,54 @@ Buffers without an imenu index (or whose major mode does not support
 imenu) are skipped silently."
   (interactive)
   (fzfa--imenu 'others))
+
+(defun fzfa--commands (&optional predicate)
+  "Return a sorted list of command names as strings.
+When PREDICATE is non-nil, only include commands for which
+\(funcall PREDICATE SYMBOL) returns non-nil."
+  (let (commands)
+    (mapatoms
+     (lambda (sym)
+       (when (and (commandp sym)
+                  (or (not predicate) (funcall predicate sym)))
+         (push (symbol-name sym) commands))))
+    (sort commands #'string<)))
+
+(defun fzfa--run-command (name)
+  "Execute the command named NAME, recording it like \\[execute-extended-command]."
+  (let ((cmd (intern name)))
+    (setq this-command cmd
+          real-this-command cmd)
+    (command-execute cmd 'record)))
+
+;;;###autoload
+(defun fzfa-M-x ()
+  "Run an extended command using fzf, like \\[execute-extended-command]."
+  (interactive)
+  (when-let* ((result (fzfa-sync-completing-read
+                       :candidates (fzfa--commands)
+                       :prompt "M-x: "
+                       :category 'command
+                       :history 'extended-command-history)))
+    (fzfa--run-command result)))
+
+;;;###autoload
+(defun fzfa-M-x-for-buffer ()
+  "Run an extended command applicable to the current buffer's mode.
+Filters using `command-completion-default-include-p' when available,
+mirroring `execute-extended-command-for-buffer'."
+  (interactive)
+  (let* ((buffer (current-buffer))
+         (predicate
+          (when (fboundp 'command-completion-default-include-p)
+            (lambda (sym)
+              (command-completion-default-include-p sym buffer)))))
+    (when-let* ((result (fzfa-sync-completing-read
+                         :candidates (fzfa--commands predicate)
+                         :prompt (format "M-x [%s]: " major-mode)
+                         :category 'command
+                         :history 'extended-command-history)))
+      (fzfa--run-command result))))
 
 (provide 'fzfa-emacs)
 
