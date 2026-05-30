@@ -69,7 +69,7 @@ This mirrors the fzf command-line search syntax:
 | ~^foo~          | prefix match for ~foo~                   |
 | ~foo$~          | suffix match for ~foo~                   |
 | ~!foo~          | exclude candidates matching ~foo~        |
-| ~foo \vert bar~ | OR: match ~foo~ or ~bar~                 |
+| ~foo | bar~ | OR: match ~foo~ or ~bar~                 |
 
 For example, typing ~el$ !test~ finds files ending in ~.el~ that do not
 contain ~test~.
