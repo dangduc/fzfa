@@ -1,7 +1,7 @@
 ;;; fzfa-music.el --- MacOS Music.app integration for `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
-;; Version: 0.1
+;; Version: 1.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: multimedia, matching, fzf
 ;; Homepage: https://github.com/jojojames/fzfa

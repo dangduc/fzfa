@@ -1,7 +1,7 @@
 ;;; fzfa-shell.el --- Shell command sources for `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
-;; Version: 0.1
+;; Version: 1.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, matching, shell
 ;; Homepage: https://github.com/jojojames/fzfa

@@ -1,7 +1,7 @@
 ;;; fzfa-notmuch.el --- Notmuch interface to `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
-;; Version: 0.1
+;; Version: 1.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: mail, notmuch, matching, fzf
 ;; Homepage: https://github.com/jojojames/fzfa

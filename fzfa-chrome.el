@@ -1,7 +1,7 @@
 ;;; fzfa-chrome.el --- Chrome via `fzfa' -*- lexical-binding: t; -*-
 
 ;; Author: James Nguyen <james@jojojames.com>
-;; Version: 0.3
+;; Version: 1.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, matching, password, chrome, fzf
 ;; Homepage: https://github.com/jojojames/fzfa
