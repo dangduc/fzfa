@@ -15,9 +15,9 @@
 ;; `fzfa-setup' has been called.
 ;;
 ;; Commands:
-;;   `fzfa-flymake'  Jump to a flymake diagnostic.  With a prefix arg,
-;;                   gather diagnostics from every buffer in the
-;;                   current project.
+;;   `fzfa-flymake'          Jump to a diagnostic in the current buffer.
+;;   `fzfa-flymake-project'  Jump to a diagnostic in any buffer of the
+;;                           current project.
 
 ;;; Code:
 
@@ -107,21 +107,15 @@ LOOKUP is the display→marker hash returned by `fzfa-flymake--candidates'."
                   (buf (marker-buffer m)))
         (buffer-name buf)))))
 
-;;;###autoload
-(defun fzfa-flymake (&optional project)
-  "Jump to a flymake diagnostic.
-With prefix arg PROJECT, gather diagnostics from every buffer in the
-current project instead of just the current buffer."
-  (interactive "P")
-  (let* ((diags (if-let* ((pr (and project (project-current))))
-                    (flymake--project-diagnostics pr)
-                  (flymake-diagnostics)))
-         (pair (fzfa-flymake--candidates diags))
+(defun fzfa-flymake--read (diags prompt)
+  "Prompt for one of DIAGS via fzf and jump to it.
+PROMPT is the minibuffer prompt string."
+  (let* ((pair (fzfa-flymake--candidates diags))
          (candidates (car pair))
          (lookup (cdr pair)))
     (when-let* ((result (fzfa-sync-completing-read
                          :candidates candidates
-                         :prompt "flymake: "
+                         :prompt prompt
                          :category 'fzfa-flymake
                          :group (fzfa-flymake--group lookup)))
                 (marker (gethash result lookup))
@@ -132,6 +126,21 @@ current project instead of just the current buffer."
         (switch-to-buffer buffer))
       (push-mark nil t)
       (goto-char (marker-position marker)))))
+
+;;;###autoload
+(defun fzfa-flymake ()
+  "Jump to a flymake diagnostic in the current buffer."
+  (interactive)
+  (fzfa-flymake--read (flymake-diagnostics) "flymake: "))
+
+;;;###autoload
+(defun fzfa-flymake-project ()
+  "Jump to a flymake diagnostic from any buffer in the current project."
+  (interactive)
+  (let ((pr (or (project-current)
+                (user-error "No current project"))))
+    (fzfa-flymake--read (flymake--project-diagnostics pr)
+                        "flymake [project]: ")))
 
 ;;;###autoload
 (defun fzfa-flymake-setup ()
