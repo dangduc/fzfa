@@ -99,9 +99,7 @@ Main Repo:
 
 #+begin_src emacs-lisp :tangle yes
   (use-package fzf-native
-    :vc (:url "https://github.com/dangduc/fzf-native" :rev :newest)
-    :config
-    (fzf-native-load-dyn))
+    :vc (:url "https://github.com/dangduc/fzf-native" :rev :newest))
 #+end_src
 
 Minimal setup:
@@ -115,9 +113,7 @@ Recommended:
 
 #+begin_src emacs-lisp :tangle yes
   (use-package fzf-native
-    :vc (:url "https://github.com/dangduc/fzf-native" :rev :newest)
-    :config
-    (fzf-native-load-dyn))
+    :vc (:url "https://github.com/dangduc/fzf-native" :rev :newest))
 
   (use-package fussy
     :vc (:url "https://github.com/jojojames/fussy" :rev :newest)
@@ -328,9 +324,7 @@ command (e.g. ~find~ or ~ripgrep~) and must be streamed incrementally.
 
 #+begin_src emacs-lisp :tangle yes
   (use-package fzf-native
-    :vc (:url "https://github.com/dangduc/fzf-native" :rev :newest)
-    :config
-    (fzf-native-load-dyn))
+    :vc (:url "https://github.com/dangduc/fzf-native" :rev :newest))
 
   ;; Synchronous fuzzy completion for code, buffers, M-x, etc.
   (use-package fussy
