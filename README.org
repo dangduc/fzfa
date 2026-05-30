@@ -167,12 +167,18 @@ See *Extensions* below.)
 
 ** Emacs based
 
-| ~fzfa~                | ~counsel~              | ~consult~                              |
-|-----------------------+------------------------+----------------------------------------|
-| ~fzfa-buffer~         | ~ivy-switch-buffer~    | ~consult-buffer~                       |
-| ~fzfa-bookmark~       | ~counsel-bookmark~     | ~consult-bookmark~                     |
-| ~fzfa-M-x~            | ~counsel-M-x~          | —                                      |
-| ~fzfa-M-x-for-buffer~ | —                      | ~consult-mode-command~                 |
+| ~fzfa~                       | ~counsel~              | ~consult~                              |
+|-------------------------------+------------------------+----------------------------------------|
+| ~fzfa-buffer~                | ~ivy-switch-buffer~    | ~consult-buffer~                       |
+| ~fzfa-bookmark~              | ~counsel-bookmark~     | ~consult-bookmark~                     |
+| ~fzfa-M-x~                   | ~counsel-M-x~          | —                                      |
+| ~fzfa-M-x-for-buffer~        | —                      | ~consult-mode-command~                 |
+| ~fzfa-yank-pop~              | ~counsel-yank-pop~     | ~consult-yank-pop~                     |
+| ~fzfa-theme~                 | ~counsel-load-theme~   | ~consult-theme~                        |
+| ~fzfa-tramp~                 | —                      | —                                      |
+| ~fzfa-imenu~                 | ~counsel-imenu~        | ~consult-imenu~                        |
+| ~fzfa-imenu-all~             | —                      | ~consult-imenu-multi~                  |
+| ~fzfa-imenu-all-but-current~ | —                      | —                                      |
 
 ** Content search
 
@@ -210,7 +216,9 @@ directory list is passed as arguments to a single shell command.
 | ~fzfa~                 | ~consult~        |
 |-----------------------------+------------------|
 | ~fzfa-find-any~   | ~consult-buffer~ |
+| ~fzfa-find-some~  | ~consult-buffer~ |
 | ~fzfa-passwords~  | (no direct analog) |
+| ~fzfa-evil-any~   | (no direct analog) |
 
 ~fzfa-find-any~ merges several sources into a single
 ~completing-read~ (groups for buffers, recent files, hungry-find, …),
@@ -218,8 +226,9 @@ ranks each group by its top fzf score, and dispatches the chosen
 candidate back to the originating command's action.
 
 The command list lives in ~fzfa-find-any-commands~ — by default
-~(fzfa-buffer fzfa-recent-file fzfa-hungry-find)~.  Add
-any other arg-less ~fzfa~ command to that list and it shows up as
+~(fzfa-imenu fzfa-buffer fzfa-recent-file fzfa-hungry-find
+fzfa-imenu-all-but-current fzfa-M-x fzfa-hungry-swiper fzfa-locate)~.
+Add any other arg-less ~fzfa~ command to that list and it shows up as
 its own group, with no source plist or factory function to maintain:
 the source is *derived from the command's existing definition* via the
 =:extract= / =:inject= dispatch in ~fzfa-async-completing-read~ and
@@ -269,8 +278,9 @@ explicitly).
 | ~company~   | ~fzfa-company~    | ~company~         | ~fzfa-company~ — fuzzy-filter current ~company-mode~ candidates and finish; modeled on ~helm-company~ / ~counsel-company~ / ~consult-company~ |
 | ~mail~      | ~fzfa-mail~       | macOS ~Mail.app~  | ~fzfa-mail~, ~fzfa-mail-refresh~ — browse and open inbox messages                                                          |
 | ~notmuch~   | ~fzfa-notmuch~    | ~notmuch~ (CLI + Emacs package) | ~fzfa-notmuch~, ~fzfa-notmuch-tree~ — run a notmuch query and fuzzy-pick a thread to open; modeled on ~helm-notmuch~ / ~counsel-notmuch~ / ~consult-notmuch~ |
+| ~evil~      | ~fzfa-evil~       | ~evil~            | ~fzfa-evil-marks~ (jump to a buffer-local or global mark, candidate includes ~BUFFER:LINE: <content>~ so fzf scores against the line preview), ~fzfa-evil-registers~ (paste text registers / execute macro-vector registers), ~fzfa-evil-jumps~ (window jump list — ~C-o~/~C-i~ history — with line preview when the buffer is loaded), ~fzfa-evil-ex-history~ (re-run an entry from ~evil-ex-history~ via ~evil-ex-execute~), ~fzfa-evil-search-history~ (re-run a pattern from ~evil-ex-search-history~ and update ~evil-ex-search-pattern~ so ~n~/~N~ continue working), ~fzfa-evil-command-window~ (unified ex + search history picker grouped by source), ~fzfa-evil-any~ (multi-source picker over the other commands, configurable via ~fzfa-evil-any-commands~) |
 
-Default value of ~fzfa-extensions~ is ~(pass spotlight music chrome company mail notmuch)~.
+Default value of ~fzfa-extensions~ is ~(ag chrome company emacs evil fd find git grep hg hungry locate mail music notmuch pass rg shell spotlight ugrep)~.
 Each loads without its soft dependency present — the dependency is
 only required when you invoke one of the extension's commands.  Soft
 dependencies are not declared in ~Package-Requires~ — install them
@@ -400,7 +410,7 @@ single keybinding via [[https://github.com/jojojames/matcha][matcha]].
 | ~fzfa-max-line-length~    | 256       | Per-line character limit; nil/+N/-N (see note below). |
 | ~fzfa-cache-size~         | 40        | Per-session LRU cache entries (see note below).       |
 | ~fzfa-case-mode~          | ~smart~   | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.     |
-| ~fzfa-extensions~         | ~(pass spotlight music chrome company mail notmuch)~ | Extensions to ~require~ during setup. |
+| ~fzfa-extensions~         | (see *Extensions* below) | Extensions to ~require~ during setup. |
 
 ~fzfa-highlight~ controls C-side match highlighting.  After the scoring
 pass, the C module calls ~fzf_get_positions~ for the top N candidates and
