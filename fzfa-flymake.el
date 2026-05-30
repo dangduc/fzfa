@@ -1,0 +1,143 @@
+;;; fzfa-flymake.el --- Flymake interface to `fzfa' -*- lexical-binding: t; -*-
+
+;; Author: James Nguyen <james@jojojames.com>
+;; Version: 0.1
+;; Keywords: convenience, matching
+;; Homepage: https://github.com/jojojames/fzfa
+;; Assisted-by: Claude:claude-opus-4-7
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
+;;; Commentary:
+
+;; fzfa interface to Flymake diagnostics, modeled on `consult-flymake'.
+;;
+;; Loaded automatically when `flymake' is in `fzfa-extensions' and
+;; `fzfa-setup' has been called.
+;;
+;; Commands:
+;;   `fzfa-flymake'  Jump to a flymake diagnostic.  With a prefix arg,
+;;                   gather diagnostics from every buffer in the
+;;                   current project.
+
+;;; Code:
+
+(require 'fzfa)
+(require 'flymake)
+(eval-when-compile (require 'cl-lib))
+
+(declare-function project-current "project")
+(declare-function flymake--project-diagnostics "flymake")
+(declare-function flymake--severity "flymake")
+(declare-function flymake--lookup-type-property "flymake")
+
+(defun fzfa-flymake--collect (diags)
+  "Walk DIAGS and return a list of (BUFFER LINE TYPE TEXT MARKER) tuples.
+Diagnostics whose buffer has been killed are dropped."
+  (delq nil
+        (mapcar
+         (lambda (diag)
+           (let ((buffer (flymake-diagnostic-buffer diag))
+                 (type (flymake-diagnostic-type diag)))
+             (when (buffer-live-p buffer)
+               (with-current-buffer buffer
+                 (save-excursion
+                   (save-restriction
+                     (widen)
+                     (goto-char (flymake-diagnostic-beg diag))
+                     (list (buffer-name buffer)
+                           (line-number-at-pos)
+                           type
+                           (flymake-diagnostic-text diag)
+                           (point-marker))))))))
+         diags)))
+
+(defun fzfa-flymake--candidates (diags)
+  "Return (CANDIDATES . LOOKUP) for DIAGS.
+CANDIDATES is a list of pre-formatted display strings sorted by buffer,
+severity (descending), then position.  LOOKUP is a hash mapping each
+display string to its source-buffer marker."
+  (let ((items (fzfa-flymake--collect diags)))
+    (unless items
+      (user-error "No flymake diagnostics (Status: %s)"
+                  (if (seq-difference (flymake-running-backends)
+                                      (flymake-reporting-backends))
+                      'running 'finished)))
+    (let* ((sorted
+            (sort items
+                  (pcase-lambda (`(,b1 _ ,t1 _ ,m1) `(,b2 _ ,t2 _ ,m2))
+                    (let ((s1 (flymake--severity t1))
+                          (s2 (flymake--severity t2)))
+                      (or (string-lessp b1 b2)
+                          (and (string-equal b1 b2)
+                               (or (> s1 s2)
+                                   (and (= s1 s2)
+                                        (< (marker-position m1)
+                                           (marker-position m2))))))))))
+           (buffer-width (cl-loop for x in sorted maximize (length (nth 0 x))))
+           (line-width (cl-loop for x in sorted
+                                maximize (length (number-to-string (nth 1 x)))))
+           (fmt (format "%%-%ds %%-%dd %%-7s %%s" buffer-width line-width))
+           (lookup (make-hash-table :test 'equal))
+           (candidates
+            (mapcar
+             (pcase-lambda (`(,buffer ,line ,type ,text ,marker))
+               (let* ((type-name (format "%s"
+                                         (flymake--lookup-type-property
+                                          type 'flymake-type-name type)))
+                      (face (flymake--lookup-type-property
+                             type 'mode-line-face 'flymake-error))
+                      (display (format fmt buffer line
+                                       (propertize type-name 'face face)
+                                       text)))
+                 (while (gethash display lookup)
+                   (setq display (concat display " ")))
+                 (puthash display marker lookup)
+                 display))
+             sorted)))
+      (cons candidates lookup))))
+
+(defun fzfa-flymake--group (lookup)
+  "Return a group function partitioning candidates by source buffer.
+LOOKUP is the display→marker hash returned by `fzfa-flymake--candidates'."
+  (lambda (cand transform)
+    (if transform
+        cand
+      (when-let* ((m (gethash cand lookup))
+                  ((markerp m))
+                  (buf (marker-buffer m)))
+        (buffer-name buf)))))
+
+;;;###autoload
+(defun fzfa-flymake (&optional project)
+  "Jump to a flymake diagnostic.
+With prefix arg PROJECT, gather diagnostics from every buffer in the
+current project instead of just the current buffer."
+  (interactive "P")
+  (let* ((diags (if-let* ((pr (and project (project-current))))
+                    (flymake--project-diagnostics pr)
+                  (flymake-diagnostics)))
+         (pair (fzfa-flymake--candidates diags))
+         (candidates (car pair))
+         (lookup (cdr pair)))
+    (when-let* ((result (fzfa-sync-completing-read
+                         :candidates candidates
+                         :prompt "flymake: "
+                         :category 'fzfa-flymake
+                         :group (fzfa-flymake--group lookup)))
+                (marker (gethash result lookup))
+                ((markerp marker))
+                (buffer (marker-buffer marker))
+                ((buffer-live-p buffer)))
+      (unless (eq buffer (current-buffer))
+        (switch-to-buffer buffer))
+      (push-mark nil t)
+      (goto-char (marker-position marker)))))
+
+;;;###autoload
+(defun fzfa-flymake-setup ()
+  "Register the `fzfa-flymake' completion category."
+  (add-to-list 'completion-category-overrides
+               '(fzfa-flymake (styles fzfa))))
+
+(provide 'fzfa-flymake)
+;;; fzfa-flymake.el ends here
