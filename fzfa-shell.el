@@ -2,6 +2,7 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 0.1
+;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, matching, shell
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
@@ -18,7 +19,7 @@
 ;;
 ;; Commands:
 ;;   `fzfa-shell-command'           Fuzzy-search the output of a shell command
-;;   `fzfa-project-shell-command'   Same, but run from the project root
+;;   `fzfa-shell-project-command'   Same, but run from the project root
 ;;   `fzfa-shell-history'           Insert / copy a line from shell history
 
 ;;; Code:
@@ -58,7 +59,7 @@ directory; otherwise it is placed in the kill ring."
           (message "%s" result))))))
 
 ;;;###autoload
-(defun fzfa-project-shell-command (command)
+(defun fzfa-shell-project-command (command)
   "Fuzzy-search the output of a user-provided shell COMMAND.
 Like `fzfa-shell-command' but runs in the project root."
   (interactive
@@ -125,9 +126,4 @@ kill ring instead.  Override the location via
           (insert result))))))
 
 (provide 'fzfa-shell)
-
-;; Local Variables:
-;; package-lint-main-file: "fzfa.el"
-;; End:
-
 ;;; fzfa-shell.el ends here

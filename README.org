@@ -163,7 +163,7 @@ The list here is on best efforts, might be inaccurate.
 | ~fzfa-recent-file~           | ~counsel-recentf~   | ~consult-recent-file~ |
 | ~fzfa-locate~                | ~counsel-locate~    | ~consult-locate~      |
 | ~fzfa-shell-command~         | —                   | —                     |
-| ~fzfa-project-shell-command~ | —                   | —                     |
+| ~fzfa-shell-project-command~ | —                   | —                     |
 
 (macOS Spotlight commands — ~fzfa-spotlight~, ~-spotlight-apps~,
 ~-spotlight-audio~ — ship in the ~spotlight~ extension, on by default.
@@ -569,7 +569,7 @@ aliases and builtins that ~executable-find~ cannot see.
 
 For one-off queries, ~fzfa-shell-command~ prompts for a command
 interactively and runs it in ~default-directory~;
-~fzfa-project-shell-command~ does the same from the project root.
+~fzfa-shell-project-command~ does the same from the project root.
 
 #+begin_src emacs-lisp :tangle yes
 ;;;###autoload
