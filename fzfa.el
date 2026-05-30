@@ -1073,8 +1073,9 @@ the other commands' sources, with each inner source keeping its own
     fzfa-recent-file
     fzfa-hungry-find
     fzfa-imenu-all-but-current
+    fzfa-M-x
     fzfa-hungry-swiper
-    fzfa-M-x)
+    fzfa-locate)
   "Commands shown by `fzfa-find-any'."
   :type '(repeat function)
   :group 'fzfa)
@@ -1084,8 +1085,8 @@ the other commands' sources, with each inner source keeping its own
     fzfa-buffer
     fzfa-recent-file
     fzfa-find
-    fzfa-rg
-    fzfa-M-x-for-buffer)
+    fzfa-M-x-for-buffer
+    fzfa-rg)
   "Commands shown by `fzfa-find-some'."
   :type '(repeat function)
   :group 'fzfa)
