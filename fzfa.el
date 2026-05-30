@@ -625,7 +625,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                     (category 'fzfa-misc)
                                     annotate
                                     affix
-                                    group)
+                                    group
+                                    history)
   "Run `completing-read' over CANDIDATES using fzf-native for scoring.
 
 :CANDIDATES List of strings to score with `fzf-native-score-all'.
@@ -645,14 +646,18 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
 :GROUP      Optional function (CANDIDATE TRANSFORM) -> string.  When
             TRANSFORM is nil return the group name; when non-nil return
             the display string for CANDIDATE within its group.  Frontends
-            like vertico render group headers between sections."
+            like vertico render group headers between sections.
+:HISTORY    Optional history variable symbol passed to `completing-read'.
+            Selected entries are pushed onto this list and recallable
+            with \\[previous-history-element]."
   (fzfa--ensure-setup)
   (cond
    ((eq fzfa--multi-mode :extract)
     (throw 'fzfa-extracted
            ;; Translate :candidates → :items so multi consumes one key.
            (list :items candidates :prompt prompt :category category
-                 :annotate annotate :affix affix :group group)))
+                 :annotate annotate :affix affix :group group
+                 :history history)))
    ((eq (car-safe fzfa--multi-mode) :inject)
     (cl-return-from fzfa-sync-completing-read
       (cdr fzfa--multi-mode))))
@@ -680,7 +685,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                  candidates
                (fzfa--bridge-defcustoms
                 #'fzf-native-score-all candidates query))))))
-   nil t nil nil nil))
+   nil t nil history nil))
 
 ;;; Multi-source `completing-read'
 
