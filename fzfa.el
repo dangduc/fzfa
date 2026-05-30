@@ -694,12 +694,45 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
 
 ;;; Multi-source `completing-read'
 
+(defconst fzfa--tofu-base #x100000
+  "Base Unicode Private Use Area codepoint for source-disambiguation suffixes.
+Each multi source's candidates carry a single trailing codepoint at
+`fzfa--tofu-base' + source-idx, propertized `display \"\"' so it renders
+invisibly while making cross-source duplicates `string='-unique.
+See consult's `consult--tofu-encode' for the same trick.")
+
+(defvar fzfa--tofu-cache (make-hash-table :test 'eql)
+  "Cache of propertized tofu suffix strings, keyed by source index.")
+
+(defun fzfa--tofu-suffix (idx)
+  "Return the cached invisible tofu suffix string for source IDX."
+  (or (gethash idx fzfa--tofu-cache)
+      (puthash idx
+               (propertize (string (+ fzfa--tofu-base idx))
+                           'invisible t 'display "")
+               fzfa--tofu-cache)))
+
+(defun fzfa--tofu-hide (s)
+  "Return S without its trailing tofu codepoint, if any.
+Returns S unchanged when there is no tofu suffix."
+  (if (and (stringp s)
+           (let ((n (length s)))
+             (and (> n 0)
+                  (>= (aref s (1- n)) fzfa--tofu-base))))
+      (substring s 0 (1- (length s)))
+    s))
+
 (defun fzfa--multi-tag (cand idx hash)
-  "Tag CAND with source IDX (text-prop + HASH lookup table); return CAND."
-  (when (> (length cand) 0)
-    (put-text-property 0 1 'fzfa-src-idx idx cand))
-  (puthash cand idx hash)
-  cand)
+  "Return CAND tagged for source IDX.
+Appends an invisible tofu suffix so cross-source duplicates remain
+`string='-distinct, sets a `fzfa-src-idx' text property at position 0
+for in-band dispatch, and records the tagged string in HASH as a
+fallback lookup when text properties are stripped."
+  (let ((tagged (concat cand (fzfa--tofu-suffix idx))))
+    (when (> (length tagged) 0)
+      (put-text-property 0 1 'fzfa-src-idx idx tagged))
+    (puthash tagged idx hash)
+    tagged))
 
 (defun fzfa--multi-source-of (cand sources-v hash)
   "Return the source plist responsible for CAND, or nil.
@@ -881,9 +914,13 @@ Per-source plist keys:
                                       ;; lookup/match key.  Falls back to
                                       ;; the raw candidate when a source
                                       ;; has no :group function (or its
-                                      ;; transform returns nil).
+                                      ;; transform returns nil).  The
+                                      ;; tofu suffix is hidden via its
+                                      ;; `display ""' text property, so
+                                      ;; the raw CAND fallback renders
+                                      ;; cleanly without an explicit strip.
                                       (or (when-let* ((g (plist-get src :group)))
-                                            (funcall g cand t))
+                                            (funcall g (fzfa--tofu-hide cand) t))
                                           cand)
                                     (or (plist-get src :name) "")))))
                           (affixation-function
@@ -894,7 +931,8 @@ Per-source plist keys:
                                            (let* ((src (fzfa--multi-source-of
                                                         c sources-v cand->src))
                                                   (g (and src (plist-get src :group))))
-                                             (or (and g (funcall g c t)) c)))
+                                             (or (and g (funcall g (fzfa--tofu-hide c) t))
+                                                 c)))
                                          cands))
                                        (maxw (apply #'max 0
                                                     (mapcar #'string-width
@@ -904,7 +942,7 @@ Per-source plist keys:
                                      (let* ((src (fzfa--multi-source-of
                                                   cand sources-v cand->src))
                                             (ann (and src (plist-get src :annotate)))
-                                            (s   (and ann (funcall ann cand)))
+                                            (s   (and ann (funcall ann (fzfa--tofu-hide cand))))
                                             (pad (- (1+ maxw)
                                                     (string-width display))))
                                        (list cand ""
@@ -947,8 +985,11 @@ Per-source plist keys:
                                 ;; re-tag them so group/action lookup works.
                                 ;; out may be nil (zero matches) — still valid.
                                 (when h
-                                  (dolist (c out)
-                                    (fzfa--multi-tag c i cand->src)))
+                                  (setq out
+                                        (mapcar
+                                         (lambda (c)
+                                           (fzfa--multi-tag c i cand->src))
+                                         out)))
                                 (aset last-results i out)
                                 (aset rank i
                                       (fzfa--multi-rank out query h))
@@ -1007,8 +1048,9 @@ Per-source plist keys:
       (let* ((src    (or (and selected-idx (aref sources-v selected-idx))
                          (fzfa--multi-source-of
                           result sources-v cand->src)))
-             (action (and src (plist-get src :action))))
-        (if action (funcall action result) result)))))
+             (action (and src (plist-get src :action)))
+             (clean  (fzfa--tofu-hide result)))
+        (if action (funcall action clean) clean)))))
 
 ;;;###autoload
 (defun fzfa-multi-read (commands &rest options)
