@@ -438,9 +438,13 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                    :directory directory :category category :group group
                    :resolve-paths resolve-paths)))
      ((eq (car-safe fzfa--multi-mode) :inject)
-      (cl-return-from fzfa-async-completing-read
-        (fzfa--maybe-expand (cdr fzfa--multi-mode)
-                                 directory resolve-paths))))
+      ;; One-shot consume: mutate the outer action's `let' cell so the
+      ;; rest of the caller's body (and any nested fzfa calls) run with
+      ;; multi-mode = nil instead of replaying our inject value.
+      (let ((cand (cdr fzfa--multi-mode)))
+        (setq fzfa--multi-mode nil)
+        (cl-return-from fzfa-async-completing-read
+          (fzfa--maybe-expand cand directory resolve-paths)))))
     (fzfa--check-completion-setup)
     (when (bound-and-true-p helm-mode)
       (cl-return-from fzfa-async-completing-read
@@ -659,8 +663,9 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                  :annotate annotate :affix affix :group group
                  :history history)))
    ((eq (car-safe fzfa--multi-mode) :inject)
-    (cl-return-from fzfa-sync-completing-read
-      (cdr fzfa--multi-mode))))
+    (let ((cand (cdr fzfa--multi-mode)))
+      (setq fzfa--multi-mode nil)
+      (cl-return-from fzfa-sync-completing-read cand))))
   (fzfa--check-completion-setup)
   (completing-read
    prompt
@@ -750,7 +755,9 @@ Per-source plist keys:
    ((eq fzfa--multi-mode :extract)
     (throw 'fzfa-extracted (list :multi-sources sources)))
    ((eq (car-safe fzfa--multi-mode) :inject)
-    (cl-return-from fzfa--multi-read (cdr fzfa--multi-mode))))
+    (let ((cand (cdr fzfa--multi-mode)))
+      (setq fzfa--multi-mode nil)
+      (cl-return-from fzfa--multi-read cand))))
   (when (bound-and-true-p helm-mode)
     (user-error "Fzfa--multi-read does not yet support helm-mode"))
   (let* ((n            (length sources))
