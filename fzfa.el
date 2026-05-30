@@ -192,7 +192,7 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(ag chrome company emacs fd find git grep hg hungry
+  '(ag chrome company emacs evil fd find git grep hg hungry
        locate mail music notmuch pass rg shell spotlight ugrep)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
@@ -201,6 +201,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "Chrome bookmarks + passwords" chrome)
               (const :tag "company-mode completions" company)
               (const :tag "Emacs built-in sources" emacs)
+              (const :tag "Evil-mode marks + registers" evil)
               (const :tag "fd (find alternative)" fd)
               (const :tag "POSIX find" find)
               (const :tag "Git" git)
