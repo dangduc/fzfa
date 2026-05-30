@@ -310,7 +310,7 @@ e.g., 1234567 → 1,234,567."
 ;;; Async `completing-read'
 
 (cl-defun fzfa--helm-completing-read (&key prompt command directory
-                                                skip-executable-check)
+                                           skip-executable-check)
   "Helm path for `fzfa-async-completing-read'.
 PROMPT is shown in the minibuffer.  COMMAND is the producer shell command run
 in DIRECTORY.  SKIP-EXECUTABLE-CHECK bypasses the `executable-find' guard.
@@ -389,13 +389,13 @@ when RESOLVE-PATHS is nil."
 
 ;;;###autoload
 (cl-defun fzfa-async-completing-read (&key
-                                     prompt
-                                     command
-                                     (directory (fzfa--default-dir))
-                                     (category 'fzfa-file)
-                                     group
-                                     (resolve-paths t)
-                                     skip-executable-check)
+                                      prompt
+                                      command
+                                      (directory (fzfa--default-dir))
+                                      (category 'fzfa-file)
+                                      group
+                                      (resolve-paths t)
+                                      skip-executable-check)
   "Run shell COMMAND with asynchronous `completing-read'.
 
 :PROMPT                 Minibuffer prompt.  Derived from the first token of
@@ -471,9 +471,9 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                 (with-selected-window (active-minibuffer-window)
                   (let ((idx (fzfa--frontend-index)))
                     (fzfa--log "DEBUG: %s%s %s[%d](%d) "
-                                    prompt dir
-                                    (if idx (format "%d/" (1+ idx)) "")
-                                    last-filtered last-total)
+                               prompt dir
+                               (if idx (format "%d/" (1+ idx)) "")
+                               last-filtered last-total)
                     (overlay-put stats-overlay 'display
                                  (if idx
                                      (format "%s%s %d/[%s](%s) "
@@ -624,13 +624,13 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
        directory resolve-paths))))
 
 (cl-defun fzfa-sync-completing-read (&key
-                                    candidates
-                                    (prompt "fzf > ")
-                                    (category 'fzfa-misc)
-                                    annotate
-                                    affix
-                                    group
-                                    history)
+                                     candidates
+                                     (prompt "fzf > ")
+                                     (category 'fzfa-misc)
+                                     annotate
+                                     affix
+                                     group
+                                     history)
   "Run `completing-read' over CANDIDATES using fzf-native for scoring.
 
 :CANDIDATES List of strings to score with `fzf-native-score-all'.
