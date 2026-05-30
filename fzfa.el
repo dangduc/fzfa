@@ -1295,6 +1295,8 @@ public entry point.
  `fzfa-multi-read'."
   (unless fzfa--setup-done
     (setq fzfa--setup-done t)
+    (when (fboundp 'fzf-native-ensure-loaded)
+      (fzf-native-ensure-loaded))
     (add-to-list 'completion-styles-alist
                  '(fzfa
                    fzfa-try-completion fzfa-all-completions
