@@ -300,17 +300,6 @@ Handles vertico and icomplete.  `ivy' is handled separately."
        ((bound-and-true-p icomplete-mode)
         (icomplete-exhibit))))))
 
-(defun fzfa--commas (n)
-  "Format integer N with comma thousand-separators.
-
-e.g., 1234567 → 1,234,567."
-  (let ((s (number-to-string n))
-        (out ""))
-    (while (> (length s) 3)
-      (setq out (concat "," (substring s -3) out)
-            s   (substring s 0 -3)))
-    (concat s out)))
-
 (defun fzfa--minibuffer-format-reset ()
   "Disable frontend count formats in the active minibuffer.
 Called from a `minibuffer-with-setup-hook' lambda so that vertico's
@@ -322,6 +311,17 @@ the target package isn't loaded."
     (setq-local vertico-count-format nil))
   (when (boundp 'icomplete-matches-format)
     (setq-local icomplete-matches-format nil)))
+
+(defun fzfa--commas (n)
+  "Format integer N with comma thousand-separators.
+
+e.g., 1234567 → 1,234,567."
+  (let ((s (number-to-string n))
+        (out ""))
+    (while (> (length s) 3)
+      (setq out (concat "," (substring s -3) out)
+            s   (substring s 0 -3)))
+    (concat s out)))
 
 (defun fzfa--format-stats (prefix idx filtered total)
   "Format the fzfa stats text \"PREFIX[N/][FILTERED](TOTAL) \".
