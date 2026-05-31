@@ -325,6 +325,22 @@ Returns the empty string otherwise."
             (minibuffer-contents-no-properties))))
       ""))
 
+(cl-defun fzfa--completion-metadata (category &key annotate affix group)
+  "Return the `metadata' alist for fzfa's `completing-read' collection lambdas.
+
+CATEGORY is the completion category symbol.  Optional ANNOTATE / AFFIX /
+GROUP attach `annotation-function', `affixation-function', and
+`group-function' when non-nil.  `display-sort-function' and
+`cycle-sort-function' are pinned to `identity' so frontends preserve the
+order produced by the C scorer."
+  `(metadata
+    (category . ,category)
+    (display-sort-function . identity)
+    (cycle-sort-function . identity)
+    ,@(when annotate `((annotation-function . ,annotate)))
+    ,@(when affix    `((affixation-function . ,affix)))
+    ,@(when group    `((group-function      . ,group)))))
+
 ;;; Async `completing-read'
 
 (cl-defun fzfa--helm-completing-read (&key prompt command directory
@@ -579,10 +595,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                 prompt
                 (lambda (str _pred action)
                   (pcase action
-                    ('metadata `(metadata (category . ,category)
-                                          (display-sort-function . identity)
-                                          (cycle-sort-function . identity)
-                                          ,@(when group `((group-function . ,group)))))
+                    ('metadata (fzfa--completion-metadata category :group group))
                     ;; Treat the whole input as one field; prevents space-splitting.
                     (`(boundaries . ,_) (cons 0 0))
                     ('t (let ((query (fzfa--current-query str)))
@@ -682,14 +695,10 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
    prompt
    (lambda (str _pred action)
      (pcase action
-       ('metadata
-        `(metadata
-          (category . ,category)
-          (display-sort-function . identity)
-          (cycle-sort-function . identity)
-          ,@(when annotate `((annotation-function  . ,annotate)))
-          ,@(when affix    `((affixation-function  . ,affix)))
-          ,@(when group    `((group-function       . ,group)))))
+       ('metadata (fzfa--completion-metadata category
+                                              :annotate annotate
+                                              :affix affix
+                                              :group group))
        (`(boundaries . ,_) (cons 0 0))
        ('lambda t)
        ('t (let ((query (fzfa--current-query str)))
@@ -904,61 +913,57 @@ Per-source plist keys:
                    (lambda (str _pred action)
                      (pcase action
                        ('metadata
-                        `(metadata
-                          (category . fzfa-multi)
-                          (display-sort-function . identity)
-                          (cycle-sort-function . identity)
-                          (group-function
-                           . ,(lambda (cand transform)
-                                (let ((src (fzfa--multi-source-of
-                                            cand sources-v cand->src)))
-                                  (if transform
-                                      ;; Per-source :group transform —
-                                      ;; lets a source strip an internal
-                                      ;; "IDX:" prefix or otherwise
-                                      ;; reshape its display string while
-                                      ;; keeping the raw value as the
-                                      ;; lookup/match key.  Falls back to
-                                      ;; the raw candidate when a source
-                                      ;; has no :group function (or its
-                                      ;; transform returns nil).  The
-                                      ;; tofu suffix is hidden via its
-                                      ;; `display ""' text property, so
-                                      ;; the raw CAND fallback renders
-                                      ;; cleanly without an explicit strip.
-                                      (or (when-let* ((g (plist-get src :group)))
-                                            (funcall g (fzfa--tofu-hide cand) t))
-                                          cand)
-                                    (or (plist-get src :name) "")))))
-                          (affixation-function
-                           . ,(lambda (cands)
-                                (let* ((displays
-                                        (mapcar
-                                         (lambda (c)
-                                           (let* ((src (fzfa--multi-source-of
-                                                        c sources-v cand->src))
-                                                  (g (and src (plist-get src :group))))
-                                             (or (and g (funcall g (fzfa--tofu-hide c) t))
-                                                 c)))
-                                         cands))
-                                       (maxw (apply #'max 0
-                                                    (mapcar #'string-width
-                                                            displays))))
-                                  (cl-mapcar
-                                   (lambda (cand display)
-                                     (let* ((src (fzfa--multi-source-of
-                                                  cand sources-v cand->src))
-                                            (ann (and src (plist-get src :annotate)))
-                                            (s   (and ann (funcall ann (fzfa--tofu-hide cand))))
-                                            (pad (- (1+ maxw)
-                                                    (string-width display))))
-                                       (list cand ""
-                                             (if s
-                                                 (concat
-                                                  (make-string (max 1 pad) ?\s)
-                                                  s)
-                                               ""))))
-                                   cands displays))))))
+                        (fzfa--completion-metadata
+                         'fzfa-multi
+                         :group
+                         (lambda (cand transform)
+                           (let ((src (fzfa--multi-source-of
+                                       cand sources-v cand->src)))
+                             (if transform
+                                 ;; Per-source :group transform — lets a
+                                 ;; source strip an internal "IDX:" prefix
+                                 ;; or otherwise reshape its display string
+                                 ;; while keeping the raw value as the
+                                 ;; lookup/match key.  Falls back to the raw
+                                 ;; candidate when a source has no :group
+                                 ;; function (or its transform returns nil).
+                                 ;; The tofu suffix is hidden via its
+                                 ;; `display ""' text property, so the raw
+                                 ;; CAND fallback renders cleanly without an
+                                 ;; explicit strip.
+                                 (or (when-let* ((g (plist-get src :group)))
+                                       (funcall g (fzfa--tofu-hide cand) t))
+                                     cand)
+                               (or (plist-get src :name) ""))))
+                         :affix
+                         (lambda (cands)
+                           (let* ((displays
+                                   (mapcar
+                                    (lambda (c)
+                                      (let* ((src (fzfa--multi-source-of
+                                                   c sources-v cand->src))
+                                             (g (and src (plist-get src :group))))
+                                        (or (and g (funcall g (fzfa--tofu-hide c) t))
+                                            c)))
+                                    cands))
+                                  (maxw (apply #'max 0
+                                               (mapcar #'string-width
+                                                       displays))))
+                             (cl-mapcar
+                              (lambda (cand display)
+                                (let* ((src (fzfa--multi-source-of
+                                             cand sources-v cand->src))
+                                       (ann (and src (plist-get src :annotate)))
+                                       (s   (and ann (funcall ann (fzfa--tofu-hide cand))))
+                                       (pad (- (1+ maxw)
+                                               (string-width display))))
+                                  (list cand ""
+                                        (if s
+                                            (concat
+                                             (make-string (max 1 pad) ?\s)
+                                             s)
+                                          ""))))
+                              cands displays)))))
                        (`(boundaries . ,_) (cons 0 0))
                        ('lambda t)
                        ('t
