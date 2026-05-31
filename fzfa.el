@@ -362,14 +362,17 @@ Nil disables the cap on the C side."
 
 HANDLES may be a single async handle, a list, or a vector; nil values
 \(including nil HANDLES) are ignored.  Stops are batched into a single
-zero-delay timer so the runtime can schedule them at its discretion; the
-closure retains the live-handle list so it survives the caller's unwind.
+idle timer; the closure retains the live-handle list so it survives the
+caller's unwind.
 
 The C-side destroy does pthread_join on the scoring thread
 \(uninterruptible snapshot/score work for huge pools) and frees the
 candidate arena — easily hundreds of ms for a `find ~'-scale session.
 None of it is needed before minibuffer dismissal, so deferring this
-lets ESC return instantly and the cleanup happens on the next idle tick."
+lets ESC return instantly.  An idle timer (rather than `run-at-time' 0)
+ensures the join is wedged between user keystrokes only when the user
+has actually paused — keeping the pthread_join out of the user's typing
+rhythm in trade for holding the arena slightly longer."
   (let ((live (cond
                ((null handles) nil)
                ((vectorp handles)
@@ -377,9 +380,9 @@ lets ESC return instantly and the cleanup happens on the next idle tick."
                ((listp handles) (delq nil (copy-sequence handles)))
                (t (list handles)))))
     (when live
-      (run-at-time 0 nil
-                   (lambda ()
-                     (dolist (h live) (fzf-native-async-stop h)))))))
+      (run-with-idle-timer 0 nil
+                           (lambda ()
+                             (dolist (h live) (fzf-native-async-stop h)))))))
 
 (cl-defun fzfa--completion-metadata (category &key annotate affix group)
   "Return the `metadata' alist for fzfa's `completing-read' collection lambdas.
