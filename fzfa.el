@@ -665,38 +665,36 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                     ('metadata (fzfa--completion-metadata category :group group))
                     ;; Treat the whole input as one field; prevents space-splitting.
                     (`(boundaries . ,_) (cons 0 0))
-                    ('t (let ((query (fzfa--current-query str)))
-                          (if (string-empty-p query)
-                              last-result
-                            (let ((r (while-no-input
-                                       (fzf-native-async-candidates handle query limit))))
-                              (if (eq r t)
-                                  ;; Scoring was interrupted by pending input.
-                                  ;; Debounce a retry so the display self-heals once
-                                  ;; the user pauses typing.
-                                  (progn
-                                    (when retry-timer (cancel-timer retry-timer))
-                                    (setq retry-timer
-                                          (run-with-idle-timer
-                                           fzfa-input-debounce nil
-                                           (lambda ()
-                                             (setq retry-timer nil)
-                                             (if (bound-and-true-p ivy-mode)
-                                                 (funcall ivy-push)
-                                               (fzfa--frontend-exhibit))))))
-                                (when-let* ((stats (fzf-native-async-stats handle)))
-                                  (setq last-filtered (car stats)
-                                        last-total    (cdr stats)))
-                                (unless (bound-and-true-p ivy-mode)
-                                  (when-let* ((win (active-minibuffer-window)))
-                                    (with-selected-window win
-                                      (unless stats-overlay
-                                        (setq stats-overlay
-                                              (make-overlay (point-min) (minibuffer-prompt-end))))
-                                      (funcall refresh-overlay))))
-                                (setq last-query query
-                                      last-result r))
-                              (when (equal query last-query) last-result)))))
+                    ('t (let* ((query (fzfa--current-query str))
+                               (r (while-no-input
+                                    (fzf-native-async-candidates handle query limit))))
+                          (if (eq r t)
+                              ;; Scoring was interrupted by pending input.
+                              ;; Debounce a retry so the display self-heals once
+                              ;; the user pauses typing.
+                              (progn
+                                (when retry-timer (cancel-timer retry-timer))
+                                (setq retry-timer
+                                      (run-with-idle-timer
+                                       fzfa-input-debounce nil
+                                       (lambda ()
+                                         (setq retry-timer nil)
+                                         (if (bound-and-true-p ivy-mode)
+                                             (funcall ivy-push)
+                                           (fzfa--frontend-exhibit))))))
+                            (when-let* ((stats (fzf-native-async-stats handle)))
+                              (setq last-filtered (car stats)
+                                    last-total    (cdr stats)))
+                            (unless (bound-and-true-p ivy-mode)
+                              (when-let* ((win (active-minibuffer-window)))
+                                (with-selected-window win
+                                  (unless stats-overlay
+                                    (setq stats-overlay
+                                          (make-overlay (point-min) (minibuffer-prompt-end))))
+                                  (funcall refresh-overlay))))
+                            (setq last-query query
+                                  last-result r))
+                          (when (equal query last-query) last-result)))
                     (_ t))))))
          (cancel-timer timer)
          (when retry-timer (cancel-timer retry-timer))
