@@ -1201,7 +1201,7 @@ originating source's command (`fzfa-pass-copy' or
    '(fzfa-pass-copy fzfa-chrome-pass-copy)
    :prompt "passwords: "))
 
-;;; Helpers
+;;; Grep candidate machinery
 
 (defun fzfa--max-columns-flag (tool)
   "Return a max-line-length CLI flag string for grep-style TOOL.
