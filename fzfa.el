@@ -310,6 +310,21 @@ e.g., 1234567 → 1,234,567."
             s   (substring s 0 -3)))
     (concat s out)))
 
+(defun fzfa--current-query (str)
+  "Return the live query for a `completing-read' collection lambda.
+
+STR is the string the collection function was called with; some
+frontends pass an empty STR even when the minibuffer holds a real
+query, so fall back to the active minibuffer's contents.
+
+Returns the empty string otherwise."
+  (or (if (not (string-empty-p str))
+          str
+        (when-let* ((win (active-minibuffer-window)))
+          (with-current-buffer (window-buffer win)
+            (minibuffer-contents-no-properties))))
+      ""))
+
 ;;; Async `completing-read'
 
 (cl-defun fzfa--helm-completing-read (&key prompt command directory
@@ -570,15 +585,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                           ,@(when group `((group-function . ,group)))))
                     ;; Treat the whole input as one field; prevents space-splitting.
                     (`(boundaries . ,_) (cons 0 0))
-                    ('t (let* (;; Str is sometimes empty when there's a valid query.
-                               ;; Prefer str when non-empty to avoid calculations
-                               ;; in the minibuffer but fall back if str is empty.
-                               (query (if (not (string-empty-p str))
-                                          str
-                                        (when-let* ((win (active-minibuffer-window)))
-                                          (with-current-buffer (window-buffer win)
-                                            (minibuffer-contents-no-properties))))))
-                          (if (null query)
+                    ('t (let ((query (fzfa--current-query str)))
+                          (if (string-empty-p query)
                               last-result
                             (let ((r (while-no-input
                                        (fzf-native-async-candidates handle query limit))))
@@ -684,12 +692,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
           ,@(when group    `((group-function       . ,group)))))
        (`(boundaries . ,_) (cons 0 0))
        ('lambda t)
-       ('t (let ((query (if (not (string-empty-p str))
-                            str
-                          (when-let* ((win (active-minibuffer-window)))
-                            (with-current-buffer (window-buffer win)
-                              (minibuffer-contents-no-properties))))))
-             (if (or (null query) (string-empty-p query))
+       ('t (let ((query (fzfa--current-query str)))
+             (if (string-empty-p query)
                  candidates
                (fzfa--bridge-defcustoms
                 #'fzf-native-score-all candidates query))))))
@@ -958,14 +962,8 @@ Per-source plist keys:
                        (`(boundaries . ,_) (cons 0 0))
                        ('lambda t)
                        ('t
-                        (let* ((query
-                                (if (not (string-empty-p str))
-                                    str
-                                  (or (when-let* ((win (active-minibuffer-window)))
-                                        (with-current-buffer (window-buffer win)
-                                          (minibuffer-contents-no-properties)))
-                                      "")))
-                               (interrupted nil))
+                        (let ((query (fzfa--current-query str))
+                              (interrupted nil))
                           (dotimes (i n)
                             (let* ((h     (aref handles i))
                                    (items (aref sync-items i))
