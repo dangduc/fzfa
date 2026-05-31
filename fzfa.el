@@ -310,6 +310,18 @@ e.g., 1234567 → 1,234,567."
             s   (substring s 0 -3)))
     (concat s out)))
 
+(defun fzfa--minibuffer-format-reset ()
+  "Disable frontend count formats in the active minibuffer.
+Called from a `minibuffer-with-setup-hook' lambda so that vertico's
+`vertico-count-format' and icomplete's `icomplete-matches-format' don't
+overwrite fzfa's own stats overlay / pre-prompt text.  Ivy is handled
+separately via `ivy-count-format' bound at the call site.  No-ops when
+the target package isn't loaded."
+  (when (boundp 'vertico-count-format)
+    (setq-local vertico-count-format nil))
+  (when (boundp 'icomplete-matches-format)
+    (setq-local icomplete-matches-format nil)))
+
 (defun fzfa--format-stats (prefix idx filtered total)
   "Format the fzfa stats text \"PREFIX[N/][FILTERED](TOTAL) \".
 PREFIX is the leading text — e.g. \"PROMPT DIR \", \"DIR \", or just
@@ -578,10 +590,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                  ;; canonical fzf-native names by :around advice on
                  ;; `fzf-native-async-candidates' (see EOF), so no
                  ;; setq-local needed here for the async path.
-                 (when (boundp 'vertico-count-format)
-                   (setq-local vertico-count-format nil))
-                 (when (boundp 'icomplete-matches-format)
-                   (setq-local icomplete-matches-format nil)))
+                 (fzfa--minibuffer-format-reset))
              (let ((ivy-completing-read-dynamic-collection t)
                    (ivy-count-format
                     (when (bound-and-true-p ivy-mode) ""))
@@ -882,10 +891,7 @@ Per-source plist keys:
           (setq result
                 (minibuffer-with-setup-hook
                     (lambda ()
-                      (when (boundp 'vertico-count-format)
-                        (setq-local vertico-count-format nil))
-                      (when (boundp 'icomplete-matches-format)
-                        (setq-local icomplete-matches-format nil))
+                      (fzfa--minibuffer-format-reset)
                       ;; Capture source idx from the propertized minibuffer
                       ;; text before completing-read returns and strips text
                       ;; properties from its return value.  Reliable
