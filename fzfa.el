@@ -312,6 +312,8 @@ the target package isn't loaded."
   (when (boundp 'icomplete-matches-format)
     (setq-local icomplete-matches-format nil)))
 
+;;; Completing-read helpers
+
 (defun fzfa--commas (n)
   "Format integer N with comma thousand-separators.
 
