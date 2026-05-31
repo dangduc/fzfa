@@ -181,6 +181,11 @@ See *Extensions* below.)
 | ~fzfa-imenu-all-but-current~ | —                      | —                                      |
 | ~fzfa-flymake~               | —                      | ~consult-flymake~                      |
 | ~fzfa-flymake-project~       | —                      | ~consult-flymake~ (with prefix arg)    |
+| ~fzfa-project-find-file~     | ~counsel-projectile-find-file~     | —                       |
+| ~fzfa-project-find-dir~      | ~counsel-projectile-find-dir~      | —                       |
+| ~fzfa-project-buffer~        | ~counsel-projectile-switch-to-buffer~ | ~consult-project-buffer~ |
+| ~fzfa-project-recentf~       | ~counsel-projectile-recentf~       | —                       |
+| ~fzfa-project-switch-project~ | ~counsel-projectile-switch-project~ | —                       |
 
 ** Content search
 
@@ -281,9 +286,10 @@ explicitly).
 | ~mail~      | ~fzfa-mail~       | macOS ~Mail.app~  | ~fzfa-mail~, ~fzfa-mail-refresh~ — browse and open inbox messages                                                          |
 | ~notmuch~   | ~fzfa-notmuch~    | ~notmuch~ (CLI + Emacs package) | ~fzfa-notmuch~, ~fzfa-notmuch-tree~ — run a notmuch query and fuzzy-pick a thread to open; modeled on ~helm-notmuch~ / ~counsel-notmuch~ / ~consult-notmuch~ |
 | ~flymake~   | ~fzfa-flymake~    | none (built-in)   | ~fzfa-flymake~ (current buffer), ~fzfa-flymake-project~ (all buffers in the current project) — modeled on ~consult-flymake~ |
+| ~project~   | ~fzfa-project~    | none (built-in)   | ~fzfa-project-find-file~, ~fzfa-project-find-dir~, ~fzfa-project-buffer~, ~fzfa-project-recentf~, ~fzfa-project-switch-project~ — candidate sets driven by ~project-files~ / ~project-buffers~ / ~project-known-project-roots~; modeled on the ~project.el~ built-ins, ~consult-project-buffer~, ~counsel-projectile-*~, and ~helm-projectile-*~ |
 | ~evil~      | ~fzfa-evil~       | ~evil~            | ~fzfa-evil-marks~ (jump to a buffer-local or global mark, candidate includes ~BUFFER:LINE: <content>~ so fzf scores against the line preview), ~fzfa-evil-registers~ (paste text registers / execute macro-vector registers), ~fzfa-evil-jumps~ (window jump list — ~C-o~/~C-i~ history — with line preview when the buffer is loaded), ~fzfa-evil-ex-history~ (re-run an entry from ~evil-ex-history~ via ~evil-ex-execute~), ~fzfa-evil-search-history~ (re-run a pattern from ~evil-ex-search-history~ and update ~evil-ex-search-pattern~ so ~n~/~N~ continue working), ~fzfa-evil-command-window~ (unified ex + search history picker grouped by source), ~fzfa-evil-any~ (multi-source picker over the other commands, configurable via ~fzfa-evil-any-commands~) |
 
-Default value of ~fzfa-extensions~ is ~(ag chrome company emacs evil fd find flymake git grep hg hungry locate mail music notmuch pass rg shell spotlight ugrep)~.
+Default value of ~fzfa-extensions~ is ~(ag chrome company emacs evil fd find flymake git grep hg hungry locate mail music notmuch pass project rg shell spotlight ugrep)~.
 Each loads without its soft dependency present — the dependency is
 only required when you invoke one of the extension's commands.  Soft
 dependencies are not declared in ~Package-Requires~ — install them
