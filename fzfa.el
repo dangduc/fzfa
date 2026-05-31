@@ -192,7 +192,7 @@ Read at session start; changing it does not affect running sessions."
 
 (defcustom fzfa-extensions
   '(ag chrome company emacs evil fd find flymake git grep hg hungry
-       locate mail music notmuch pass project rg shell spotlight ugrep)
+       locate mail make music notmuch pass project rg shell spotlight ugrep)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
@@ -210,6 +210,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "Hungry (buffer-derived dirs)" hungry)
               (const :tag "locate" locate)
               (const :tag "macOS Mail.app" mail)
+              (const :tag "make / ninja targets" make)
               (const :tag "macOS Music.app" music)
               (const :tag "notmuch mail search" notmuch)
               (const :tag "password-store (pass)" pass)

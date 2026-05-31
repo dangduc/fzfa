@@ -197,6 +197,7 @@ the matching line.
 | ~fzfa-rg~                | ~counsel-rg~       | ~consult-ripgrep~    |
 | ~fzfa-ag~                | ~counsel-ag~       | —                    |
 | ~fzfa-git-grep~          | ~counsel-git-grep~ | ~consult-git-grep~   |
+| ~fzfa-git-log-grep~      | ~counsel-git-log~  | ~consult-git-log-grep~ |
 | ~fzfa-grep~              | ~counsel-grep~     | ~consult-grep~       |
 | ~fzfa-grep-current-file~ | ~counsel-grep~     | ~consult-line~       |
 | ~fzfa-ugrep~             | —                  | —                    |
@@ -288,8 +289,9 @@ explicitly).
 | ~flymake~   | ~fzfa-flymake~    | none (built-in)   | ~fzfa-flymake~ (current buffer), ~fzfa-flymake-project~ (all buffers in the current project) — modeled on ~consult-flymake~ |
 | ~project~   | ~fzfa-project~    | none (built-in)   | ~fzfa-project-find-file~, ~fzfa-project-find-dir~, ~fzfa-project-buffer~, ~fzfa-project-recentf~, ~fzfa-project-switch-project~ — candidate sets driven by ~project-files~ / ~project-buffers~ / ~project-known-project-roots~; modeled on the ~project.el~ built-ins, ~consult-project-buffer~, ~counsel-projectile-*~, and ~helm-projectile-*~ |
 | ~evil~      | ~fzfa-evil~       | ~evil~            | ~fzfa-evil-marks~ (jump to a buffer-local or global mark, candidate includes ~BUFFER:LINE: <content>~ so fzf scores against the line preview), ~fzfa-evil-registers~ (paste text registers / execute macro-vector registers), ~fzfa-evil-jumps~ (window jump list — ~C-o~/~C-i~ history — with line preview when the buffer is loaded), ~fzfa-evil-ex-history~ (re-run an entry from ~evil-ex-history~ via ~evil-ex-execute~), ~fzfa-evil-search-history~ (re-run a pattern from ~evil-ex-search-history~ and update ~evil-ex-search-pattern~ so ~n~/~N~ continue working), ~fzfa-evil-command-window~ (unified ex + search history picker grouped by source), ~fzfa-evil-any~ (multi-source picker over the other commands, configurable via ~fzfa-evil-any-commands~) |
+| ~make~      | ~fzfa-make~       | ~make~ / ~ninja~ (CLI) | ~fzfa-make~ (locate ~Makefile~/~build.ninja~ and call make) |
 
-Default value of ~fzfa-extensions~ is ~(ag chrome company emacs evil fd find flymake git grep hg hungry locate mail music notmuch pass project rg shell spotlight ugrep)~.
+Default value of ~fzfa-extensions~ is ~(ag chrome company emacs evil fd find flymake git grep hg hungry locate mail make music notmuch pass project rg shell spotlight ugrep)~.
 Each loads without its soft dependency present — the dependency is
 only required when you invoke one of the extension's commands.  Soft
 dependencies are not declared in ~Package-Requires~ — install them
