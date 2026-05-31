@@ -432,6 +432,21 @@ Priority: `fzfa-directory' >
            (projectile-project-root))))
       default-directory))
 
+(defun fzfa--deduplicate-dirs (dirs)
+  "Remove duplicates and subdirectory entries from DIRS.
+If directory A is a prefix of directory B, B is dropped — A's recursive
+search already covers it.  Exception: B is kept when it is itself a git
+root (contains a .git entry), since rg honors per-repo gitignores and a
+descend from A may exclude files the user expects to search."
+  (let ((unique (cl-delete-duplicates dirs :test #'string=)))
+    (cl-loop for dir in unique
+             unless (and (not (file-exists-p (expand-file-name ".git" dir)))
+                         (cl-some (lambda (other)
+                                    (and (not (string= dir other))
+                                         (string-prefix-p other dir)))
+                                  unique))
+             collect dir)))
+
 ;;; Async `completing-read'
 
 (cl-defun fzfa--helm-completing-read (&key prompt command directory
@@ -1244,21 +1259,6 @@ TRANSFORM non-nil → strip the filename prefix; display LINE:CONTENT only."
           (substring cand (match-beginning 2))
         (match-string 1 cand))
     cand))
-
-(defun fzfa--deduplicate-dirs (dirs)
-  "Remove duplicates and subdirectory entries from DIRS.
-If directory A is a prefix of directory B, B is dropped — A's recursive
-search already covers it.  Exception: B is kept when it is itself a git
-root (contains a .git entry), since rg honors per-repo gitignores and a
-descend from A may exclude files the user expects to search."
-  (let ((unique (cl-delete-duplicates dirs :test #'string=)))
-    (cl-loop for dir in unique
-             unless (and (not (file-exists-p (expand-file-name ".git" dir)))
-                         (cl-some (lambda (other)
-                                    (and (not (string= dir other))
-                                         (string-prefix-p other dir)))
-                                  unique))
-             collect dir)))
 
 ;;; Setup
 
