@@ -189,5 +189,35 @@ Mocks `expand-file-name' so `fzfa-tramp' reads the temp file."
               (should (member "fzfa-test-buf:1:hello" cands)))))
       (kill-buffer buf))))
 
+;;; fzfa--format-stats
+
+(ert-deftest fzfa-format-stats-with-idx ()
+  "Non-nil IDX renders as `(1+ IDX)/' between prefix and `['."
+  (should (equal (fzfa--format-stats "find: ~/code " 0 12 100)
+                 "find: ~/code 1/[12](100) ")))
+
+(ert-deftest fzfa-format-stats-without-idx ()
+  "Nil IDX omits the `N/' segment — frontends like icomplete have none."
+  (should (equal (fzfa--format-stats "find: ~/code " nil 12 100)
+                 "find: ~/code [12](100) ")))
+
+(ert-deftest fzfa-format-stats-commas-large-numbers ()
+  "FILTERED and TOTAL are comma-formatted via `fzfa--commas'."
+  (should (equal (fzfa--format-stats "" nil 1234 1234567)
+                 "[1,234](1,234,567) ")))
+
+(ert-deftest fzfa-format-stats-preserves-prefix-verbatim ()
+  "PREFIX is emitted as-is — caller owns any punctuation and trailing space."
+  (should (equal (fzfa--format-stats "fzf-multi: " 4 0 0)
+                 "fzf-multi: 5/[0](0) "))
+  (should (equal (fzfa--format-stats "" nil 0 0)
+                 "[0](0) ")))
+
+(ert-deftest fzfa-format-stats-always-trailing-space ()
+  "Output ends with a single trailing space regardless of inputs."
+  (dolist (idx '(nil 0 42))
+    (should (string-suffix-p
+             " " (fzfa--format-stats "p " idx 1 1)))))
+
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here

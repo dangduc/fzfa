@@ -310,6 +310,19 @@ e.g., 1234567 → 1,234,567."
             s   (substring s 0 -3)))
     (concat s out)))
 
+(defun fzfa--format-stats (prefix idx filtered total)
+  "Format the fzfa stats text \"PREFIX[N/][FILTERED](TOTAL) \".
+PREFIX is the leading text — e.g. \"PROMPT DIR \", \"DIR \", or just
+\"PROMPT\" — and is emitted verbatim.  IDX is the 0-based selection
+index; when non-nil it's rendered as \"N/\", when nil that segment is
+omitted (frontends like icomplete don't expose a selection index).
+FILTERED and TOTAL are integer candidate counts, comma-formatted."
+  (format "%s%s[%s](%s) "
+          prefix
+          (if idx (format "%d/" (1+ idx)) "")
+          (fzfa--commas filtered)
+          (fzfa--commas total)))
+
 (defun fzfa--current-query (str)
   "Return the live query for a `completing-read' collection lambda.
 
@@ -506,21 +519,12 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
             (lambda ()
               (when (and stats-overlay (active-minibuffer-window))
                 (with-selected-window (active-minibuffer-window)
-                  (let ((idx (fzfa--frontend-index)))
-                    (fzfa--log "DEBUG: %s%s %s[%d](%d) "
-                               prompt dir
-                               (if idx (format "%d/" (1+ idx)) "")
-                               last-filtered last-total)
-                    (overlay-put stats-overlay 'display
-                                 (if idx
-                                     (format "%s%s %d/[%s](%s) "
-                                             prompt dir (1+ idx)
-                                             (fzfa--commas last-filtered)
-                                             (fzfa--commas last-total))
-                                   (format "%s%s [%s](%s) "
-                                           prompt dir
-                                           (fzfa--commas last-filtered)
-                                           (fzfa--commas last-total)))))))))
+                  (let* ((idx (fzfa--frontend-index))
+                         (text (fzfa--format-stats
+                                (concat prompt dir " ")
+                                idx last-filtered last-total)))
+                    (fzfa--log "DEBUG: %s" text)
+                    (overlay-put stats-overlay 'display text))))))
            ;; Ivy push path: score the current query and push into
            ;; `ivy--all-candidates' directly. Used instead of
            ;; `fzfa--frontend-exhibit' for ivy because
@@ -584,16 +588,9 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                    (ivy-pre-prompt-function
                     (when (bound-and-true-p ivy-mode)
                       (lambda ()
-                        (let ((idx (fzfa--frontend-index)))
-                          (if idx
-                              (format "%s %d/[%s](%s) "
-                                      dir (1+ idx)
-                                      (fzfa--commas last-filtered)
-                                      (fzfa--commas last-total))
-                            (format "%s [%s](%s) "
-                                    dir
-                                    (fzfa--commas last-filtered)
-                                    (fzfa--commas last-total))))))))
+                        (fzfa--format-stats (concat dir " ")
+                                            (fzfa--frontend-index)
+                                            last-filtered last-total)))))
                (completing-read
                 prompt
                 (lambda (str _pred action)
@@ -834,17 +831,12 @@ Per-source plist keys:
           (lambda ()
             (when (and stats-overlay (active-minibuffer-window))
               (with-selected-window (active-minibuffer-window)
-                (let* ((idx (fzfa--frontend-index))
-                       (f   (fzfa--commas
-                             (cl-loop for x across filtered sum x)))
-                       (tot (fzfa--commas
-                             (cl-loop for x across totals sum x)))
-                       (text (if idx
-                                 (format "%s%d/[%s](%s) "
-                                         prompt (1+ idx) f tot)
-                               (format "%s[%s](%s) "
-                                       prompt f tot))))
-                  (overlay-put stats-overlay 'display text))))))
+                (overlay-put stats-overlay 'display
+                             (fzfa--format-stats
+                              prompt
+                              (fzfa--frontend-index)
+                              (cl-loop for x across filtered sum x)
+                              (cl-loop for x across totals sum x)))))))
          retry-timer timer result)
     (dotimes (i n)
       (let* ((src   (aref sources-v i))
