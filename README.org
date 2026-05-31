@@ -13,9 +13,9 @@ A shell command streams candidates into a background reader thread;
 across all available CPU cores; results land in a standard ~completing-read~
 UI incrementally as the shell command is still running.
 
-It is designed for candidate sets too large for synchronous completion —
-hundreds of thousands to millions of files or lines — where other solutions
-are too slow or don't match candidates fuzzily.
+Built for candidate pools in the hundreds of thousands to millions of
+lines or files.  Scoring runs in a C dynamic module across every
+available core, never blocking the Emacs main thread.
 
 * Why
 
@@ -38,7 +38,6 @@ given *only* to fzf, which handles both filtering and scoring in a single,
 coherent pass.
 
 This is equivalent to calling ~fzf~ directly in the shell.
-
 ** The fzf algorithm
 
 fzf uses a modified Smith-Waterman sequence alignment algorithm.  Every
@@ -133,11 +132,14 @@ experience using ~fzf~ as the core filtering/scoring algorithm.
 
 #+begin_src emacs-lisp :tangle yes
   ;; No explicit setup needed — just call any command:
-  (fzfa-find-any)
-  (fzfa-rg)
-  (fzfa-fd)
-  (fzfa-find)
-  (fzfa-git-ls-files)
+  M-x fzfa-find-any
+
+  or:
+    fzfa-find-some
+    fzfa-rg
+    fzfa-fd
+    fzfa-find
+    fzfa-git-ls-files
 #+end_src
 
 * Commands
@@ -279,17 +281,17 @@ explicitly).
 
 | Symbol      | Library                | Soft dependency   | Commands                                                                                                                              |
 |-------------+------------------------+-------------------+---------------------------------------------------------------------------------------------------------------------------------------|
-| ~pass~      | ~fzfa-pass~       | ~password-store~  | ~fzfa-pass~ (copy), ~fzfa-pass-edit~, ~-rename~, ~-delete~, ~-add~, ~-generate~, ~-url~ — modeled on ~ivy-pass~ |
-| ~spotlight~ | ~fzfa-spotlight~  | macOS ~mdfind~    | ~fzfa-spotlight~, ~fzfa-spotlight-apps~, ~fzfa-spotlight-audio~                                                        |
-| ~music~     | ~fzfa-music~      | macOS ~Music.app~ | ~fzfa-music~, ~-by-artist~, ~-by-genre~, ~-playlist~, ~-playlist-shuffle~, ~-refresh~ — modeled on ~helm-itunes~                |
 | ~chrome~    | ~fzfa-chrome~     | none (bookmarks); macOS ~sqlite3~ + ~security~ + ~openssl~ + ~python3~ (passwords) | bookmarks: ~fzfa-chrome-bookmarks~ (default), ~-edit~, ~-copy-url~, ~-refresh~ — open Chromium-family bookmarks via ~browse-url~.  passwords (macOS only): ~fzfa-chrome-pass-copy~ (default), ~-copy-username~, ~-url~, ~-refresh~ — decrypts entries from Chrome's Login Data SQLite DB using the keychain entry ~Chrome Safe Storage~ |
 | ~company~   | ~fzfa-company~    | ~company~         | ~fzfa-company~ — fuzzy-filter current ~company-mode~ candidates and finish; modeled on ~helm-company~ / ~counsel-company~ / ~consult-company~ |
-| ~mail~      | ~fzfa-mail~       | macOS ~Mail.app~  | ~fzfa-mail~, ~fzfa-mail-refresh~ — browse and open inbox messages                                                          |
-| ~notmuch~   | ~fzfa-notmuch~    | ~notmuch~ (CLI + Emacs package) | ~fzfa-notmuch~, ~fzfa-notmuch-tree~ — run a notmuch query and fuzzy-pick a thread to open; modeled on ~helm-notmuch~ / ~counsel-notmuch~ / ~consult-notmuch~ |
-| ~flymake~   | ~fzfa-flymake~    | none (built-in)   | ~fzfa-flymake~ (current buffer), ~fzfa-flymake-project~ (all buffers in the current project) — modeled on ~consult-flymake~ |
-| ~project~   | ~fzfa-project~    | none (built-in)   | ~fzfa-project-find-file~, ~fzfa-project-find-dir~, ~fzfa-project-buffer~, ~fzfa-project-recentf~, ~fzfa-project-switch-project~ — candidate sets driven by ~project-files~ / ~project-buffers~ / ~project-known-project-roots~; modeled on the ~project.el~ built-ins, ~consult-project-buffer~, ~counsel-projectile-*~, and ~helm-projectile-*~ |
 | ~evil~      | ~fzfa-evil~       | ~evil~            | ~fzfa-evil-marks~ (jump to a buffer-local or global mark, candidate includes ~BUFFER:LINE: <content>~ so fzf scores against the line preview), ~fzfa-evil-registers~ (paste text registers / execute macro-vector registers), ~fzfa-evil-jumps~ (window jump list — ~C-o~/~C-i~ history — with line preview when the buffer is loaded), ~fzfa-evil-ex-history~ (re-run an entry from ~evil-ex-history~ via ~evil-ex-execute~), ~fzfa-evil-search-history~ (re-run a pattern from ~evil-ex-search-history~ and update ~evil-ex-search-pattern~ so ~n~/~N~ continue working), ~fzfa-evil-command-window~ (unified ex + search history picker grouped by source), ~fzfa-evil-any~ (multi-source picker over the other commands, configurable via ~fzfa-evil-any-commands~) |
+| ~flymake~   | ~fzfa-flymake~    | none (built-in)   | ~fzfa-flymake~ (current buffer), ~fzfa-flymake-project~ (all buffers in the current project) — modeled on ~consult-flymake~ |
+| ~mail~      | ~fzfa-mail~       | macOS ~Mail.app~  | ~fzfa-mail~, ~fzfa-mail-refresh~ — browse and open inbox messages                                                          |
 | ~make~      | ~fzfa-make~       | ~make~ / ~ninja~ (CLI) | ~fzfa-make~ (locate ~Makefile~/~build.ninja~ and call make) |
+| ~music~     | ~fzfa-music~      | macOS ~Music.app~ | ~fzfa-music~, ~-by-artist~, ~-by-genre~, ~-playlist~, ~-playlist-shuffle~, ~-refresh~ — modeled on ~helm-itunes~                |
+| ~notmuch~   | ~fzfa-notmuch~    | ~notmuch~ (CLI + Emacs package) | ~fzfa-notmuch~, ~fzfa-notmuch-tree~ — run a notmuch query and fuzzy-pick a thread to open; modeled on ~helm-notmuch~ / ~counsel-notmuch~ / ~consult-notmuch~ |
+| ~pass~      | ~fzfa-pass~       | ~password-store~  | ~fzfa-pass~ (copy), ~fzfa-pass-edit~, ~-rename~, ~-delete~, ~-add~, ~-generate~, ~-url~ — modeled on ~ivy-pass~ |
+| ~project~   | ~fzfa-project~    | none (built-in)   | ~fzfa-project-find-file~, ~fzfa-project-find-dir~, ~fzfa-project-buffer~, ~fzfa-project-recentf~, ~fzfa-project-switch-project~ — candidate sets driven by ~project-files~ / ~project-buffers~ / ~project-known-project-roots~; modeled on the ~project.el~ built-ins, ~consult-project-buffer~, ~counsel-projectile-*~, and ~helm-projectile-*~ |
+| ~spotlight~ | ~fzfa-spotlight~  | macOS ~mdfind~    | ~fzfa-spotlight~, ~fzfa-spotlight-apps~, ~fzfa-spotlight-audio~                                                        |
 
 Default value of ~fzfa-extensions~ is ~(ag chrome company emacs evil fd find flymake git grep hg hungry locate mail make music notmuch pass project rg shell spotlight ugrep)~.
 Each loads without its soft dependency present — the dependency is
@@ -605,7 +607,7 @@ Opens the selected PDF with `open'."
 
 - ~fussy~ serves a similar role to ~orderless~: scoring and filtering for
   general ~completing-read~ (M-x, buffers, code completion, etc.).
-- ~fzfa~ serves a similar role to ~consult~/~counsel~, e.g.
+- ~fzfa~ serves a similar role to ~consult~ / ~counsel~ / ~helm~, e.g.
   ~counsel-rg~ / ~counsel-git~ / ~consult-ripgrep~ / ~consult-find~
   for file and content search.
 - [[https://github.com/bling/fzf.el][fzf.el]] is another alternative that
@@ -616,8 +618,8 @@ Opens the selected PDF with `open'."
   [[https://github.com/abo-abo/swiper/pull/1151][swiper: add counsel-fzf]]
   The downside is that each new input resets the search, which is
   extremely slow over millions of files.  This problem is shared with
-  ~consult~-related commands: each keystroke triggers a new filter query
-  to the underlying binary.
+  ~consult~ / ~counsel~-related commands: each keystroke triggers a new filter
+  query to the underlying binary.
 - [[https://github.com/minad/affe][affe]] is the closest architectural cousin.
   Like ~fzfa~, it runs a producer process in the background and filters
   candidates asynchronously.  The key differences:
@@ -647,8 +649,7 @@ or exceed the performance of ~fzf~ in the terminal from within Emacs.
 and scoring in one pass — no two-stage conflict, no mismatches between
 what the shell tool matched and what the completion framework ranked.
 
-*Simplicity.* ~fzfa.el~ is roughly 2000 lines of Emacs Lisp, most of
-which declares the built-in commands and ~fzf-native-module.c~ is also
+*Simplicity.* The core ~fzfa.el~ is <2000 lines of Emacs Lisp and ~fzf-native-module.c~ is also
 roughly 2000 lines.
 
 ** Downsides
