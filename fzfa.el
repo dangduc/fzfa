@@ -85,7 +85,6 @@
 (declare-function fzf-native-async-candidates "fzf-native")
 (declare-function fzf-native-async-stats "fzf-native")
 
-
 ;;; Debug logging
 
 (defvar fzfa-debug nil
@@ -221,6 +220,20 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "ugrep" ugrep))
   :group 'fzfa)
 
+(defcustom fzfa-project-backend 'project
+  "How to resolve the root directory for fzfa commands.
+project    Use `project.el' to find the project root (default, matches consult).
+projectile Use `projectile-project-root'.
+nil        Use `default-directory' (no project detection).
+function   Call the function with no arguments; Returns a directory string."
+  :type '(choice (const :tag "project.el" project)
+                 (const :tag "Projectile" projectile)
+                 (const :tag "None (default-directory)" nil)
+                 (function :tag "Custom function"))
+  :group 'fzfa)
+
+;;; Variables
+
 (defvar fzfa--setup-done nil
   "Non-nil once `fzfa--ensure-setup' has installed registrations.
 Reset to nil to force a re-setup on the next entry-point call.")
@@ -239,19 +252,7 @@ Intended for `let'-binding when extending built-in commands:
 
 Priority: `fzfa-directory' > project backend > `default-directory'.")
 
-(defcustom fzfa-project-backend 'project
-  "How to resolve the root directory for fzfa commands.
-project    Use `project.el' to find the project root (default, matches consult).
-projectile Use `projectile-project-root'.
-nil        Use `default-directory' (no project detection).
-function   Call the function with no arguments; Returns a directory string."
-  :type '(choice (const :tag "project.el" project)
-                 (const :tag "Projectile" projectile)
-                 (const :tag "None (default-directory)" nil)
-                 (function :tag "Custom function"))
-  :group 'fzfa)
-
-;;; Completion style
+;;; `completion-styles'
 
 (defun fzfa-try-completion (string _table _pred _point)
   "Try-completion for the fzfa completion style.
@@ -466,18 +467,6 @@ Returns the selected candidate string, or nil on cancel."
       (funcall cleanup))
     result))
 
-(defun fzfa--maybe-expand (result directory resolve-paths)
-  "Return RESULT expanded against DIRECTORY when RESOLVE-PATHS is non-nil.
-
-For RESOLVE-PATHS=t the whole RESULT is passed through `expand-file-name'
-— this works for both plain paths and FILE:LINE:CONTENT grep candidates,
-since `expand-file-name' prepends DIRECTORY and leaves the suffix
-untouched.  Returns RESULT unchanged for non-strings, empty strings, or
-when RESOLVE-PATHS is nil."
-  (if (and resolve-paths (stringp result) (not (string-empty-p result)))
-      (expand-file-name result directory)
-    result))
-
 ;;;###autoload
 (cl-defun fzfa-async-completing-read (&key
                                       prompt
@@ -669,6 +658,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
          (when stats-overlay (delete-overlay stats-overlay))
          (fzfa--defer-async-stop handle))
        directory resolve-paths))))
+
+;;; Sync `completing-read'
 
 (cl-defun fzfa-sync-completing-read (&key
                                      candidates
@@ -1164,7 +1155,19 @@ originating source's command (`fzfa-pass-copy' or
    '(fzfa-pass-copy fzfa-chrome-pass-copy)
    :prompt "passwords: "))
 
-;;; Commands
+;;; Helpers
+
+(defun fzfa--maybe-expand (result directory resolve-paths)
+  "Return RESULT expanded against DIRECTORY when RESOLVE-PATHS is non-nil.
+
+For RESOLVE-PATHS=t the whole RESULT is passed through `expand-file-name'
+— this works for both plain paths and FILE:LINE:CONTENT grep candidates,
+since `expand-file-name' prepends DIRECTORY and leaves the suffix
+untouched.  Returns RESULT unchanged for non-strings, empty strings, or
+when RESOLVE-PATHS is nil."
+  (if (and resolve-paths (stringp result) (not (string-empty-p result)))
+      (expand-file-name result directory)
+    result))
 
 (defun fzfa--max-columns-flag (tool)
   "Return a max-line-length CLI flag string for grep-style TOOL.
@@ -1182,8 +1185,6 @@ reader-side cap still runs as a backstop."
         ('ugrep (format "--width=%d" mll))
         ('ag    (format "--width=%d" mll))
         (_      "")))))
-
-;;; Helpers
 
 (defconst fzfa--grep-line-regexp "\\`\\(.*?\\):\\([0-9]+\\):"
   "Lazy parser for `fzfa-grep' category candidates.
