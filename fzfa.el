@@ -586,10 +586,6 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                  ;; relative candidates against the working directory the
                  ;; command actually ran in.
                  (setq-local default-directory directory)
-                 ;; case-mode and other defcustoms are bridged onto the
-                 ;; canonical fzf-native names by :around advice on
-                 ;; `fzf-native-async-candidates' (see EOF), so no
-                 ;; setq-local needed here for the async path.
                  (fzfa--minibuffer-format-reset))
              (let ((ivy-completing-read-dynamic-collection t)
                    (ivy-count-format
