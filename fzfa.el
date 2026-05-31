@@ -357,6 +357,30 @@ Nil disables the cap on the C side."
        (> fzfa-max-candidates 0)
        fzfa-max-candidates))
 
+(defun fzfa--defer-async-stop (handles)
+  "Schedule `fzf-native-async-stop' on HANDLES off the synchronous unwind path.
+
+HANDLES may be a single async handle, a list, or a vector; nil values
+\(including nil HANDLES) are ignored.  Stops are batched into a single
+zero-delay timer so the runtime can schedule them at its discretion; the
+closure retains the live-handle list so it survives the caller's unwind.
+
+The C-side destroy does pthread_join on the scoring thread
+\(uninterruptible snapshot/score work for huge pools) and frees the
+candidate arena — easily hundreds of ms for a `find ~'-scale session.
+None of it is needed before minibuffer dismissal, so deferring this
+lets ESC return instantly and the cleanup happens on the next idle tick."
+  (let ((live (cond
+               ((null handles) nil)
+               ((vectorp handles)
+                (cl-loop for h across handles when h collect h))
+               ((listp handles) (delq nil (copy-sequence handles)))
+               (t (list handles)))))
+    (when live
+      (run-at-time 0 nil
+                   (lambda ()
+                     (dolist (h live) (fzf-native-async-stop h)))))))
+
 (cl-defun fzfa--completion-metadata (category &key annotate affix group)
   "Return the `metadata' alist for fzfa's `completing-read' collection lambdas.
 
@@ -640,16 +664,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
          (when retry-timer (cancel-timer retry-timer))
          (remove-hook 'post-command-hook refresh-overlay)
          (when stats-overlay (delete-overlay stats-overlay))
-         ;; Defer `fzf-native-async-stop' off the synchronous unwind path.
-         ;; The C-side destroy does pthread_join on the scoring thread
-         ;; (uninterruptible snapshot/score work for huge pools) and frees
-         ;; the candidate arena — easily hundreds of ms for a `find ~'-scale
-         ;; session.  None of it is needed before minibuffer dismissal, so
-         ;; we let the user see ESC return instantly and clean up on the
-         ;; next idle tick.
-         (when handle
-           (let ((h handle))
-             (run-at-time 0 nil (lambda () (fzf-native-async-stop h))))))
+         (fzfa--defer-async-stop handle))
        directory resolve-paths))))
 
 (cl-defun fzfa-sync-completing-read (&key
@@ -1033,18 +1048,7 @@ Per-source plist keys:
       (when retry-timer (cancel-timer retry-timer))
       (remove-hook 'post-command-hook refresh-overlay)
       (when stats-overlay (delete-overlay stats-overlay))
-      ;; Defer the async-stops so ESC returns instantly — see the same
-      ;; comment in `fzfa-async-completing-read'.  Stops are scheduled
-      ;; together so the runtime can decide its own scheduling, and the
-      ;; closure owns the handle vector to keep it alive across the gap.
-      (let ((live nil))
-        (dotimes (i n)
-          (when-let* ((h (aref handles i)))
-            (push h live)))
-        (when live
-          (run-at-time 0 nil
-                       (lambda ()
-                         (dolist (h live) (fzf-native-async-stop h)))))))
+      (fzfa--defer-async-stop handles))
     (when result
       (let* ((src    (or (and selected-idx (aref sources-v selected-idx))
                          (fzfa--multi-source-of
