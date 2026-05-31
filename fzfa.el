@@ -415,6 +415,23 @@ when RESOLVE-PATHS is nil."
       (expand-file-name result directory)
     result))
 
+(defun fzfa--default-dir ()
+  "Return the working directory for fzfa commands.
+Priority: `fzfa-directory' >
+          `fzfa-project-backend' >
+          `default-directory'."
+  (or fzfa-directory
+      (pcase fzfa-project-backend
+        ((pred functionp)
+         (funcall fzfa-project-backend))
+        ('project
+         (when-let* ((pr (project-current)))
+           (project-root pr)))
+        ('projectile
+         (when (bound-and-true-p projectile-mode)
+           (projectile-project-root))))
+      default-directory))
+
 ;;; Async `completing-read'
 
 (cl-defun fzfa--helm-completing-read (&key prompt command directory
@@ -1227,23 +1244,6 @@ TRANSFORM non-nil → strip the filename prefix; display LINE:CONTENT only."
           (substring cand (match-beginning 2))
         (match-string 1 cand))
     cand))
-
-(defun fzfa--default-dir ()
-  "Return the working directory for fzfa commands.
-Priority: `fzfa-directory' >
-          `fzfa-project-backend' >
-          `default-directory'."
-  (or fzfa-directory
-      (pcase fzfa-project-backend
-        ((pred functionp)
-         (funcall fzfa-project-backend))
-        ('project
-         (when-let* ((pr (project-current)))
-           (project-root pr)))
-        ('projectile
-         (when (bound-and-true-p projectile-mode)
-           (projectile-project-root))))
-      default-directory))
 
 (defun fzfa--deduplicate-dirs (dirs)
   "Remove duplicates and subdirectory entries from DIRS.
