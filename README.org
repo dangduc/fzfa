@@ -4,7 +4,7 @@
 [[https://github.com/jojojames/fzfa/actions/workflows/test.yaml][https://github.com/jojojames/fzfa/actions/workflows/test.yaml/badge.svg]]
 
 [[./screenshots/fzfa.png]]
-[[./screenshots/demo.gif]]
+#+HTML: <video src="https://github.com/user-attachments/assets/383a2f07-6778-4e4e-89c8-68c540d8b404" controls style="max-width: 100%; height: auto;"></video>
 
 This package provides async fuzzy completion for Emacs backed by
 [[https://github.com/dangduc/fzf-native][fzf-native]].
