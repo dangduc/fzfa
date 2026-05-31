@@ -325,6 +325,13 @@ Returns the empty string otherwise."
             (minibuffer-contents-no-properties))))
       ""))
 
+(defun fzfa--candidate-limit ()
+  "Return `fzfa-max-candidates' when it is a positive integer, else nil.
+Nil disables the cap on the C side."
+  (and fzfa-max-candidates
+       (> fzfa-max-candidates 0)
+       fzfa-max-candidates))
+
 (cl-defun fzfa--completion-metadata (category &key annotate affix group)
   "Return the `metadata' alist for fzfa's `completing-read' collection lambdas.
 
@@ -364,9 +371,7 @@ Returns the selected candidate string, or nil on cancel."
                         (concat (car (split-string command nil t)) ": "))))
          (dir     (expand-file-name (or directory default-directory)))
          (handle  (fzf-native-async-start command dir))
-         (limit   (and fzfa-max-candidates
-                       (> fzfa-max-candidates 0)
-                       fzfa-max-candidates))
+         (limit   (fzfa--candidate-limit))
          (last-gen -1)
          (stopped  nil)
          (result   nil)
@@ -495,9 +500,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
            (stats-overlay nil)
            (last-filtered 0)
            (last-total 0)
-           (limit (and fzfa-max-candidates
-                       (> fzfa-max-candidates 0)
-                       fzfa-max-candidates))
+           (limit (fzfa--candidate-limit))
            (last-exhibit-scheduled 0.0)
            (refresh-overlay
             (lambda ()
@@ -818,9 +821,7 @@ Per-source plist keys:
          (totals       (make-vector n 0))
          (filtered     (make-vector n 0))
          (last-gen     (make-vector n -1))
-         (limit        (and fzfa-max-candidates
-                            (> fzfa-max-candidates 0)
-                            fzfa-max-candidates))
+         (limit        (fzfa--candidate-limit))
          (cand->src    (make-hash-table :test 'equal :size 1024))
          (last-exhibit 0.0)
          (stats-overlay nil)
