@@ -30,7 +30,7 @@
   :group 'fzfa)
 
 (defcustom fzfa-make-do-save nil
-  "When non-nil, save dirty buffers under the Makefile's directory before compiling."
+  "When non-nil, save buffers under the Makefile's directory before compiling."
   :type 'boolean
   :group 'fzfa-make)
 
