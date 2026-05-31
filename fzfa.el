@@ -403,6 +403,18 @@ order produced by the C scorer."
     ,@(when affix    `((affixation-function . ,affix)))
     ,@(when group    `((group-function      . ,group)))))
 
+(defun fzfa--maybe-expand (result directory resolve-paths)
+  "Return RESULT expanded against DIRECTORY when RESOLVE-PATHS is non-nil.
+
+For RESOLVE-PATHS=t the whole RESULT is passed through `expand-file-name'
+— this works for both plain paths and FILE:LINE:CONTENT grep candidates,
+since `expand-file-name' prepends DIRECTORY and leaves the suffix
+untouched.  Returns RESULT unchanged for non-strings, empty strings, or
+when RESOLVE-PATHS is nil."
+  (if (and resolve-paths (stringp result) (not (string-empty-p result)))
+      (expand-file-name result directory)
+    result))
+
 ;;; Async `completing-read'
 
 (cl-defun fzfa--helm-completing-read (&key prompt command directory
@@ -1158,18 +1170,6 @@ originating source's command (`fzfa-pass-copy' or
    :prompt "passwords: "))
 
 ;;; Helpers
-
-(defun fzfa--maybe-expand (result directory resolve-paths)
-  "Return RESULT expanded against DIRECTORY when RESOLVE-PATHS is non-nil.
-
-For RESOLVE-PATHS=t the whole RESULT is passed through `expand-file-name'
-— this works for both plain paths and FILE:LINE:CONTENT grep candidates,
-since `expand-file-name' prepends DIRECTORY and leaves the suffix
-untouched.  Returns RESULT unchanged for non-strings, empty strings, or
-when RESOLVE-PATHS is nil."
-  (if (and resolve-paths (stringp result) (not (string-empty-p result)))
-      (expand-file-name result directory)
-    result))
 
 (defun fzfa--max-columns-flag (tool)
   "Return a max-line-length CLI flag string for grep-style TOOL.
