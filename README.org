@@ -319,14 +319,16 @@ where the minibuffer input is split into a shell-COMMAND part
 (rescores/sorts in place via fzf-native).  With the default ~perl~ split
 style the prompt has shape ~#COMMAND#FILTER~.
 
-The main difference is ~fzfa~ lets you modify the entire shell command
-that's being used. Refer to https://github.com/minad/consult#asynchronous-search
+The main difference compared to ~consult~'s version is ~fzfa~ lets you modify
+the entire shell command that's being used.
+Refer to https://github.com/minad/consult#asynchronous-search
 for a more exhaustive set of features/advantages ~consult~ may provide
 over this implementation.
 
-Comparison demo below (first is ~consult-ripgrep~, second is ~fzfa-rg-2p~.):
+Comparison demo below (first is ~consult-ripgrep~, second is ~fzfa-rg-2p~,
+using ~fussy~ as the ~completion-style~.):
 
-#+HTML: <video src="https://github.com/user-attachments/assets/ec1c3eb6-78ae-4578-a588-24434a229ca6" controls style="max-width: 100%; height: auto;"></video>
+#+HTML: <video src="https://github.com/user-attachments/assets/d6580b1b-13ee-40df-8626-f8ed4ac2ecd8" controls style="max-width: 100%; height: auto;"></video>
 
 ** Two-pass configuration & autoloading
 | Command              | Variant                  | Source file       |
@@ -381,6 +383,18 @@ defines it.
 
 To opt into only a subset, remove the unwanted entries from
 ~fzfa-2p-functions~ and drop their matching ~autoload~ forms.
+
+Users can also define their own ~-2p~ functions by either using:
+
+~fzfa-2p-define~ over an existing ~fzfa-*~ function, e.g.
+
+#+begin_src emacs-lisp :tangle yes
+(fzfa-2p-define 'fzfa-rg) ; -> M-x fzfa-rg-2p
+#+end_src
+
+or wrap:
+
+~fzfa-2pass-completing-read~ and implement manually.
 
 * Completion style compatibility
 
