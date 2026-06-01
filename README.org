@@ -385,18 +385,13 @@ To opt into only a subset, remove the unwanted entries from
 This style is only a passthrough: it accepts the query string as-is and forwards
 it directly to the ~fzf~ scoring layer without applying any transformation.
 
-*This style must not be added to the global ~completion-styles~ list.*
-Doing so applies it to every ~completing-read~ in the session, including
-callers that pass a plain list or hash-table as the collection, which will
-trigger an error.  fzfa wires the style correctly via
-~completion-category-overrides~ for the ~fzfa~ category only.  Other
-~completion-styles~ packages (e.g. ~orderless~, ~hotfuzz~) may override
-this.
-
-Do not set ~fzfa~ as a fallback in ~completion-styles~.  Do not combine
-it with ~orderless~, ~fussy~, ~flex~, or any other style for the ~fzfa~
-category — the results are already scored and sorted by fzf; re-filtering
-by another style corrupts the ranking.
+No setup is required on your part.  Every fzfa entry point dynamically
+binds ~completion-styles~ to ~(fzfa)~ for the duration of its
+~completing-read~, so the resolved style list inside fzfa is exactly
+~(fzfa)~ regardless of what you have in global ~completion-styles~ or
+in ~completion-category-overrides~.  This means fzfa is unaffected by,
+and also does not affect other style packages (e.g. ~orderless~, ~hotfuzz~,
+~fussy~, ~flex~, etc.)
 
 * Companion package — fussy
 

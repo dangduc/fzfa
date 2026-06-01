@@ -589,7 +589,6 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
         (setq fzfa--multi-mode nil)
         (cl-return-from fzfa-async-completing-read
           (fzfa--maybe-expand cand directory resolve-paths)))))
-    (fzfa--check-completion-setup)
     (when (bound-and-true-p helm-mode)
       (cl-return-from fzfa-async-completing-read
         (fzfa--maybe-expand
@@ -804,7 +803,6 @@ changing FILTER rescores in place via fzf-native.
       (setq fzfa--multi-mode nil)
       (cl-return-from fzfa-2pass-completing-read
         (fzfa--maybe-expand cand directory resolve-paths)))))
-  (fzfa--check-completion-setup)
   (when (bound-and-true-p helm-mode)
     (user-error "fzfa-2pass-completing-read does not yet support helm-mode"))
   (let* ((prompt (or prompt "fzfa-2pass: "))
@@ -1110,15 +1108,14 @@ routed to `%s' so its post-action runs."
     (let ((cand (cdr fzfa--multi-mode)))
       (setq fzfa--multi-mode nil)
       (cl-return-from fzfa-sync-completing-read cand))))
-  (fzfa--check-completion-setup)
   (completing-read
    prompt
    (lambda (str _pred action)
      (pcase action
        ('metadata (fzfa--completion-metadata category
-                                              :annotate annotate
-                                              :affix affix
-                                              :group group))
+                                             :annotate annotate
+                                             :affix affix
+                                             :group group))
        (`(boundaries . ,_) (cons 0 0))
        ('lambda t)
        ('t (let ((query (fzfa--current-query str)))
@@ -1630,37 +1627,26 @@ TRANSFORM non-nil → strip the filename prefix; display LINE:CONTENT only."
 
 ;;; Setup
 
-(defconst fzfa--categories
-  '(fzfa-misc
-    fzfa-file
-    fzfa-buffer
-    fzfa-grep
-    fzfa-bookmark
-    fzfa-theme
-    fzfa-imenu
-    fzfa-multi)
-  "Completion categories owned by fzfa.
-Each is registered in `completion-category-overrides' so the
-pre-scored passthrough style runs instead of style re-filtering.")
-
-(defun fzfa--check-completion-setup ()
-  "Signal a user-error if `fzfa' has been added to global `completion-styles'.
-That applies the passthrough style to every `completing-read', including
-ones that pass a plain list/hash-table — which the style errors on.
-fzfa wires itself in via `completion-category-overrides' only;
-`fzfa--ensure-setup' guarantees that, so the per-category check
-that used to live here is no longer needed."
-  (when (memq 'fzfa completion-styles)
-    (user-error
-     "Fzfa must not be in `completion-styles' globally (it is).  \
-Remove it; fzfa wires itself in via `completion-category-overrides'")))
-
 (defun fzfa--bridge-defcustoms (orig-fn &rest args)
   "Wrap fzf-native call ORIG-FN with ARGS; bridge fzfa-* into C scorer."
   (let ((fzf-native-async-highlight  fzfa-highlight)
         (fzf-native-max-line-length  fzfa-max-line-length)
         (fzf-native-async-cache-size fzfa-cache-size)
         (fzf-native-case-mode        fzfa-case-mode))
+    (apply orig-fn args)))
+
+(defun fzfa--pin-completion-styles (orig-fn &rest args)
+  "Run ORIG-FN with ARGS, pinning `completion-styles' to `fzfa'.
+
+`fzfa''s pre-scored async candidates must not be re-filtered by another
+completion style.  `completion-category-overrides' alone is not enough:
+`completion--styles' silently appends the global `completion-styles' to
+any override, so a fzfa-style call that legitimately returns nil
+\(warmup, in-flight scoring) falls through to whatever the user has
+configured globally (e.g. `basic', `fussy', `flex', `orderless'), which
+re-enters fzfa's table with substring inputs and corrupts the cmd
+parse / restart logic."
+  (let ((completion-styles '(fzfa)))
     (apply orig-fn args)))
 
 (defun fzfa--ensure-setup ()
@@ -1684,11 +1670,11 @@ public entry point.
     (advice-add 'fzf-native-async-start      :around #'fzfa--bridge-defcustoms)
     (advice-add 'fzf-native-async-candidates :around #'fzfa--bridge-defcustoms)
 
-    ;; Register each fzfa category with the passthrough style so other
-    ;; styles (e.g. fussy on `file', `basic' on multi) don't re-filter our
-    ;; pre-scored candidates or cache them client-side past the first call.
-    (dolist (cat fzfa--categories)
-      (add-to-list 'completion-category-overrides `(,cat (styles fzfa))))
+    (dolist (sym '(fzfa-async-completing-read
+                   fzfa-sync-completing-read
+                   fzfa-2pass-completing-read
+                   fzfa--multi-read))
+      (advice-add sym :around #'fzfa--pin-completion-styles))
 
     (with-eval-after-load 'embark
       (dolist (entry '((fzfa-file     . embark-file-map)
