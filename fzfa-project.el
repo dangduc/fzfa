@@ -11,8 +11,8 @@
 ;;; Commentary:
 
 ;; project.el integration for fzfa.  Mirrors the project-scoped commands
-;; commonly found in counsel-projectile, helm-projectile, and
-;; consult-project-buffer / project.el built-ins.
+;; commonly found in `counsel-projectile', `helm-projectile', and
+;; `consult-project-buffer' / `project' built-ins.
 ;;
 ;; Loaded automatically when `project' is in `fzfa-extensions' and
 ;; `fzfa-setup' has been called.  No setup function is registered —

@@ -17,18 +17,12 @@
 ;; `osascript' (JXA) to enumerate messages and to open the selection
 ;; in Mail.app.
 ;;
-;; Strategy: bulk-fetch every inbox message's date/sender/subject and
+;; Strategy: Bulk-fetch every inbox message's date/sender/subject and
 ;; message-id via JXA into one cached list, present via
 ;; `fzfa-sync-completing-read', open the selection in Mail.app by
 ;; `message id'.  The initial dump is slow for large inboxes (10–30s
 ;; depending on size), so it is cached for the session.  Run
 ;; `fzfa-mail-refresh' after new mail arrives.
-;;
-;; Why not stream via `mdfind' or `find'?  Spotlight does not index
-;; `~/Library/Mail/' on most machines (depends on the user's Spotlight
-;; settings) and direct filesystem access is blocked by macOS TCC
-;; unless Emacs has Full Disk Access.  The Mail.app IPC route works in
-;; every default install at the cost of an upfront wait.
 ;;
 ;; Commands:
 ;;   `fzfa-mail'           Fuzzy-select and open an inbox message
