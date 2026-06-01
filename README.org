@@ -316,14 +316,19 @@ To disable extension loading entirely:
 Some async commands have a ~-2p~ (two-pass, ~consult~-inspired) variant
 where the minibuffer input is split into a shell-COMMAND part
 (re-runs the underlying process on change) and an fzf-FILTER part
-(rescores in place via fzf-native).  With the default ~perl~ split
+(rescores/sorts in place via fzf-native).  With the default ~perl~ split
 style the prompt has shape ~#COMMAND#FILTER~.
 
 The main difference is ~fzfa~ lets you modify the entire shell command
-that's being used.
+that's being used. Refer to https://github.com/minad/consult#asynchronous-search
+for a more exhaustive set of features/advantages ~consult~ may provide
+over this implementation.
 
-A comparison demo is below.
+Comparison demo below (first is ~consult-ripgrep~, second is ~fzfa-rg-2p~.):
 
+#+HTML: <video src="https://github.com/user-attachments/assets/ec1c3eb6-78ae-4578-a588-24434a229ca6" controls style="max-width: 100%; height: auto;"></video>
+
+** Two-pass configuration & autoloading
 | Command              | Variant                  | Source file       |
 |----------------------+--------------------------+-------------------|
 | ~fzfa-ag~            | ~fzfa-ag-2p~             | ~fzfa-ag.el~      |
@@ -340,8 +345,6 @@ Each ~-2p~ variant is only *defined* when its symbol is listed in
 ~fzfa-2p-functions~ (default: all of the above).  Loading the
 extension file checks this list and conditionally creates the
 variant via ~fzfa-2p-define~.
-
-** Two-pass autoloading
 
 The defcustom controls *whether* the variant is defined; ~autoload~
 forms control *whether cold ~M-x~ on the variant can find it before
