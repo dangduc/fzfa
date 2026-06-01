@@ -153,18 +153,18 @@ The list here is on best efforts, might be inaccurate.
 
 ** File finders
 
-| ~fzfa~                       | ~counsel~           | ~consult~             |
-|-----------------------------------+---------------------+-----------------------|
-| ~fzfa-find~                  | ~counsel-find-file~ | ~consult-find~        |
-| ~fzfa-fd~                    | —                   | ~consult-fd~          |
-| ~fzfa-rg-files~              | —                   | ~consult-find~        |
-| ~fzfa-ag-files~              | —                   | —                     |
-| ~fzfa-git-ls-files~          | ~counsel-git~       | —                     |
-| ~fzfa-hg-files~              | —                   | —                     |
-| ~fzfa-recent-file~           | ~counsel-recentf~   | ~consult-recent-file~ |
-| ~fzfa-locate~                | ~counsel-locate~    | ~consult-locate~      |
-| ~fzfa-shell-command~         | —                   | —                     |
-| ~fzfa-shell-project-command~ | —                   | —                     |
+| ~fzfa~                       | ~counsel~           | ~consult~             | ~helm~            |
+|------------------------------+---------------------+-----------------------+-------------------|
+| ~fzfa-find~                  | ~counsel-find-file~ | ~consult-find~        | ~helm-find-files~ |
+| ~fzfa-fd~                    | ~counsel-fd~        | ~consult-fd~          | ~helm-find-files~ |
+| ~fzfa-rg-files~              | —                   | ~consult-find~        | ~helm-find-files~ |
+| ~fzfa-ag-files~              | —                   | —                     | —                 |
+| ~fzfa-git-ls-files~          | ~counsel-git~       | —                     | ~helm-ls-git~     |
+| ~fzfa-hg-files~              | —                   | —                     | —                 |
+| ~fzfa-recent-file~           | ~counsel-recentf~   | ~consult-recent-file~ | ~helm-recentf~    |
+| ~fzfa-locate~                | ~counsel-locate~    | ~consult-locate~      | ~helm-locate~     |
+| ~fzfa-shell-command~         | —                   | —                     | —                 |
+| ~fzfa-shell-project-command~ | —                   | —                     | —                 |
 
 (macOS Spotlight commands — ~fzfa-spotlight~, ~-spotlight-apps~,
 ~-spotlight-audio~ — ship in the ~spotlight~ extension, on by default.
@@ -172,49 +172,48 @@ See *Extensions* below.)
 
 ** Emacs based
 
-| ~fzfa~                        | ~counsel~                             | ~consult~                           |
-|-------------------------------+---------------------------------------+-------------------------------------|
-| ~fzfa-buffer~                 | ~ivy-switch-buffer~                   | ~consult-buffer~                    |
-| ~fzfa-bookmark~               | ~counsel-bookmark~                    | ~consult-bookmark~                  |
-| ~fzfa-M-x~                    | ~counsel-M-x~                         | —                                   |
-| ~fzfa-M-x-for-buffer~         | —                                     | ~consult-mode-command~              |
-| ~fzfa-yank-pop~               | ~counsel-yank-pop~                    | ~consult-yank-pop~                  |
-| ~fzfa-theme~                  | ~counsel-load-theme~                  | ~consult-theme~                     |
-| ~fzfa-tramp~                  | —                                     | —                                   |
-| ~fzfa-imenu~                  | ~counsel-imenu~                       | ~consult-imenu~                     |
-| ~fzfa-imenu-all~              | —                                     | ~consult-imenu-multi~               |
-| ~fzfa-imenu-all-but-current~  | —                                     | —                                   |
-| ~fzfa-outline~                | ~counsel-outline~                     | ~consult-outline~                   |
-| ~fzfa-mark~                   | ~counsel-mark-ring~                   | ~consult-mark~                      |
-| ~fzfa-global-mark~            | ~counsel-mark-ring~                   | ~consult-global-mark~               |
-| ~fzfa-register~               | ~counsel-register~                    | ~consult-register-load~             |
-| ~fzfa-flymake~                | —                                     | ~consult-flymake~                   |
-| ~fzfa-flymake-project~        | —                                     | ~consult-flymake~ (with prefix arg) |
-| ~fzfa-compile-error~          | ~counsel-compile~ (related)           | ~consult-compile-error~             |
-| ~fzfa-project-find-file~      | ~counsel-projectile-find-file~        | —                                   |
-| ~fzfa-project-find-dir~       | ~counsel-projectile-find-dir~         | —                                   |
-| ~fzfa-project-buffer~         | ~counsel-projectile-switch-to-buffer~ | ~consult-project-buffer~            |
-| ~fzfa-project-recentf~        | ~counsel-projectile-recentf~          | —                                   |
-| ~fzfa-project-switch-project~ | ~counsel-projectile-switch-project~   | —                                   |
+| ~fzfa~                        | ~counsel~                                       | ~consult~                           | ~helm~                             |
+|-------------------------------+-------------------------------------------------+-------------------------------------+------------------------------------|
+| ~fzfa-buffer~                 | ~ivy-switch-buffer~                             | ~consult-buffer~                    | ~helm-buffers-list~                |
+| ~fzfa-bookmark~               | ~counsel-bookmark~                              | ~consult-bookmark~                  | ~helm-filtered-bookmarks~          |
+| ~fzfa-M-x~                    | ~counsel-M-x~                                   | —                                   | ~helm-M-x~                         |
+| ~fzfa-M-x-for-buffer~         | —                                               | ~consult-mode-command~              | —                                  |
+| ~fzfa-yank-pop~               | ~counsel-yank-pop~                              | ~consult-yank-pop~                  | ~helm-show-kill-ring~              |
+| ~fzfa-theme~                  | ~counsel-load-theme~                            | ~consult-theme~                     | ~helm-themes~                      |
+| ~fzfa-tramp~                  | ~counsel-tramp~                                 | ~consult-tramp~                     | ~helm-tramp~                       |
+| ~fzfa-imenu~                  | ~counsel-imenu~                                 | ~consult-imenu~                     | ~helm-imenu~                       |
+| ~fzfa-imenu-all~              | —                                               | ~consult-imenu-multi~               | ~helm-imenu-in-all-buffers~        |
+| ~fzfa-imenu-all-but-current~  | —                                               | —                                   | —                                  |
+| ~fzfa-outline~                | ~counsel-outline~                               | ~consult-outline~                   | ~helm-outline~                     |
+| ~fzfa-mark~                   | ~counsel-mark-ring~                             | ~consult-mark~                      | ~helm-mark-ring~                   |
+| ~fzfa-global-mark~            | ~counsel-mark-ring~                             | ~consult-global-mark~               | ~helm-global-mark-ring~            |
+| ~fzfa-register~               | ~counsel-register~                              | ~consult-register-load~             | ~helm-register~                    |
+| ~fzfa-flymake~                | —                                               | ~consult-flymake~                   | ~helm-flymake~                     |
+| ~fzfa-flymake-project~        | —                                               | ~consult-flymake~ (with prefix arg) | —                                  |
+| ~fzfa-compile-error~          | ~counsel-compilation-errors~                    | ~consult-compile-error~             | —                                  |
+| ~fzfa-shell-history~          | ~counsel-shell-history~ / ~counsel-esh-history~ | ~consult-history~                   | ~helm-eshell-history~              |
+| ~fzfa-project-find-file~      | ~counsel-projectile-find-file~                  | —                                   | ~helm-projectile-find-file~        |
+| ~fzfa-project-find-dir~       | ~counsel-projectile-find-dir~                   | —                                   | ~helm-projectile-find-dir~         |
+| ~fzfa-project-buffer~         | ~counsel-projectile-switch-to-buffer~           | ~consult-project-buffer~            | ~helm-projectile-switch-to-buffer~ |
+| ~fzfa-project-recentf~        | ~counsel-projectile-recentf~                    | —                                   | ~helm-projectile-recentf~          |
+| ~fzfa-project-switch-project~ | ~counsel-projectile-switch-project~             | —                                   | ~helm-projectile-switch-project~   |
 
 ** Content search
 
 Grep-style commands parse ~FILE:LINE:CONTENT~ output and jump directly to
 the matching line.
 
-| ~fzfa~                   | ~counsel~ / ~ivy~  | ~consult~            |
-|-------------------------------+--------------------+----------------------|
-| ~fzfa-rg~                | ~counsel-rg~       | ~consult-ripgrep~    |
-| ~fzfa-ag~                | ~counsel-ag~       | —                    |
-| ~fzfa-git-grep~          | ~counsel-git-grep~ | ~consult-git-grep~   |
-| ~fzfa-git-log-grep~      | ~counsel-git-log~  | ~consult-git-log-grep~ |
-| ~fzfa-grep~              | ~counsel-grep~     | ~consult-grep~       |
-| ~fzfa-grep-current-file~ | ~counsel-grep~     | ~consult-line~       |
-| ~fzfa-ugrep~             | —                  | —                    |
-| ~fzfa-swiper~            | ~swiper~           | ~consult-line~       |
-| ~fzfa-swiper-all~        | ~swiper-all~       | ~consult-line-multi~ |
-| ~fzfa-hungry-swiper~     | —                  | —                    |
-| ~fzfa-hungry-find~       | —                  | —                    |
+| ~fzfa~                   | ~counsel~ / ~ivy~  | ~consult~              | ~helm~                          |
+|--------------------------+--------------------+------------------------+---------------------------------|
+| ~fzfa-rg~                | ~counsel-rg~       | ~consult-ripgrep~      | ~helm-rg~                       |
+| ~fzfa-ag~                | ~counsel-ag~       | —                      | ~helm-do-ag~                    |
+| ~fzfa-git-grep~          | ~counsel-git-grep~ | ~consult-git-grep~     | ~helm-grep-do-git-grep~         |
+| ~fzfa-git-log-grep~      | ~counsel-git-log~  | ~consult-git-log-grep~ | —                               |
+| ~fzfa-grep~              | ~counsel-grep~     | ~consult-grep~         | ~helm-do-grep-ag~ (any backend) |
+| ~fzfa-grep-current-file~ | ~counsel-grep~     | ~consult-line~         | —                               |
+| ~fzfa-ugrep~             | —                  | —                      | —                               |
+| ~fzfa-swiper~            | ~swiper~           | ~consult-line~         | ~helm-occur~                    |
+| ~fzfa-swiper-all~        | ~swiper-all~       | ~consult-line-multi~   | ~helm-occur-visible-buffers~    |
 
 ** Hungry variants
 
@@ -231,12 +230,12 @@ directory list is passed as arguments to a single shell command.
 
 ** Multi-source
 
-| ~fzfa~                 | ~consult~        |
-|-----------------------------+------------------|
-| ~fzfa-find-any~   | ~consult-buffer~ |
-| ~fzfa-find-some~  | ~consult-buffer~ |
-| ~fzfa-passwords~  | (no direct analog) |
-| ~fzfa-evil-any~   | (no direct analog) |
+| ~fzfa~           | ~counsel~                   | ~consult~        | ~helm~                           |
+|------------------+-----------------------------+------------------+----------------------------------|
+| ~fzfa-find-any~  | ~counsel-buffer-or-recentf~ | ~consult-buffer~ | ~helm-mini~ / ~helm-multi-files~ |
+| ~fzfa-find-some~ | ~counsel-buffer-or-recentf~ | ~consult-buffer~ | ~helm-mini~ / ~helm-multi-files~ |
+| ~fzfa-passwords~ | —                           | —                | —                                |
+| ~fzfa-evil-any~  | —                           | —                | —                                |
 
 ~fzfa-find-any~ merges several sources into a single
 ~completing-read~ (groups for buffers, recent files, hungry-find, …),
@@ -306,20 +305,20 @@ defined.  Extension loading happens the first time you invoke any
 fzfa command (or up front if you call ~fzfa-setup~
 explicitly).
 
-| Symbol      | Library                | Soft dependency   | Commands                                                                                                                              |
-|-------------+------------------------+-------------------+---------------------------------------------------------------------------------------------------------------------------------------|
-| ~chrome~    | ~fzfa-chrome~     | none (bookmarks); macOS ~sqlite3~ + ~security~ + ~openssl~ + ~python3~ (passwords) | bookmarks: ~fzfa-chrome-bookmarks~ (default), ~-edit~, ~-copy-url~, ~-refresh~ — open Chromium-family bookmarks via ~browse-url~.  passwords (macOS only): ~fzfa-chrome-pass-copy~ (default), ~-copy-username~, ~-url~, ~-refresh~ — decrypts entries from Chrome's Login Data SQLite DB using the keychain entry ~Chrome Safe Storage~ |
-| ~company~   | ~fzfa-company~    | ~company~         | ~fzfa-company~ — fuzzy-filter current ~company-mode~ candidates and finish; modeled on ~helm-company~ / ~counsel-company~ / ~consult-company~ |
-| ~evil~      | ~fzfa-evil~       | ~evil~            | ~fzfa-evil-marks~ (jump to a buffer-local or global mark, candidate includes ~BUFFER:LINE: <content>~ so fzf scores against the line preview), ~fzfa-evil-registers~ (paste text registers / execute macro-vector registers), ~fzfa-evil-jumps~ (window jump list — ~C-o~/~C-i~ history — with line preview when the buffer is loaded), ~fzfa-evil-ex-history~ (re-run an entry from ~evil-ex-history~ via ~evil-ex-execute~), ~fzfa-evil-search-history~ (re-run a pattern from ~evil-ex-search-history~ and update ~evil-ex-search-pattern~ so ~n~/~N~ continue working), ~fzfa-evil-command-window~ (unified ex + search history picker grouped by source), ~fzfa-evil-any~ (multi-source picker over the other commands, configurable via ~fzfa-evil-any-commands~) |
-| ~flymake~   | ~fzfa-flymake~    | none (built-in)   | ~fzfa-flymake~ (current buffer), ~fzfa-flymake-project~ (all buffers in the current project) — modeled on ~consult-flymake~ |
-| ~info~      | ~fzfa-info~       | none (built-in)   | ~fzfa-info-emacs~, ~fzfa-info-elisp~, ~fzfa-info-org~, ~fzfa-info-cl~, ~fzfa-info-eieio~, ~fzfa-info-magit~ — pick an index entry from a specific Info manual; ~fzfa-info~ is the multi-source picker over ~fzfa-info-commands~; ~fzfa-info-at-point~ delegates to `info-lookup-symbol' for the symbol at point; modeled on ~helm-info~ / ~counsel-info-lookup-symbol~ / ~consult-info~ |
-| ~mail~      | ~fzfa-mail~       | macOS ~Mail.app~  | ~fzfa-mail~, ~fzfa-mail-refresh~ — browse and open inbox messages                                                          |
-| ~make~      | ~fzfa-make~       | ~make~ / ~ninja~ (CLI) | ~fzfa-make~ (locate ~Makefile~/~build.ninja~ and call make) |
-| ~music~     | ~fzfa-music~      | macOS ~Music.app~ | ~fzfa-music~, ~-by-artist~, ~-by-genre~, ~-playlist~, ~-playlist-shuffle~, ~-refresh~ — modeled on ~helm-itunes~                |
-| ~notmuch~   | ~fzfa-notmuch~    | ~notmuch~ (CLI + Emacs package) | ~fzfa-notmuch~, ~fzfa-notmuch-tree~ — run a notmuch query and fuzzy-pick a thread to open; modeled on ~helm-notmuch~ / ~counsel-notmuch~ / ~consult-notmuch~ |
-| ~pass~      | ~fzfa-pass~       | ~password-store~  | ~fzfa-pass~ (copy), ~fzfa-pass-edit~, ~-rename~, ~-delete~, ~-add~, ~-generate~, ~-url~ — modeled on ~ivy-pass~ |
-| ~project~   | ~fzfa-project~    | none (built-in)   | ~fzfa-project-find-file~, ~fzfa-project-find-dir~, ~fzfa-project-buffer~, ~fzfa-project-recentf~, ~fzfa-project-switch-project~ — candidate sets driven by ~project-files~ / ~project-buffers~ / ~project-known-project-roots~; modeled on the ~project.el~ built-ins, ~consult-project-buffer~, ~counsel-projectile-*~, and ~helm-projectile-*~ |
-| ~spotlight~ | ~fzfa-spotlight~  | macOS ~mdfind~    | ~fzfa-spotlight~, ~fzfa-spotlight-apps~, ~fzfa-spotlight-audio~                                                        |
+| Symbol      | Library          | Soft dependency                                  | Commands                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+|-------------+------------------+--------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ~chrome~    | ~fzfa-chrome~    | none (bookmarks); macOS dependencies (passwords) | bookmarks: ~fzfa-chrome-bookmarks~ (default), ~-edit~, ~-copy-url~, ~-refresh~ — open Chromium-family bookmarks via ~browse-url~; modeled on ~helm-chrome~ / ~counsel-chrome-bm~.  passwords (macOS only): ~fzfa-chrome-pass-copy~ (default), ~-copy-username~, ~-url~, ~-refresh~ — decrypts entries from Chrome's Login Data SQLite DB using the keychain entry ~Chrome Safe Storage~                                                                                                                                                                                                                                                                                                                                                                                 |
+| ~company~   | ~fzfa-company~   | ~company~                                        | ~fzfa-company~ — fuzzy-filter current ~company-mode~ candidates and finish; modeled on ~helm-company~ / ~counsel-company~ / ~consult-company~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ~evil~      | ~fzfa-evil~      | ~evil~                                           | ~fzfa-evil-marks~ (jump to a buffer-local or global mark, candidate includes ~BUFFER:LINE: <content>~ so fzf scores against the line preview), ~fzfa-evil-registers~ (paste text registers / execute macro-vector registers), ~fzfa-evil-jumps~ (window jump list — ~C-o~/~C-i~ history — with line preview when the buffer is loaded), ~fzfa-evil-ex-history~ (re-run an entry from ~evil-ex-history~ via ~evil-ex-execute~), ~fzfa-evil-search-history~ (re-run a pattern from ~evil-ex-search-history~ and update ~evil-ex-search-pattern~ so ~n~/~N~ continue working), ~fzfa-evil-command-window~ (unified ex + search history picker grouped by source), ~fzfa-evil-any~ (multi-source picker over the other commands, configurable via ~fzfa-evil-any-commands~) |
+| ~flymake~   | ~fzfa-flymake~   | none (built-in)                                  | ~fzfa-flymake~ (current buffer), ~fzfa-flymake-project~ (all buffers in the current project) — modeled on ~consult-flymake~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ~info~      | ~fzfa-info~      | none (built-in)                                  | ~fzfa-info-emacs~, ~fzfa-info-elisp~, ~fzfa-info-org~, ~fzfa-info-cl~, ~fzfa-info-eieio~, ~fzfa-info-magit~ — pick an index entry from a specific Info manual; ~fzfa-info~ is the multi-source picker over ~fzfa-info-commands~; ~fzfa-info-at-point~ delegates to `info-lookup-symbol' for the symbol at point; modeled on ~helm-info~ / ~counsel-info-lookup-symbol~ / ~consult-info~                                                                                                                                                                                                                                                                                                                                                                                 |
+| ~mail~      | ~fzfa-mail~      | macOS ~Mail.app~                                 | ~fzfa-mail~, ~fzfa-mail-refresh~ — browse and open inbox messages; comparable in spirit to ~helm-mu~ / ~consult-mu~ (for ~mu4e~)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ~make~      | ~fzfa-make~      | ~make~ / ~ninja~ (CLI)                           | ~fzfa-make~ (locate ~Makefile~/~build.ninja~ and call make) — modeled on ~helm-make~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ~music~     | ~fzfa-music~     | macOS ~Music.app~                                | ~fzfa-music~, ~-by-artist~, ~-by-genre~, ~-playlist~, ~-playlist-shuffle~, ~-refresh~ — modeled on ~helm-itunes~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ~notmuch~   | ~fzfa-notmuch~   | ~notmuch~ (CLI + Emacs package)                  | ~fzfa-notmuch~, ~fzfa-notmuch-tree~ — run a notmuch query and fuzzy-pick a thread to open; modeled on ~helm-notmuch~ / ~counsel-notmuch~ / ~consult-notmuch~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ~pass~      | ~fzfa-pass~      | ~password-store~                                 | ~fzfa-pass~ (copy), ~fzfa-pass-edit~, ~-rename~, ~-delete~, ~-add~, ~-generate~, ~-url~ — modeled on ~helm-pass~ / ~ivy-pass~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ~project~   | ~fzfa-project~   | none (built-in)                                  | ~fzfa-project-find-file~, ~fzfa-project-find-dir~, ~fzfa-project-buffer~, ~fzfa-project-recentf~, ~fzfa-project-switch-project~ — candidate sets driven by ~project-files~ / ~project-buffers~ / ~project-known-project-roots~; modeled on the ~project.el~ built-ins, ~consult-project-buffer~, ~counsel-projectile-*~, and ~helm-projectile-*~                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ~spotlight~ | ~fzfa-spotlight~ | macOS ~mdfind~                                   | ~fzfa-spotlight~, ~fzfa-spotlight-apps~, ~fzfa-spotlight-audio~ — application launcher loosely comparable to ~counsel-linux-app~ on Linux                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 Default value of ~fzfa-extensions~ is ~(ag chrome company emacs evil fd find flymake git grep hg hungry info locate mail make music notmuch pass project rg shell spotlight ugrep)~.
 Each loads without its soft dependency present — the dependency is
@@ -519,19 +518,19 @@ A [[https://github.com/jojojames/matcha/blob/master/matcha-fzfa.el][matcha trans
 single keybinding via [[https://github.com/jojojames/matcha][matcha]].
 * Customization
 
-| Variable                       | Default   | Description                                            |
-|--------------------------------+-----------+--------------------------------------------------------|
-| ~fzfa-max-candidates~     | 10000     | Max candidates returned to Elisp (see note below).    |
-| ~fzfa-refresh-delay~      | 0.05      | Seconds between generation polls.                     |
-| ~fzfa-input-debounce~     | 0.1       | Idle seconds to retry after an interrupted scoring.   |
-| ~fzfa-input-throttle~     | 0.2       | Min seconds between UI refreshes driven by new data.  |
-| ~fzfa-directory~          | ~nil~     | Per-call directory override; supersedes project backend (see note below). |
-| ~fzfa-project-backend~    | ~project~ | How to resolve the root directory (see note below).   |
-| ~fzfa-highlight~          | 200       | C-side match highlighting; nil/t/N (see note below).  |
-| ~fzfa-max-line-length~    | 256       | Per-line character limit; nil/+N/-N (see note below). |
-| ~fzfa-cache-size~         | 40        | Per-session LRU cache entries (see note below).       |
-| ~fzfa-case-mode~          | ~smart~   | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.     |
-| ~fzfa-extensions~         | (see *Extensions* below) | Extensions to ~require~ during setup. |
+| Variable               |                  Default | Description                                                               |
+|------------------------+--------------------------+---------------------------------------------------------------------------|
+| ~fzfa-max-candidates~  |                    10000 | Max candidates returned to Elisp (see note below).                        |
+| ~fzfa-refresh-delay~   |                     0.05 | Seconds between generation polls.                                         |
+| ~fzfa-input-debounce~  |                      0.1 | Idle seconds to retry after an interrupted scoring.                       |
+| ~fzfa-input-throttle~  |                      0.2 | Min seconds between UI refreshes driven by new data.                      |
+| ~fzfa-directory~       |                    ~nil~ | Per-call directory override; supersedes project backend (see note below). |
+| ~fzfa-project-backend~ |                ~project~ | How to resolve the root directory (see note below).                       |
+| ~fzfa-highlight~       |                      200 | C-side match highlighting; nil/t/N (see note below).                      |
+| ~fzfa-max-line-length~ |                      256 | Per-line character limit; nil/+N/-N (see note below).                     |
+| ~fzfa-cache-size~      |                       40 | Per-session LRU cache entries (see note below).                           |
+| ~fzfa-case-mode~       |                  ~smart~ | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.                         |
+| ~fzfa-extensions~      | (see *Extensions* below) | Extensions to ~require~ during setup.                                     |
 
 ~fzfa-highlight~ controls C-side match highlighting.  After the scoring
 pass, the C module calls ~fzf_get_positions~ for the top N candidates and
@@ -618,11 +617,11 @@ since it's returning the top N candidates at any one time.
 ~fzfa-case-mode~ controls how the fzf scorer treats letter case.
 Read on every scoring call; changes take effect immediately.
 
-| Value      | Behavior                                                          |
-|------------+-------------------------------------------------------------------|
-| ~smart~    | Case-insensitive when the query is all lowercase; case-sensitive once it contains any uppercase character (fzf's default). |
-| ~ignore~   | Always case-insensitive.                                         |
-| ~respect~  | Always case-sensitive.                                           |
+| Value     | Behavior                                                                                                                   |
+|-----------+----------------------------------------------------------------------------------------------------------------------------|
+| ~smart~   | Case-insensitive when the query is all lowercase; case-sensitive once it contains any uppercase character (fzf's default). |
+| ~ignore~  | Always case-insensitive.                                                                                                   |
+| ~respect~ | Always case-sensitive.                                                                                                     |
 
 #+begin_src emacs-lisp :tangle yes
   (setq fzfa-case-mode 'smart)    ; default
@@ -648,12 +647,12 @@ The full priority chain is:
 commands run in.  The default ~project~ matches the behavior of ~consult~.
 Available values:
 
-| Value        | Behavior                                                              |
-|--------------+-----------------------------------------------------------------------|
-| ~project~    | Uses ~project.el~ (~project-current~ / ~project-root~).  Default.    |
-| ~projectile~ | Uses ~projectile-project-root~ when ~projectile-mode~ is active.     |
-| ~nil~        | Uses ~default-directory~ unchanged (no project detection).           |
-| /function/   | Calls the function with no arguments; it should return a directory.  |
+| Value        | Behavior                                                            |
+|--------------+---------------------------------------------------------------------|
+| ~project~    | Uses ~project.el~ (~project-current~ / ~project-root~).  Default.   |
+| ~projectile~ | Uses ~projectile-project-root~ when ~projectile-mode~ is active.    |
+| ~nil~        | Uses ~default-directory~ unchanged (no project detection).          |
+| /function/   | Calls the function with no arguments; it should return a directory. |
 
 Example with a custom function:
 
