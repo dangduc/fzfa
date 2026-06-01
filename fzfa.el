@@ -2,7 +2,7 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1") (fzf-native "1.0"))
+;; Package-Requires: ((emacs "29.1") (fzf-native "1.1"))
 ;; Keywords: matching, completion, fzf, fuzzy, fussy
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
@@ -84,6 +84,7 @@
 (declare-function fzf-native-async-generation "fzf-native")
 (declare-function fzf-native-async-candidates "fzf-native")
 (declare-function fzf-native-async-stats "fzf-native")
+(declare-function fzf-native-async-result-fresh-p "fzf-native")
 
 ;;; Debug logging
 
@@ -611,14 +612,22 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                   (let ((cands (while-no-input
                                  (fzf-native-async-candidates
                                   handle query limit))))
-                    (when (and cands (not (eq cands t)))
+                    (unless (eq cands t)
                       (when-let* ((stats (fzf-native-async-stats handle)))
                         (setq last-filtered (car stats)
                               last-total    (cdr stats)))
-                      (setq last-query query
-                            last-result cands)
-                      (ivy--set-candidates cands)
-                      (ivy--exhibit)))))))
+                      ;; Push non-nil candidates immediately; treat nil as
+                      ;; authoritative only when the cache for QUERY is
+                      ;; fresh, otherwise keep the prior display.
+                      (cond
+                       (cands
+                        (setq last-query query last-result cands)
+                        (ivy--set-candidates cands)
+                        (ivy--exhibit))
+                       ((fzf-native-async-result-fresh-p handle query)
+                        (setq last-query query last-result nil)
+                        (ivy--set-candidates nil)
+                        (ivy--exhibit)))))))))
            retry-timer
            timer)
       (setq timer
@@ -693,8 +702,17 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                     (setq stats-overlay
                                           (make-overlay (point-min) (minibuffer-prompt-end))))
                                   (funcall refresh-overlay))))
-                            (setq last-query query
-                                  last-result r))
+                            ;; Distinguish "scoring not yet completed for
+                            ;; QUERY" from "scoring done, zero matches".
+                            ;; When fresh: trust R (including nil → blank).
+                            ;; When in-flight: preserve the previous result
+                            ;; so the display doesn't flash empty.
+                            (cond
+                             (r (setq last-query query
+                                      last-result r))
+                             ((fzf-native-async-result-fresh-p handle query)
+                              (setq last-query query
+                                    last-result nil))))
                           (when (equal query last-query) last-result)))
                     (_ t))))))
          (cancel-timer timer)
@@ -873,8 +891,12 @@ changing FILTER rescores in place via fzf-native.
                    (let ((r (and handle
                                  (fzf-native-async-candidates
                                   handle query limit))))
-                     (when r (setq last-result r))
-                     (or r last-result)))
+                     (cond
+                      (r (setq last-result r) r)
+                      ((and handle
+                            (fzf-native-async-result-fresh-p handle query))
+                       (setq last-result nil) nil)
+                      (t last-result))))
                   ((null handle) last-result)
                   (t
                    (let ((r (while-no-input
@@ -901,11 +923,16 @@ changing FILTER rescores in place via fzf-native.
                                    (make-overlay (point-min)
                                                  (minibuffer-prompt-end))))
                            (funcall refresh-overlay)))
-                       ;; Preserve `last-result' across empty fetches so a
-                       ;; new handle that hasn't streamed yet doesn't blank
-                       ;; the display.
-                       (when r (setq last-result r))
-                       (or r last-result))))))))
+                       ;; Distinguish "scoring still in flight" from
+                       ;; "scoring done, zero matches".  Fresh + nil R is
+                       ;; the authoritative empty result; everything else
+                       ;; preserves the prior display rather than flashing
+                       ;; empty during the cmd-restart / refinement window.
+                       (cond
+                        (r (setq last-result r) r)
+                        ((fzf-native-async-result-fresh-p handle query)
+                         (setq last-result nil) nil)
+                        (t last-result)))))))))
               (_ t)))))
     (when init-text
       (let ((cmd (car (funcall splitter init-text style))))
@@ -1378,6 +1405,20 @@ Per-source plist keys:
                                            items query)))))))
                               (cond
                                ((eq out t) (setq interrupted t))
+                               ;; For async sources, distinguish "scoring
+                               ;; not yet completed for QUERY" from
+                               ;; "scoring done, zero matches".  If out is
+                               ;; nil AND the cache isn't fresh, the result
+                               ;; isn't authoritative yet — keep the prior
+                               ;; per-source slot rather than blanking it.
+                               ((and h (null out)
+                                     (not (fzf-native-async-result-fresh-p
+                                           h query)))
+                                ;; Leave last-results[i]/rank[i]/filtered[i]
+                                ;; alone; refresh totals so the overlay
+                                ;; still reflects the live pool.
+                                (when-let* ((s (fzf-native-async-stats h)))
+                                  (aset totals i (cdr s))))
                                (t
                                 ;; Async returns fresh strings each call;
                                 ;; re-tag them so group/action lookup works.
