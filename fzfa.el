@@ -375,8 +375,15 @@ should be treated as \"no information yet\", and callers should
 preserve the previous display rather than blanking it.
 
 Use this guard around any `setq' that updates a stored result, and
-around any side-effect that commits R to the display."
-  (or r (fzf-native-async-result-fresh-p handle query)))
+around any side-effect that commits R to the display.
+
+When the loaded fzf-native predates `fzf-native-async-result-fresh-p',
+fall back to treating any nil R as in-flight.  That loses the
+authoritative-zero distinction (consult-style display will keep showing
+stale candidates when scoring legitimately matched nothing), but it
+keeps fzfa functional on older fzf-native builds."
+  (or r (and (fboundp 'fzf-native-async-result-fresh-p)
+             (fzf-native-async-result-fresh-p handle query))))
 
 (defun fzfa--defer-async-stop (handles)
   "Schedule `fzf-native-async-stop' on HANDLES off the synchronous unwind path.
