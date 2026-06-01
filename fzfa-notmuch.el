@@ -79,13 +79,15 @@ Tags are formatted as `tag:NAME'.  Saved searches come from
 
 (defun fzfa-notmuch--read-query (prompt)
   "Read a notmuch query with PROMPT.
+
 Completes over notmuch tags (as `tag:NAME') and saved-search queries.
 Free-form input is accepted.  Defaults to `fzfa-notmuch-default-query'."
-  (completing-read prompt
-                   (fzfa-notmuch--query-candidates)
-                   nil nil nil
-                   'fzfa-notmuch--history
-                   fzfa-notmuch-default-query))
+  (fzfa-sync-completing-read
+   :candidates (fzfa-notmuch--query-candidates)
+   :prompt prompt
+   :history 'fzfa-notmuch--history
+   :require-match nil
+   :default fzfa-notmuch-default-query))
 
 (defun fzfa-notmuch--command (query)
   "Build the shell command for `notmuch search' over QUERY."

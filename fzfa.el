@@ -1079,7 +1079,9 @@ routed to `%s' so its post-action runs."
                                      annotate
                                      affix
                                      group
-                                     history)
+                                     history
+                                     (require-match t)
+                                     default)
   "Run `completing-read' over CANDIDATES using fzf-native for scoring.
 
 :CANDIDATES List of strings to score with `fzf-native-score-all'.
@@ -1102,7 +1104,11 @@ routed to `%s' so its post-action runs."
             like vertico render group headers between sections.
 :HISTORY    Optional history variable symbol passed to `completing-read'.
             Selected entries are pushed onto this list and recallable
-            with \\[previous-history-element]."
+            with \\[previous-history-element].
+:REQUIRE-MATCH Forwarded to `completing-read'.  Defaults to t.  Set nil
+            to accept free-form input (treat CANDIDATES as suggestions).
+:DEFAULT    Forwarded to `completing-read'.  Returned when the user
+            submits empty input; also seeded into history."
   (fzfa--ensure-setup)
   (cond
    ((eq fzfa--multi-mode :extract)
@@ -1130,7 +1136,7 @@ routed to `%s' so its post-action runs."
                  candidates
                (fzfa--bridge-defcustoms
                 #'fzf-native-score-all candidates query))))))
-   nil t nil history nil))
+   nil require-match nil history default))
 
 ;;; Multi-source `completing-read'
 
