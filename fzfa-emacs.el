@@ -34,6 +34,7 @@
 ;;   `fzfa-mark'                     Jump to a position in this buffer's `mark-ring'
 ;;   `fzfa-global-mark'              Jump to a position in `global-mark-ring'
 ;;   `fzfa-register'                 Use a register (jump-to or insert based on type)
+;;   `fzfa-outline'                  Jump to an outline heading in this buffer
 
 ;;; Code:
 
@@ -44,6 +45,7 @@
 (declare-function bookmark-maybe-load-default-file "bookmark")
 (declare-function imenu--make-index-alist "imenu")
 (declare-function imenu--subalist-p "imenu")
+(declare-function outline-next-heading "outline")
 (defvar recentf-list)
 
 ;;;###autoload
@@ -536,6 +538,47 @@ Falls back to `insert-register' when `jump-to-register' signals."
       (condition-case _
           (jump-to-register name)
         (error (insert-register name))))))
+
+;;;###autoload
+(defun fzfa-outline ()
+  "Jump to an outline heading in the current buffer using fzf.
+Walks every line matching `outline-regexp' (set by `outline-mode',
+`outline-minor-mode', or the major mode's own definition — most
+programming modes set one).  Selection pushes point onto the mark
+ring and moves to the heading line.
+
+Candidates are formatted as SOURCE:LINE:CONTENT so the `fzfa-grep'
+category's group function and embark map apply automatically."
+  (interactive)
+  (require 'outline)
+  (unless (and (boundp 'outline-regexp) outline-regexp)
+    (user-error "No `outline-regexp' set in this buffer"))
+  (let* ((source (or (buffer-file-name) (buffer-name)))
+         (used (make-hash-table :test 'equal))
+         (candidates
+          (save-excursion
+            (goto-char (point-min))
+            (let (out)
+              (while (outline-next-heading)
+                (let* ((line    (line-number-at-pos))
+                       (content (buffer-substring-no-properties
+                                 (line-beginning-position)
+                                 (line-end-position)))
+                       (display (format "%s:%d:%s" source line content)))
+                  (while (gethash display used)
+                    (setq display (concat display " ")))
+                  (puthash display t used)
+                  (push display out)))
+              (nreverse out)))))
+    (unless candidates
+      (user-error "No outline headings in buffer"))
+    (when-let* ((r (fzfa-sync-completing-read
+                    :candidates candidates
+                    :prompt "outline: "
+                    :category 'fzfa-grep
+                    :group #'fzfa--grep-group)))
+      (push-mark nil t)
+      (fzfa--grep-jump r))))
 
 (provide 'fzfa-emacs)
 

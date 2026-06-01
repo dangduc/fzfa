@@ -184,6 +184,7 @@ See *Extensions* below.)
 | ~fzfa-imenu~                 | ~counsel-imenu~        | ~consult-imenu~                        |
 | ~fzfa-imenu-all~             | —                      | ~consult-imenu-multi~                  |
 | ~fzfa-imenu-all-but-current~ | —                      | —                                      |
+| ~fzfa-outline~               | ~counsel-outline~      | ~consult-outline~                      |
 | ~fzfa-mark~                  | ~counsel-mark-ring~    | ~consult-mark~                         |
 | ~fzfa-global-mark~           | ~counsel-mark-ring~    | ~consult-global-mark~                  |
 | ~fzfa-register~              | ~counsel-register~     | ~consult-register-load~                |
