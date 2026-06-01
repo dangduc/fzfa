@@ -35,6 +35,7 @@
 ;;   `fzfa-global-mark'              Jump to a position in `global-mark-ring'
 ;;   `fzfa-register'                 Use a register (jump-to or insert based on type)
 ;;   `fzfa-outline'                  Jump to an outline heading in this buffer
+;;   `fzfa-compile-error'            Jump to an error from a compilation buffer
 
 ;;; Code:
 
@@ -46,6 +47,8 @@
 (declare-function imenu--make-index-alist "imenu")
 (declare-function imenu--subalist-p "imenu")
 (declare-function outline-next-heading "outline")
+(declare-function compilation-next-error "compile" (n &optional types start))
+(declare-function compile-goto-error "compile" (&optional event))
 (defvar recentf-list)
 
 ;;;###autoload
@@ -579,6 +582,61 @@ category's group function and embark map apply automatically."
                     :group #'fzfa--grep-group)))
       (push-mark nil t)
       (fzfa--grep-jump r))))
+
+;;;###autoload
+(defun fzfa-compile-error ()
+  "Jump to an error from a compilation buffer using fzf.
+Walks the current buffer when it derives from `compilation-mode',
+otherwise the buffer returned by `next-error-find-buffer' (typically
+the most recent compile/grep buffer).  Each line carrying a
+`compilation-message' text property contributes a candidate showing
+that line's text verbatim.
+
+Selection pops to the compile buffer at the chosen error and
+invokes `compile-goto-error', which resolves the source location
+via the compile buffer's own `default-directory' and error
+regexp — so relative paths and unconventional formats work as long
+as `compile' itself can navigate them."
+  (interactive)
+  (require 'compile)
+  (let ((buffer (or (and (derived-mode-p 'compilation-mode) (current-buffer))
+                    (next-error-find-buffer))))
+    (unless (and buffer (buffer-live-p buffer))
+      (user-error "No compilation buffer"))
+    (let* ((lookup (make-hash-table :test 'equal))
+           (used   (make-hash-table :test 'equal))
+           (candidates
+            (with-current-buffer buffer
+              (save-excursion
+                (goto-char (point-min))
+                (let (out)
+                  (while (condition-case nil
+                             (progn (compilation-next-error 1) t)
+                           (error nil))
+                    (let* ((content (buffer-substring-no-properties
+                                     (line-beginning-position)
+                                     (line-end-position)))
+                           (display (if (string-empty-p content)
+                                        (format "<line %d>"
+                                                (line-number-at-pos))
+                                      content)))
+                      (while (gethash display used)
+                        (setq display (concat display " ")))
+                      (puthash display t used)
+                      (puthash display (point) lookup)
+                      (push display out)))
+                  (nreverse out))))))
+      (unless candidates
+        (user-error "No errors in %s" (buffer-name buffer)))
+      (when-let* ((r   (fzfa-sync-completing-read
+                        :candidates candidates
+                        :prompt (format "compile-error[%s]: "
+                                        (buffer-name buffer))
+                        :category 'fzfa-misc))
+                  (pos (gethash r lookup)))
+        (pop-to-buffer buffer)
+        (goto-char pos)
+        (compile-goto-error)))))
 
 (provide 'fzfa-emacs)
 

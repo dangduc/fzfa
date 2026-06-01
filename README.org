@@ -172,29 +172,30 @@ See *Extensions* below.)
 
 ** Emacs based
 
-| ~fzfa~                       | ~counsel~              | ~consult~                              |
-|-------------------------------+------------------------+----------------------------------------|
-| ~fzfa-buffer~                | ~ivy-switch-buffer~    | ~consult-buffer~                       |
-| ~fzfa-bookmark~              | ~counsel-bookmark~     | ~consult-bookmark~                     |
-| ~fzfa-M-x~                   | ~counsel-M-x~          | —                                      |
-| ~fzfa-M-x-for-buffer~        | —                      | ~consult-mode-command~                 |
-| ~fzfa-yank-pop~              | ~counsel-yank-pop~     | ~consult-yank-pop~                     |
-| ~fzfa-theme~                 | ~counsel-load-theme~   | ~consult-theme~                        |
-| ~fzfa-tramp~                 | —                      | —                                      |
-| ~fzfa-imenu~                 | ~counsel-imenu~        | ~consult-imenu~                        |
-| ~fzfa-imenu-all~             | —                      | ~consult-imenu-multi~                  |
-| ~fzfa-imenu-all-but-current~ | —                      | —                                      |
-| ~fzfa-outline~               | ~counsel-outline~      | ~consult-outline~                      |
-| ~fzfa-mark~                  | ~counsel-mark-ring~    | ~consult-mark~                         |
-| ~fzfa-global-mark~           | ~counsel-mark-ring~    | ~consult-global-mark~                  |
-| ~fzfa-register~              | ~counsel-register~     | ~consult-register-load~                |
-| ~fzfa-flymake~               | —                      | ~consult-flymake~                      |
-| ~fzfa-flymake-project~       | —                      | ~consult-flymake~ (with prefix arg)    |
-| ~fzfa-project-find-file~     | ~counsel-projectile-find-file~     | —                       |
-| ~fzfa-project-find-dir~      | ~counsel-projectile-find-dir~      | —                       |
-| ~fzfa-project-buffer~        | ~counsel-projectile-switch-to-buffer~ | ~consult-project-buffer~ |
-| ~fzfa-project-recentf~       | ~counsel-projectile-recentf~       | —                       |
-| ~fzfa-project-switch-project~ | ~counsel-projectile-switch-project~ | —                       |
+| ~fzfa~                        | ~counsel~                             | ~consult~                           |
+|-------------------------------+---------------------------------------+-------------------------------------|
+| ~fzfa-buffer~                 | ~ivy-switch-buffer~                   | ~consult-buffer~                    |
+| ~fzfa-bookmark~               | ~counsel-bookmark~                    | ~consult-bookmark~                  |
+| ~fzfa-M-x~                    | ~counsel-M-x~                         | —                                   |
+| ~fzfa-M-x-for-buffer~         | —                                     | ~consult-mode-command~              |
+| ~fzfa-yank-pop~               | ~counsel-yank-pop~                    | ~consult-yank-pop~                  |
+| ~fzfa-theme~                  | ~counsel-load-theme~                  | ~consult-theme~                     |
+| ~fzfa-tramp~                  | —                                     | —                                   |
+| ~fzfa-imenu~                  | ~counsel-imenu~                       | ~consult-imenu~                     |
+| ~fzfa-imenu-all~              | —                                     | ~consult-imenu-multi~               |
+| ~fzfa-imenu-all-but-current~  | —                                     | —                                   |
+| ~fzfa-outline~                | ~counsel-outline~                     | ~consult-outline~                   |
+| ~fzfa-mark~                   | ~counsel-mark-ring~                   | ~consult-mark~                      |
+| ~fzfa-global-mark~            | ~counsel-mark-ring~                   | ~consult-global-mark~               |
+| ~fzfa-register~               | ~counsel-register~                    | ~consult-register-load~             |
+| ~fzfa-flymake~                | —                                     | ~consult-flymake~                   |
+| ~fzfa-flymake-project~        | —                                     | ~consult-flymake~ (with prefix arg) |
+| ~fzfa-compile-error~          | ~counsel-compile~ (related)           | ~consult-compile-error~             |
+| ~fzfa-project-find-file~      | ~counsel-projectile-find-file~        | —                                   |
+| ~fzfa-project-find-dir~       | ~counsel-projectile-find-dir~         | —                                   |
+| ~fzfa-project-buffer~         | ~counsel-projectile-switch-to-buffer~ | ~consult-project-buffer~            |
+| ~fzfa-project-recentf~        | ~counsel-projectile-recentf~          | —                                   |
+| ~fzfa-project-switch-project~ | ~counsel-projectile-switch-project~   | —                                   |
 
 ** Content search
 
