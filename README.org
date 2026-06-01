@@ -57,25 +57,28 @@ comparison sort for large candidate sets.
 - [[https://github.com/dangduc/fzf-native][fzf-native]] — Emacs wrapper
 
 ** Multi-component filtering
+[[https://github.com/junegunn/fzf#search-syntax][fzf syntax]] is supported:
 
-Queries may contain multiple space-separated terms.
-This mirrors the fzf command-line search syntax:
+| Token       | Match type                 | Description                          |
+|-------------+----------------------------+--------------------------------------|
+| ~sbtrkt~    | fuzzy-match                | Items that match ~sbtrkt~            |
+| ~'wild~     | exact-match (quoted)       | Items that include ~wild~            |
+| ~^music~    | prefix-exact-match         | Items that start with ~music~        |
+| ~.mp3$~     | suffix-exact-match         | Items that end with ~.mp3~           |
+| ~!fire~     | inverse-exact-match        | Items that do not include ~fire~     |
+| ~!^music~   | inverse-prefix-exact-match | Items that do not start with ~music~ |
+| ~!.mp3$~    | inverse-suffix-exact-match | Items that do not end with ~.mp3~    |
 
-| Syntax          | Meaning                                  |
-|-----------------+------------------------------------------|
-| ~foo bar~       | fuzzy-match both ~foo~ and ~bar~         |
-| ~'foo~          | exact substring match for ~foo~          |
-| ~^foo~          | prefix match for ~foo~                   |
-| ~foo$~          | suffix match for ~foo~                   |
-| ~!foo~          | exclude candidates matching ~foo~        |
-| ~foo | bar~ | OR: match ~foo~ or ~bar~                 |
+A single bar character term acts as an OR operator. For example, the following
+query matches entries that start with ~core~ and end with either ~go~, ~rb~,
+or ~py~.
 
-For example, typing ~el$ !test~ finds files ending in ~.el~ that do not
-contain ~test~.
+#+begin_src
+^core go$ | rb$ | py$
+#+end_src
 
-Refer to the full query syntax:
+Refer to:
 [[https://github.com/nvim-telescope/telescope-fzf-native.nvim#telescope-fzf-nativenvim][telescope-fzf-native query syntax]]
-
 ** Multithreaded scoring
 
 Scoring is performed by
@@ -181,6 +184,9 @@ See *Extensions* below.)
 | ~fzfa-imenu~                 | ~counsel-imenu~        | ~consult-imenu~                        |
 | ~fzfa-imenu-all~             | —                      | ~consult-imenu-multi~                  |
 | ~fzfa-imenu-all-but-current~ | —                      | —                                      |
+| ~fzfa-mark~                  | ~counsel-mark-ring~    | ~consult-mark~                         |
+| ~fzfa-global-mark~           | ~counsel-mark-ring~    | ~consult-global-mark~                  |
+| ~fzfa-register~              | ~counsel-register~     | ~consult-register-load~                |
 | ~fzfa-flymake~               | —                      | ~consult-flymake~                      |
 | ~fzfa-flymake-project~       | —                      | ~consult-flymake~ (with prefix arg)    |
 | ~fzfa-project-find-file~     | ~counsel-projectile-find-file~     | —                       |
@@ -268,6 +274,25 @@ and ~fzfa-chrome-pass-copy~ — one prompt covers both
 entry's password copied to the kill ring via the originating source.
 Requires the ~chrome~ extension (and on macOS, the deps listed for
 Chrome passwords above).
+
+***  Mixing async and sync sources with ~fzfa-multi-read~
+A meaningful difference from the alternatives is that ~fzfa-multi-read~
+can mix *both* synchronous and asynchronous sources in a single picker.
+
+On every keystroke each source is re-queried — sync sources via
+~fzf-native-score-all~, async sources via ~fzf-native-async-candidates~
+against the live producer pool — and the per-source top results are
+merged with a per-source rank for the final order.  This lets one
+prompt combine, say, ~recentf~ entries (sync list) alongside a
+streaming ~rg~ search (async producer) and have both groups score
+against the same query as the user types:
+
+| Frontend                     | Mixed async + sync multi-source                                |
+|------------------------------+----------------------------------------------------------------|
+| ~fzfa~ (~fzfa-multi-read~)   | yes — any combination of ~:items~ and ~:command~ sources       |
+| ~helm~ (~helm :sources~)     | yes — ~candidates~ + ~candidates-process~ sources side by side |
+| ~consult~ (~consult--multi~) | sync only; async pipeline is single-source                     |
+| ~ivy~ / ~counsel~            | no multi-source mechanism                                      |
 
 * Extensions
 

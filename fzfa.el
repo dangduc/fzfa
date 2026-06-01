@@ -1680,7 +1680,7 @@ public entry point.
     (dolist (sym '(fzfa-async-completing-read
                    fzfa-sync-completing-read
                    fzfa-2pass-completing-read
-                   fzfa--multi-read))
+                   fzfa-multi-read))
       (advice-add sym :around #'fzfa--pin-completion-styles))
 
     (with-eval-after-load 'embark

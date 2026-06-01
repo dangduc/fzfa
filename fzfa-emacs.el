@@ -31,6 +31,9 @@
 ;;   `fzfa-imenu-all-but-current'    Like `fzfa-imenu-all' but skip current
 ;;   `fzfa-M-x'                      Run an extended command (like \\[execute-extended-command])
 ;;   `fzfa-M-x-for-buffer'           Run an extended command applicable to the current mode
+;;   `fzfa-mark'                     Jump to a position in this buffer's `mark-ring'
+;;   `fzfa-global-mark'              Jump to a position in `global-mark-ring'
+;;   `fzfa-register'                 Use a register (jump-to or insert based on type)
 
 ;;; Code:
 
@@ -417,6 +420,122 @@ mirroring `execute-extended-command-for-buffer'."
                          :category 'command
                          :history 'extended-command-history)))
       (fzfa--run-command result))))
+
+(defun fzfa--mark-candidates (markers)
+  "Build FILE:LINE:CONTENT candidates from MARKERS.
+Each marker contributes one candidate showing the buffer (or
+file path) it points into, the line number, and the line text.
+Disambiguates duplicate display strings with a trailing space so
+fzf-native's distinct-candidate guarantee holds."
+  (let ((used (make-hash-table :test 'equal)))
+    (cl-loop
+     for m in markers
+     for buf = (and (markerp m) (marker-buffer m))
+     for pos = (and (markerp m) (marker-position m))
+     when (and buf (buffer-live-p buf) pos)
+     collect
+     (with-current-buffer buf
+       (save-excursion
+         (when (and (<= (point-min) pos) (<= pos (point-max)))
+           (goto-char pos)
+           (let* ((source (or (buffer-file-name) (buffer-name)))
+                  (line (line-number-at-pos))
+                  (content (buffer-substring-no-properties
+                            (line-beginning-position)
+                            (line-end-position)))
+                  (display (format "%s:%d:%s" source line content)))
+             (while (gethash display used)
+               (setq display (concat display " ")))
+             (puthash display t used)
+             display)))))))
+
+;;;###autoload
+(defun fzfa-mark ()
+  "Jump to a position in the current buffer's `mark-ring' using fzf.
+Includes the buffer's current `mark-marker' as the first candidate.
+Selection pushes point onto the mark ring before moving so the prior
+position is recoverable with \\[set-mark-command] \\[set-mark-command]."
+  (interactive)
+  (let* ((markers (cl-remove-if-not
+                   (lambda (m) (eq (and (markerp m) (marker-buffer m))
+                                   (current-buffer)))
+                   (cons (mark-marker) mark-ring)))
+         (candidates (cl-remove-if-not #'identity
+                                       (fzfa--mark-candidates markers))))
+    (unless candidates
+      (user-error "No marks in this buffer"))
+    (when-let* ((r (fzfa-sync-completing-read
+                    :candidates candidates
+                    :prompt "mark: "
+                    :category 'fzfa-grep
+                    :group #'fzfa--grep-group)))
+      (push-mark nil t)
+      (fzfa--grep-jump r))))
+
+;;;###autoload
+(defun fzfa-global-mark ()
+  "Jump to a position in `global-mark-ring' using fzf.
+Selection switches buffers when needed and moves point to the marked
+line.  Dead markers (buffer killed or position out of range) are
+silently skipped."
+  (interactive)
+  (unless global-mark-ring
+    (user-error "Global mark ring is empty"))
+  (let ((candidates (cl-remove-if-not #'identity
+                                      (fzfa--mark-candidates
+                                       global-mark-ring))))
+    (unless candidates
+      (user-error "No live global marks"))
+    (when-let* ((r (fzfa-sync-completing-read
+                    :candidates candidates
+                    :prompt "global-mark: "
+                    :category 'fzfa-grep
+                    :group #'fzfa--grep-group)))
+      (push-mark nil t)
+      (fzfa--grep-jump r))))
+
+;;;###autoload
+(defun fzfa-register ()
+  "Select and use a register from `register-alist' via fzf.
+Dispatches by type: position-class registers (markers, frame and
+window configurations, framesets, file/file-query, bookmark) jump;
+remaining types (text, number, rectangle, …) insert at point.
+Falls back to `insert-register' when `jump-to-register' signals."
+  (interactive)
+  (unless register-alist
+    (user-error "No registers set"))
+  (let* ((lookup (make-hash-table :test 'equal))
+         (used   (make-hash-table :test 'equal))
+         (candidates
+          (cl-loop
+           for (name . val) in register-alist
+           for label = (cond
+                        ((characterp name) (single-key-description name))
+                        ((symbolp name)    (symbol-name name))
+                        (t                  (format "%S" name)))
+           for preview = (or (and (fboundp 'register-describe-oneline)
+                                  (ignore-errors
+                                    (substring-no-properties
+                                     (register-describe-oneline name))))
+                             (replace-regexp-in-string
+                              "\n" (propertize "⏎" 'face 'shadow)
+                              (format "%S" val)))
+           for display = (format "[%s] %s" label preview)
+           collect
+           (progn
+             (while (gethash display used)
+               (setq display (concat display " ")))
+             (puthash display t used)
+             (puthash display name lookup)
+             display))))
+    (when-let* ((r    (fzfa-sync-completing-read
+                       :candidates candidates
+                       :prompt "register: "
+                       :category 'fzfa-misc))
+                (name (gethash r lookup)))
+      (condition-case _
+          (jump-to-register name)
+        (error (insert-register name))))))
 
 (provide 'fzfa-emacs)
 
