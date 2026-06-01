@@ -311,6 +311,74 @@ To disable extension loading entirely:
     :custom (fzfa-extensions nil))
 #+end_src
 
+* Two-pass commands
+
+Some async commands have a ~-2p~ (two-pass, ~consult~-inspired) variant
+where the minibuffer input is split into a shell-COMMAND part
+(re-runs the underlying process on change) and an fzf-FILTER part
+(rescores in place via fzf-native).  With the default ~perl~ split
+style the prompt has shape ~#COMMAND#FILTER~.
+
+The main difference is ~fzfa~ lets you modify the entire shell command
+that's being used.
+
+A comparison demo is below.
+
+| Command              | Variant                  | Source file       |
+|----------------------+--------------------------+-------------------|
+| ~fzfa-ag~            | ~fzfa-ag-2p~             | ~fzfa-ag.el~      |
+| ~fzfa-ag-files~      | ~fzfa-ag-files-2p~       | ~fzfa-ag.el~      |
+| ~fzfa-fd~            | ~fzfa-fd-2p~             | ~fzfa-fd.el~      |
+| ~fzfa-find~          | ~fzfa-find-2p~           | ~fzfa-find.el~    |
+| ~fzfa-git-grep~      | ~fzfa-git-grep-2p~       | ~fzfa-git.el~     |
+| ~fzfa-grep~          | ~fzfa-grep-2p~           | ~fzfa-grep.el~    |
+| ~fzfa-locate~        | ~fzfa-locate-2p~         | ~fzfa-locate.el~  |
+| ~fzfa-rg~            | ~fzfa-rg-2p~             | ~fzfa-rg.el~      |
+| ~fzfa-ugrep~         | ~fzfa-ugrep-2p~          | ~fzfa-ugrep.el~   |
+
+Each ~-2p~ variant is only *defined* when its symbol is listed in
+~fzfa-2p-functions~ (default: all of the above).  Loading the
+extension file checks this list and conditionally creates the
+variant via ~fzfa-2p-define~.
+
+** Two-pass autoloading
+
+The defcustom controls *whether* the variant is defined; ~autoload~
+forms control *whether cold ~M-x~ on the variant can find it before
+the extension file has been loaded*.  Both opt-ins must line up — the
+defcustom enables the definition inside the extension file, and the
+matching ~autoload~ tells Emacs which file to load when the user
+invokes the variant.  Without the autoload, cold ~M-x fzfa-rg-2p~
+fails because Emacs has no record that ~fzfa-rg.el~ is the file that
+defines it.
+
+#+begin_src emacs-lisp :tangle yes
+  (use-package fzfa
+    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest)
+    :defer t
+    :custom (fzfa-2p-functions '(fzfa-ag-2p fzfa-ag-files-2p fzfa-fd-2p
+                                 fzfa-find-2p fzfa-git-grep-2p fzfa-grep-2p
+                                 fzfa-locate-2p fzfa-rg-2p fzfa-ugrep-2p))
+    :init
+    ;; Without these `autoload' forms, `fzfa-2p-functions' still gates
+    ;; the defun at extension-load time, but Emacs doesn't know which
+    ;; file to load for a cold `M-x fzfa-rg-2p' — leaving the variant
+    ;; discoverable only after some other fzfa command has triggered
+    ;; the extension to load.
+    (autoload 'fzfa-ag-2p       "fzfa-ag"     nil t)
+    (autoload 'fzfa-ag-files-2p "fzfa-ag"     nil t)
+    (autoload 'fzfa-fd-2p       "fzfa-fd"     nil t)
+    (autoload 'fzfa-find-2p     "fzfa-find"   nil t)
+    (autoload 'fzfa-git-grep-2p "fzfa-git"    nil t)
+    (autoload 'fzfa-grep-2p     "fzfa-grep"   nil t)
+    (autoload 'fzfa-locate-2p   "fzfa-locate" nil t)
+    (autoload 'fzfa-rg-2p       "fzfa-rg"     nil t)
+    (autoload 'fzfa-ugrep-2p    "fzfa-ugrep"  nil t))
+#+end_src
+
+To opt into only a subset, remove the unwanted entries from
+~fzfa-2p-functions~ and drop their matching ~autoload~ forms.
+
 * Completion style compatibility
 
 ~fzfa~ registers and uses its own ~completion-style~ named ~fzfa~.

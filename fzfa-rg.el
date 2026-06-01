@@ -62,5 +62,8 @@ The command is configurable via `fzfa-rg-command'."
                   :group #'fzfa--grep-group)))
     (fzfa--grep-jump r)))
 
+(when (memq 'fzfa-rg-2p fzfa-2p-functions)
+  (fzfa-2p-define 'fzfa-rg))
+
 (provide 'fzfa-rg)
 ;;; fzfa-rg.el ends here

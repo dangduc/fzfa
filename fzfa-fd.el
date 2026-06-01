@@ -37,5 +37,8 @@ The command is configurable via `fzfa-fd-command'."
   (when-let* ((result (fzfa-async-completing-read :command fzfa-fd-command)))
     (find-file result)))
 
+(when (memq 'fzfa-fd-2p fzfa-2p-functions)
+  (fzfa-2p-define 'fzfa-fd))
+
 (provide 'fzfa-fd)
 ;;; fzfa-fd.el ends here
