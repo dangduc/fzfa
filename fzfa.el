@@ -192,7 +192,7 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(ag chrome company emacs evil fd find flymake git grep hg hungry info
+  '(ag chrome company emacs embark evil fd find flymake git grep hg hungry info
        locate mail make music notmuch org pass project rg shell spotlight ugrep)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
@@ -201,6 +201,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "Chrome bookmarks + passwords" chrome)
               (const :tag "company-mode completions" company)
               (const :tag "Emacs built-in sources" emacs)
+              (const :tag "Embark actions" embark)
               (const :tag "Evil-mode marks + registers" evil)
               (const :tag "fd (find alternative)" fd)
               (const :tag "POSIX find" find)
