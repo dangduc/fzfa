@@ -1542,6 +1542,7 @@ the other commands' sources, with each inner source keeping its own
 
 (defcustom fzfa-find-any-commands
   '(fzfa-imenu
+    fzfa-vc-modified-files
     fzfa-buffer
     fzfa-recent-file
     fzfa-hungry-find
@@ -1555,6 +1556,7 @@ the other commands' sources, with each inner source keeping its own
 
 (defcustom fzfa-find-some-commands
   '(fzfa-imenu
+    fzfa-vc-modified-files
     fzfa-buffer
     fzfa-recent-file
     fzfa-find
