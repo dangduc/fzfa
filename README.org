@@ -283,7 +283,100 @@ entry's password copied to the kill ring via the originating source.
 Requires the ~chrome~ extension (and on macOS, the deps listed for
 Chrome passwords above).
 
-***  Mixing async and sync sources with ~fzfa-multi-read~
+*** Narrowing to a single source
+
+A multi-source session has three states.  The narrow menu is a
+transient modal — it captures one keystroke, dispatches, and
+goes away.  Outside the menu the minibuffer is always in normal
+query-input mode.
+
+#+begin_example
+                                  +------ source letter ------+
+                                  v                           |
+   [1] Widened ----<----> [2] Narrow menu ----<-----> [3] Narrowed
+                                  |                           |
+                                  +-- other key cancels back -+
+#+end_example
+
+| State         | Menu visible? | Prompt overlay          | Minibuffer input        |
+|---------------+---------------+-------------------------+-------------------------|
+| 1 Widened     | no            | ~PROMPT [N/](T)~        | query against all       |
+| 2 Narrow menu | yes           | ~KEY:NAME ...  <:widen~ | (captured by handler)   |
+| 3 Narrowed    | no            | ~PROMPT {NAME} [N/](T)~ | query within one source |
+
+*Opening the menu.* Press ~fzfa-multi-narrow-key~ (default ~<~)
+from state 1 or state 3.  The menu replaces the prompt overlay
+with every source as ~KEY:NAME~ (active source highlighted with
+the ~minibuffer-prompt~ face) and a trailing ~<:widen~ marker
+faced ~shadow~.
+
+*From the menu (state 2), three exits:*
+
+| Key                     | Action                                | Result     |
+|-------------------------+---------------------------------------+------------|
+| /source letter/         | Narrow or switch to that source       | -> state 3 |
+| ~fzfa-multi-narrow-key~ | Widen — restore all sources           | -> state 1 |
+| /anything else/         | Cancel — leave narrow state unchanged | -> prior   |
+
+"Anything else" includes ~RET~, ~ESC~, ~SPC~, and any pool char
+that isn't allocated.  No error, no message — the menu just
+dismisses.
+
+*Switching while narrowed.* Use the menu: e.g. from state 3
+narrowed to ~recent-file~, press ~<~ to open the menu, then ~b~
+to switch to ~buffer~ (-> state 3 with the new source).
+
+*Wrapping.* Long source lists wrap to multiple lines based on the
+active minibuffer window width; ~resize-mini-windows~ (Emacs
+default) grows the minibuffer to fit.  An oversize single entry
+stays whole on its own line — no mid-entry splits.
+
+Narrow keys are *allocated automatically* — one length-1 character
+per source, derived from the source's ~:name~ via a two-pass
+algorithm:
+
+1. Any explicit ~:narrow~ in the command list is reserved first.
+2. Each remaining source tries the first character of each word in
+   its hyphen-split name (case preserved), then falls back to a
+   pool of ~a-z~ / ~A-Z~ / ~0-9~.
+
+So the default ~fzfa-find-any-commands~ resolves to:
+
+| Source                       | Key |
+|------------------------------+-----|
+| ~fzfa-imenu~                 | ~i~ |
+| ~fzfa-buffer~                | ~b~ |
+| ~fzfa-recent-file~           | ~r~ |
+| ~fzfa-hungry-find~           | ~h~ |
+| ~fzfa-imenu-all-but-current~ | ~a~ |
+| ~fzfa-M-x~                   | ~M~ |
+| ~fzfa-hungry-swiper~         | ~s~ |
+| ~fzfa-locate~                | ~l~ |
+
+To override a derived key, replace a bare symbol with a
+~(COMMAND :narrow KEY)~ form.  ~KEY~ is a single character — symbol,
+~?char~, or string:
+
+#+begin_src emacs-lisp :tangle yes
+  (setq fzfa-find-any-commands
+        '((fzfa-vc-modified-files :narrow V)
+          (fzfa-imenu             :narrow I)
+          fzfa-buffer
+          (fzfa-recent-file       :narrow R)
+          fzfa-hungry-find
+          fzfa-imenu-all-but-current
+          fzfa-M-x
+          fzfa-hungry-swiper
+          fzfa-locate))
+#+end_src
+
+Duplicate explicit keys signal an error at session start so
+collisions surface loudly instead of silently shadowing.
+
+Demo below:
+#+HTML: <video src="https://github.com/user-attachments/assets/1f198d53-eabb-4149-bde4-33823d7e325e" controls style="max-width: 100%; height: auto;"></video>
+
+*** Mixing async and sync sources with ~fzfa-multi-read~
 A meaningful difference from the alternatives is that ~fzfa-multi-read~
 can mix *both* synchronous and asynchronous sources in a single picker.
 
@@ -540,6 +633,7 @@ single keybinding via [[https://github.com/jojojames/matcha][matcha]].
 | ~fzfa-max-line-length~ |                      256 | Per-line character limit; nil/+N/-N (see note below).                     |
 | ~fzfa-cache-size~      |                       40 | Per-session LRU cache entries (see note below).                           |
 | ~fzfa-case-mode~       |                  ~smart~ | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.                         |
+| ~fzfa-multi-narrow-key~ |                    ~<~ | Prefix key for narrowing in multi-source sessions; nil disables.          |
 | ~fzfa-extensions~      | (see *Extensions* below) | Extensions to ~require~ during setup.                                     |
 
 ~fzfa-highlight~ controls C-side match highlighting.  After the scoring

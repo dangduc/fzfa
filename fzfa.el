@@ -1010,7 +1010,7 @@ requires an `autoload' form in the user's init (see the README)."
 
 (defun fzfa--2pass-extract-args (cmd)
   "Run CMD in `:extract' mode and return its keyword args plist.
-Returns nil if CMD does not flow through a fzfa completing-read."
+Returns nil if CMD does not flow through a fzfa `completing-read'."
   (catch 'fzfa-extracted
     (let ((fzfa--multi-mode :extract))
       (funcall cmd))
@@ -1148,6 +1148,16 @@ routed to `%s' so its post-action runs."
 
 ;;; Multi-source `completing-read'
 
+(defcustom fzfa-multi-narrow-key "<"
+  "Key string that activates source narrowing in `fzfa-multi-read'.
+Press this key in a multi-source minibuffer, then a source's narrow
+character, to restrict candidates to that source.  Re-pressing the
+same combination widens back to all sources.  Set to nil to disable
+narrowing entirely."
+  :type '(choice (const :tag "Disabled" nil)
+                 (string :tag "Key string (passed to `kbd')"))
+  :group 'fzfa)
+
 (defconst fzfa--tofu-base #x100000
   "Base Unicode Private Use Area codepoint for source-disambiguation suffixes.
 Each multi source's candidates carry a single trailing codepoint at
@@ -1210,6 +1220,115 @@ the property set by `fzf-native-score-all'.  Returns 0 on empty input."
         0))
    (t (or (get-text-property 0 'completion-score (car results)) 0))))
 
+(defun fzfa--multi-narrow->string (k)
+  "Coerce narrow key value K (symbol, character, or string) to length-1 string."
+  (let ((s (cond
+            ((stringp k) k)
+            ((characterp k) (string k))
+            ((symbolp k) (symbol-name k))
+            (t (error "Bad fzfa narrow key %S" k)))))
+    (cl-assert (= (length s) 1) nil
+               "fzfa narrow key must be a single character, got %S" k)
+    s))
+
+(defun fzfa--multi-derive-narrow-key (name used)
+  "Return a free single-character narrow key for source NAME.
+USED is a hash table of already-allocated length-1 strings.  Tries
+each word's first character (case preserved) from NAME split on
+\"-\"; falls back to a-z / A-Z / 0-9.  Errors when the pool is
+exhausted."
+  (or
+   (cl-loop for word in (split-string name "-" t)
+            for s = (substring word 0 1)
+            unless (gethash s used)
+            return s)
+   (cl-loop for c across (concat "abcdefghijklmnopqrstuvwxyz"
+                                 "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                 "0123456789")
+            for s = (string c)
+            unless (gethash s used)
+            return s)
+   (error "Fzfa narrow key pool exhausted")))
+
+(defun fzfa--format-narrow-hint (sources-v narrow-idx
+                                            &optional width prefix-key)
+  "Format the narrow-menu hint.
+SOURCES-V is the source vector; NARROW-IDX is the active narrow
+index or nil.  Shows every source as `KEY:NAME', separated by two
+spaces, wrapping between entries when a line would exceed WIDTH
+\(defaults to the active minibuffer body width, or 200 in batch).
+When NARROW-IDX is non-nil, that source is highlighted with the
+`minibuffer-prompt' face.  When PREFIX-KEY is non-nil, a trailing
+`PREFIX-KEY:widen' marker (faced `shadow') is appended to
+indicate the prefix widens.  Multi-line output relies on
+`resize-mini-windows' (the Emacs default) to grow the minibuffer."
+  (let* ((entries
+          (append
+           (mapcar
+            (lambda (i)
+              (let* ((src (aref sources-v i))
+                     (k (or (plist-get src :narrow) "?"))
+                     (n (or (plist-get src :name) ""))
+                     (s (format "%s:%s" k n)))
+                (if (eql i narrow-idx)
+                    (propertize s 'face 'minibuffer-prompt)
+                  s)))
+            (number-sequence 0 (1- (length sources-v))))
+           (when prefix-key
+             (list (propertize (format "%s:widen" prefix-key)
+                               'face 'shadow)))))
+         (width (or width
+                    (max 20 (1- (or (when-let*
+                                        ((w (active-minibuffer-window)))
+                                      (window-body-width w))
+                                    200)))))
+         (sep "  ")
+         (sep-w 2)
+         lines cur (cur-w 0))
+    (dolist (e entries)
+      (let ((ew (string-width e)))
+        (cond
+         ((null cur)
+          (setq cur (list e) cur-w ew))
+         ((<= (+ cur-w sep-w ew) width)
+          (push e cur)
+          (setq cur-w (+ cur-w sep-w ew)))
+         (t
+          (push (mapconcat #'identity (nreverse cur) sep) lines)
+          (setq cur (list e) cur-w ew)))))
+    (when cur
+      (push (mapconcat #'identity (nreverse cur) sep) lines))
+    (mapconcat #'identity (nreverse lines) "\n")))
+
+(defun fzfa--multi-allocate-narrow-keys (sources)
+  "Return SOURCES with each plist augmented with a length-1 :narrow key.
+Two passes: explicit :narrow values are coerced and reserved first
+\(duplicates signal an error); remaining sources derive keys from
+their :name via `fzfa--multi-derive-narrow-key'."
+  (let ((used (make-hash-table :test 'equal))
+        (with-explicit (make-vector (length sources) nil))
+        (sources-v (vconcat sources))
+        result)
+    (dotimes (i (length sources-v))
+      (let* ((src (aref sources-v i))
+             (k (plist-get src :narrow)))
+        (when k
+          (let ((s (fzfa--multi-narrow->string k)))
+            (when (gethash s used)
+              (error "Duplicate fzfa narrow key %S for source %S"
+                     s (plist-get src :name)))
+            (puthash s t used)
+            (aset with-explicit i s)))))
+    (dotimes (i (length sources-v))
+      (let* ((src (aref sources-v i))
+             (s (or (aref with-explicit i)
+                    (let ((d (fzfa--multi-derive-narrow-key
+                              (or (plist-get src :name) "") used)))
+                      (puthash d t used)
+                      d))))
+        (push (plist-put (copy-sequence src) :narrow s) result)))
+    (nreverse result)))
+
 (cl-defun fzfa--multi-read (sources &key (prompt "fzf-multi: "))
   "Run `completing-read' across multiple SOURCES, fzfa style.
 PROMPT is shown in the minibuffer.
@@ -1265,16 +1384,74 @@ Per-source plist keys:
          ;; properties.  Reliable per-instance source dispatch even when
          ;; the same string appears in multiple sources.
          (selected-idx nil)
+         ;; Index into sources-v of the currently-narrowed source, or nil
+         ;; for "all sources".  Mutated by `narrow-handler' on a narrow
+         ;; key press and read by the candidate function in `'t' below.
+         (narrow-idx nil)
+         (narrow-handler
+          (lambda ()
+            (interactive)
+            ;; Three states:
+            ;;   1. widened (narrow-idx nil) — no menu, query freely
+            ;;   2. narrow menu — this handler is running
+            ;;   3. narrowed (narrow-idx set) — no menu, query freely
+            ;;
+            ;; From the menu: source letter narrows/switches; the
+            ;; prefix key widens (-> 1); any other key cancels the
+            ;; menu and returns to the prior state (1 or 3).
+            (let* ((seq (and fzfa-multi-narrow-key
+                             (listify-key-sequence
+                              (kbd fzfa-multi-narrow-key))))
+                   (prefix-event (car (last seq)))
+                   (before narrow-idx))
+              ;; Replace the stats overlay with the menu for the
+              ;; duration of `read-char'.  `refresh-overlay' on
+              ;; `post-command-hook' restores the normal overlay when
+              ;; this handler returns.
+              (when (and stats-overlay (active-minibuffer-window))
+                (with-selected-window (active-minibuffer-window)
+                  (overlay-put stats-overlay 'display
+                               (concat (fzfa--format-narrow-hint
+                                        sources-v narrow-idx nil
+                                        fzfa-multi-narrow-key)
+                                       " "))
+                  (redisplay)))
+              (let* ((c (read-char))
+                     (target
+                      (cl-position-if
+                       (lambda (src)
+                         (when-let* ((k (plist-get src :narrow)))
+                           (and (stringp k)
+                                (= (length k) 1)
+                                (= (string-to-char k) c))))
+                       sources-v)))
+                (cond
+                 ((and prefix-event (eql c prefix-event))
+                  (setq narrow-idx nil))
+                 (target (setq narrow-idx target))
+                 (t nil))
+                (unless (eql before narrow-idx)
+                  (fzfa--frontend-exhibit))))))
          (refresh-overlay
           (lambda ()
             (when (and stats-overlay (active-minibuffer-window))
               (with-selected-window (active-minibuffer-window)
-                (overlay-put stats-overlay 'display
-                             (fzfa--format-stats
-                              prompt
-                              (fzfa--frontend-index)
-                              (cl-loop for x across filtered sum x)
-                              (cl-loop for x across totals sum x)))))))
+                (overlay-put
+                 stats-overlay 'display
+                 (fzfa--format-stats
+                  (if narrow-idx
+                      (concat prompt
+                              (propertize
+                               (format "{%s} "
+                                       (or (plist-get
+                                            (aref sources-v narrow-idx)
+                                            :name)
+                                           "?"))
+                               'face 'minibuffer-prompt))
+                    prompt)
+                  (fzfa--frontend-index)
+                  (cl-loop for x across filtered sum x)
+                  (cl-loop for x across totals sum x)))))))
          retry-timer timer result)
     (dotimes (i n)
       (let* ((src   (aref sources-v i))
@@ -1335,7 +1512,16 @@ Per-source plist keys:
                                       (setq selected-idx
                                             (get-text-property
                                              0 'fzfa-src-idx s)))))
-                                nil 'local))
+                                nil 'local)
+                      ;; Install narrow-key binding as a per-instance
+                      ;; child of the active completion keymap so we
+                      ;; don't mutate vertico/icomplete's shared map.
+                      (when fzfa-multi-narrow-key
+                        (let ((map (make-sparse-keymap)))
+                          (set-keymap-parent map (current-local-map))
+                          (define-key map (kbd fzfa-multi-narrow-key)
+                                      narrow-handler)
+                          (use-local-map map))))
                   (completing-read
                    prompt
                    (lambda (str _pred action)
@@ -1398,6 +1584,16 @@ Per-source plist keys:
                         (let ((query (fzfa--current-query str))
                               (interrupted nil))
                           (dotimes (i n)
+                            (if (and narrow-idx (/= narrow-idx i))
+                                ;; Source filtered out by narrow — drop
+                                ;; its prior results and zero its filtered
+                                ;; count so the overlay reflects the
+                                ;; narrowed pool.  `totals' is preserved
+                                ;; so re-widening shows the full size.
+                                (progn
+                                  (aset last-results i nil)
+                                  (aset filtered i 0)
+                                  (aset rank i 0))
                             (let* ((h     (aref handles i))
                                    (items (aref sync-items i))
                                    (out
@@ -1439,7 +1635,7 @@ Per-source plist keys:
                                  (h (when-let* ((s (fzf-native-async-stats h)))
                                       (aset filtered i (car s))
                                       (aset totals   i (cdr s))))
-                                 (t (aset filtered i (length out))))))))
+                                 (t (aset filtered i (length out)))))))))
                           (when interrupted
                             (when retry-timer (cancel-timer retry-timer))
                             (setq retry-timer
@@ -1486,7 +1682,11 @@ Per-source plist keys:
 ;;;###autoload
 (defun fzfa-multi-read (commands &rest options)
   "Run a multi-source completing-read over COMMANDS.
-Each command in COMMANDS is funcalled twice per multi session — once in
+Each entry in COMMANDS is either a bare command symbol or a list
+\(COMMAND :narrow KEY) overriding the auto-derived narrow key for
+that source (KEY is a single character — symbol, ?char, or string).
+
+Each command is funcalled twice per multi session — once in
 `:extract' mode (capture keyword args, abort), once in `:inject' mode after
 the user picks (so the command's post-action runs).  OPTIONS is forwarded
 to `fzfa--multi-read'.  Commands whose body does not reach
@@ -1496,21 +1696,35 @@ Commands must be arg-less (no interactive `read-*' prompts in their body).
 Composes: if a command in COMMANDS itself calls `fzfa--multi-read'
 \(e.g. `fzfa-find-any'), its inner sources are flattened in alongside
 the other commands' sources, with each inner source keeping its own
-:action."
+:action.  Explicit :narrow on a nested-multi entry is ignored —
+inner sources receive auto-derived keys from their own :name."
   (fzfa--ensure-setup)
-  (let* ((source-lists
+  (let* ((completion-styles '(fzfa))
+         (normalized
+          (mapcar (lambda (entry)
+                    (cond
+                     ((symbolp entry) (cons entry nil))
+                     ((and (consp entry) (symbolp (car entry)))
+                      (cons (car entry) (cdr entry)))
+                     (t (error "Bad fzfa multi entry: %S" entry))))
+                  commands))
+         (source-lists
           (mapcar
-           (lambda (cmd)
-             (let ((args (condition-case nil
-                             (catch 'fzfa-extracted
-                               (let ((fzfa--multi-mode :extract))
-                                 (funcall cmd))
-                               nil)
-                           (error nil))))
+           (lambda (pair)
+             (let* ((cmd (car pair))
+                    (spec (cdr pair))
+                    (args (condition-case nil
+                              (catch 'fzfa-extracted
+                                (let ((fzfa--multi-mode :extract))
+                                  (funcall cmd))
+                                nil)
+                            (error nil))))
                (when args
                  (if-let* ((nested (plist-get args :multi-sources)))
                      ;; Flatten: nested multi command's sources are
                      ;; already fully built with :action closures.
+                     ;; A user-provided :narrow here can't sensibly
+                     ;; pick one inner source over another, so skip it.
                      nested
                    (let* ((cat (plist-get args :category))
                           (default-annotate
@@ -1534,10 +1748,19 @@ the other commands' sources, with each inner source keeping its own
                              :action (lambda (cand)
                                        (let ((fzfa--multi-mode
                                               (cons :inject cand)))
-                                         (funcall cmd))))
+                                         (funcall cmd)))
+                             :narrow (plist-get spec :narrow))
                        args)))))))
-           commands))
+           normalized))
          (sources (apply #'append (delq nil source-lists))))
+    ;; Allocation must happen at the OUTERMOST multi level — when we're
+    ;; being extracted by an outer `fzfa-multi-read', our inner sources
+    ;; will be flattened into its source list and allocated there.  If
+    ;; we allocated here first, those keys arrive at the outer as fixed
+    ;; explicit reservations that can collide with the outer's own
+    ;; explicit `:narrow' annotations.
+    (unless (eq fzfa--multi-mode :extract)
+      (setq sources (fzfa--multi-allocate-narrow-keys sources)))
     (apply #'fzfa--multi-read sources options)))
 
 (defcustom fzfa-find-any-commands
@@ -1545,13 +1768,15 @@ the other commands' sources, with each inner source keeping its own
     fzfa-vc-modified-files
     fzfa-buffer
     fzfa-recent-file
-    fzfa-hungry-find
-    fzfa-imenu-all-but-current
-    fzfa-M-x
-    fzfa-hungry-swiper
+    (fzfa-hungry-find :narrow f)
+    (fzfa-imenu-all-but-current :narrow I)
+    (fzfa-M-x :narrow x)
+    (fzfa-hungry-swiper :narrow s)
     fzfa-locate)
-  "Commands shown by `fzfa-find-any'."
-  :type '(repeat function)
+  "Commands shown by `fzfa-find-any'.
+Each entry is either a bare command symbol or a list
+\(COMMAND :narrow KEY) overriding the auto-derived narrow key."
+  :type '(repeat (choice function (cons function plist)))
   :group 'fzfa)
 
 (defcustom fzfa-find-some-commands
@@ -1560,10 +1785,12 @@ the other commands' sources, with each inner source keeping its own
     fzfa-buffer
     fzfa-recent-file
     fzfa-find
-    fzfa-M-x-for-buffer
-    fzfa-rg)
-  "Commands shown by `fzfa-find-some'."
-  :type '(repeat function)
+    (fzfa-M-x-for-buffer :narrow x)
+    (fzfa-rg :narrow g))
+  "Commands shown by `fzfa-find-some'.
+Each entry is either a bare command symbol or a list
+\(COMMAND :narrow KEY) overriding the auto-derived narrow key."
+  :type '(repeat (choice function (cons function plist)))
   :group 'fzfa)
 
 ;;;###autoload
