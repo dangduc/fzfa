@@ -17,9 +17,13 @@
 ;; the commands are usable immediately.
 ;;
 ;; Commands:
-;;   `fzfa-git-grep'      Search file contents in the current Git repo
+;;   `fzfa-git-grep'  Search file contents in the current Git repo
 ;;   `fzfa-git-ls-files'  Find a tracked file in the current Git repo
 ;;   `fzfa-git-log-grep'  Fuzzy-filter the commit log of the current repo
+;;   `fzfa-git-modified-locally'  Pick a locally-modified tracked file
+;;   `fzfa-git-added-files'  Pick an untracked file
+;;   `fzfa-git-staged-for-commit'  Pick a file staged for the next commit
+;;   `fzfa-git-modified-in-head'  Pick a file modified by the HEAD commit
 
 ;;; Code:
 
@@ -33,6 +37,31 @@ Output must be FILE:LINE:CONTENT."
 
 (defcustom fzfa-git-ls-files-command "git ls-files"
   "Shell command used by `fzfa-git-ls-files'.
+Run from `default-directory'; stdout lines become file candidates."
+  :type 'string
+  :group 'fzfa)
+
+(defcustom fzfa-git-modified-locally-command "git ls-files -m"
+  "Shell command used by `fzfa-git-modified-locally'.
+Run from `default-directory'; stdout lines become file candidates."
+  :type 'string
+  :group 'fzfa)
+
+(defcustom fzfa-git-added-files-command "git ls-files -o --exclude-standard"
+  "Shell command used by `fzfa-git-added-files'.
+Run from `default-directory'; stdout lines become file candidates."
+  :type 'string
+  :group 'fzfa)
+
+(defcustom fzfa-git-staged-for-commit-command "git diff --cached --name-only"
+  "Shell command used by `fzfa-git-staged-for-commit'.
+Run from `default-directory'; stdout lines become file candidates."
+  :type 'string
+  :group 'fzfa)
+
+(defcustom fzfa-git-modified-in-head-command
+  "git diff-tree --no-commit-id --name-only -r HEAD"
+  "Shell command used by `fzfa-git-modified-in-head'.
 Run from `default-directory'; stdout lines become file candidates."
   :type 'string
   :group 'fzfa)
@@ -77,6 +106,54 @@ The command is configurable via `fzfa-git-ls-files-command'."
   (when-let* ((result (fzfa-async-completing-read
                        :prompt "git ls files: "
                        :command fzfa-git-ls-files-command)))
+    (find-file result)))
+
+;;;###autoload
+(defun fzfa-git-modified-locally ()
+  "Pick a locally-modified tracked file in the current Git repo.
+The command is configurable via `fzfa-git-modified-locally-command'."
+  (interactive)
+  (unless (locate-dominating-file default-directory ".git")
+    (error "Not a Git repo"))
+  (when-let* ((result (fzfa-async-completing-read
+                       :prompt "git modified: "
+                       :command fzfa-git-modified-locally-command)))
+    (find-file result)))
+
+;;;###autoload
+(defun fzfa-git-added-files ()
+  "Pick an untracked file in the current Git repo.
+The command is configurable via `fzfa-git-added-files-command'."
+  (interactive)
+  (unless (locate-dominating-file default-directory ".git")
+    (error "Not a Git repo"))
+  (when-let* ((result (fzfa-async-completing-read
+                       :prompt "git added: "
+                       :command fzfa-git-added-files-command)))
+    (find-file result)))
+
+;;;###autoload
+(defun fzfa-git-staged-for-commit ()
+  "Pick a file staged for the next commit in the current Git repo.
+The command is configurable via `fzfa-git-staged-for-commit-command'."
+  (interactive)
+  (unless (locate-dominating-file default-directory ".git")
+    (error "Not a Git repo"))
+  (when-let* ((result (fzfa-async-completing-read
+                       :prompt "git staged: "
+                       :command fzfa-git-staged-for-commit-command)))
+    (find-file result)))
+
+;;;###autoload
+(defun fzfa-git-modified-in-head ()
+  "Pick a file modified by the HEAD commit of the current Git repo.
+The command is configurable via `fzfa-git-modified-in-head-command'."
+  (interactive)
+  (unless (locate-dominating-file default-directory ".git")
+    (error "Not a Git repo"))
+  (when-let* ((result (fzfa-async-completing-read
+                       :prompt "git HEAD: "
+                       :command fzfa-git-modified-in-head-command)))
     (find-file result)))
 
 (declare-function magit-show-commit "magit-diff")

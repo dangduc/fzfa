@@ -193,7 +193,8 @@ Read at session start; changing it does not affect running sessions."
 
 (defcustom fzfa-extensions
   '(ag chrome company emacs embark evil fd find flymake git grep hg hungry info
-       locate mail make music notmuch org pass project rg shell spotlight ugrep)
+       locate mail make music notmuch org pass project rg shell spotlight ugrep
+       vc)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
@@ -222,7 +223,8 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "ripgrep (rg)" rg)
               (const :tag "Shell command + history" shell)
               (const :tag "macOS Spotlight (mdfind)" spotlight)
-              (const :tag "ugrep" ugrep))
+              (const :tag "ugrep" ugrep)
+              (const :tag "vc.el" vc))
   :group 'fzfa)
 
 (defcustom fzfa-project-backend 'project
