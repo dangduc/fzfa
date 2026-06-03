@@ -608,7 +608,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
           :prompt prompt :command command :directory directory
           :skip-executable-check skip-executable-check)
          directory resolve-paths)))
-    (let* ((handle (fzf-native-async-start command (expand-file-name directory)))
+    (let* ((completion-styles '(fzfa))
+           (handle (fzf-native-async-start command (expand-file-name directory)))
            (dir (abbreviate-file-name directory))
            (last-gen -1)
            (last-result nil)
@@ -817,7 +818,8 @@ changing FILTER rescores in place via fzf-native.
         (fzfa--maybe-expand cand directory resolve-paths)))))
   (when (bound-and-true-p helm-mode)
     (user-error "fzfa-2pass-completing-read does not yet support helm-mode"))
-  (let* ((prompt (or prompt "fzfa-2pass: "))
+  (let* ((completion-styles '(fzfa))
+         (prompt (or prompt "fzfa-2pass: "))
          (dir (expand-file-name directory))
          (dir-abbrev (abbreviate-file-name directory))
          (style-sym (or split-style fzfa-2pass-split-style 'perl))
@@ -1126,22 +1128,23 @@ routed to `%s' so its post-action runs."
     (let ((cand (cdr fzfa--multi-mode)))
       (setq fzfa--multi-mode nil)
       (cl-return-from fzfa-sync-completing-read cand))))
-  (completing-read
-   prompt
-   (lambda (str _pred action)
-     (pcase action
-       ('metadata (fzfa--completion-metadata category
-                                             :annotate annotate
-                                             :affix affix
-                                             :group group))
-       (`(boundaries . ,_) (cons 0 0))
-       ('lambda t)
-       ('t (let ((query (fzfa--current-query str)))
-             (if (string-empty-p query)
-                 candidates
-               (fzfa--bridge-defcustoms
-                #'fzf-native-score-all candidates query))))))
-   nil require-match nil history default))
+  (let ((completion-styles '(fzfa)))
+    (completing-read
+     prompt
+     (lambda (str _pred action)
+       (pcase action
+         ('metadata (fzfa--completion-metadata category
+                                               :annotate annotate
+                                               :affix affix
+                                               :group group))
+         (`(boundaries . ,_) (cons 0 0))
+         ('lambda t)
+         ('t (let ((query (fzfa--current-query str)))
+               (if (string-empty-p query)
+                   candidates
+                 (fzfa--bridge-defcustoms
+                  #'fzf-native-score-all candidates query))))))
+     nil require-match nil history default)))
 
 ;;; Multi-source `completing-read'
 
@@ -1653,20 +1656,6 @@ TRANSFORM non-nil → strip the filename prefix; display LINE:CONTENT only."
         (fzf-native-case-mode        fzfa-case-mode))
     (apply orig-fn args)))
 
-(defun fzfa--pin-completion-styles (orig-fn &rest args)
-  "Run ORIG-FN with ARGS, pinning `completion-styles' to `fzfa'.
-
-`fzfa''s pre-scored async candidates must not be re-filtered by another
-completion style.  `completion-category-overrides' alone is not enough:
-`completion--styles' silently appends the global `completion-styles' to
-any override, so a fzfa-style call that legitimately returns nil
-\(warmup, in-flight scoring) falls through to whatever the user has
-configured globally (e.g. `basic', `fussy', `flex', `orderless'), which
-re-enters fzfa's table with substring inputs and corrupts the cmd
-parse / restart logic."
-  (let ((completion-styles '(fzfa)))
-    (apply orig-fn args)))
-
 (defun fzfa--ensure-setup ()
   "Install fzfa's registrations exactly once.
 Idempotent: subsequent calls are a flag check.  Called from every
@@ -1687,12 +1676,6 @@ public entry point.
 
     (advice-add 'fzf-native-async-start      :around #'fzfa--bridge-defcustoms)
     (advice-add 'fzf-native-async-candidates :around #'fzfa--bridge-defcustoms)
-
-    (dolist (sym '(fzfa-async-completing-read
-                   fzfa-sync-completing-read
-                   fzfa-2pass-completing-read
-                   fzfa-multi-read))
-      (advice-add sym :around #'fzfa--pin-completion-styles))
 
     (with-eval-after-load 'embark
       (dolist (entry '((fzfa-file     . embark-file-map)
