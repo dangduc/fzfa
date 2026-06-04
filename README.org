@@ -621,20 +621,56 @@ A [[https://github.com/jojojames/matcha/blob/master/matcha-fzfa.el][matcha trans
 single keybinding via [[https://github.com/jojojames/matcha][matcha]].
 * Customization
 
-| Variable               |                  Default | Description                                                               |
-|------------------------+--------------------------+---------------------------------------------------------------------------|
-| ~fzfa-max-candidates~  |                    10000 | Max candidates returned to Elisp (see note below).                        |
-| ~fzfa-refresh-delay~   |                     0.05 | Seconds between generation polls.                                         |
-| ~fzfa-input-debounce~  |                      0.1 | Idle seconds to retry after an interrupted scoring.                       |
-| ~fzfa-input-throttle~  |                      0.2 | Min seconds between UI refreshes driven by new data.                      |
-| ~fzfa-directory~       |                    ~nil~ | Per-call directory override; supersedes project backend (see note below). |
-| ~fzfa-project-backend~ |                ~project~ | How to resolve the root directory (see note below).                       |
-| ~fzfa-highlight~       |                      200 | C-side match highlighting; nil/t/N (see note below).                      |
-| ~fzfa-max-line-length~ |                      256 | Per-line character limit; nil/+N/-N (see note below).                     |
-| ~fzfa-cache-size~      |                       40 | Per-session LRU cache entries (see note below).                           |
-| ~fzfa-case-mode~       |                  ~smart~ | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.                         |
-| ~fzfa-multi-narrow-key~ |                    ~<~ | Prefix key for narrowing in multi-source sessions; nil disables.          |
-| ~fzfa-extensions~      | (see *Extensions* below) | Extensions to ~require~ during setup.                                     |
+| Variable                 |                  Default | Description                                                               |
+|--------------------------+--------------------------+---------------------------------------------------------------------------|
+| ~fzfa-max-candidates~    |                    10000 | Max candidates returned to Elisp (see note below).                        |
+| ~fzfa-refresh-delay~     |                     0.05 | Seconds between generation polls.                                         |
+| ~fzfa-input-debounce~    |                      0.1 | Idle seconds to retry after an interrupted scoring.                       |
+| ~fzfa-input-throttle~    |                      0.2 | Min seconds between UI refreshes driven by new data.                      |
+| ~fzfa-preview-delay~     |                        2 | Idle seconds before live-preview fires (nil = disabled; see note below).  |
+| ~fzfa-preview-functions~ |         (theme, grep, …) | Category → preview handler plist (see note below).                        |
+| ~fzfa-directory~         |                    ~nil~ | Per-call directory override; supersedes project backend (see note below). |
+| ~fzfa-project-backend~   |                ~project~ | How to resolve the root directory (see note below).                       |
+| ~fzfa-highlight~         |                      200 | C-side match highlighting; nil/t/N (see note below).                      |
+| ~fzfa-max-line-length~   |                      256 | Per-line character limit; nil/+N/-N (see note below).                     |
+| ~fzfa-cache-size~        |                       40 | Per-session LRU cache entries (see note below).                           |
+| ~fzfa-case-mode~         |                  ~smart~ | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.                         |
+| ~fzfa-multi-narrow-key~  |                      ~<~ | Prefix key for narrowing in multi-source sessions; nil disables.          |
+| ~fzfa-extensions~        | (see *Extensions* below) | Extensions to ~require~ during setup.                                     |
+
+~fzfa-preview-delay~ controls live preview for commands that act on the
+highlighted candidate as the selection moves (e.g. ~fzfa-theme~ loading
+themes, ~fzfa-grep~ jumping to the matching line in a side window).
+Scheduling uses ~run-with-idle-timer~, so fast typing or arrow-key bursts
+naturally suppress intermediate previews — the timer only fires once input
+settles, and at fire time the *current* candidate is re-read (never a stale
+one captured at schedule time).  The default of ~2~ seconds is conservative:
+It can be lowered for faster previews, set to ~0~ for immediate preview or
+set to ~nil~ to disable the preview.
+
+~fzfa-preview-functions~ maps a completion category to a plist of
+lifecycle handlers:
+
+| Slot       | Signature       | When                                       |
+|------------+-----------------+--------------------------------------------|
+| ~:setup~   | ~()~            | Once at minibuffer entry                   |
+| ~:preview~ | ~(CAND)~        | Each debounced candidate change (required) |
+| ~:exit~    | ~()~            | Just before minibuffer closes (still live) |
+| ~:return~  | ~(CAND-OR-NIL)~ | After minibuffer closes; nil = aborted     |
+
+Handlers share state across the lifecycle via ~fzfa-preview-get~ /
+~fzfa-preview-put~ (a plist scoped to the active preview session).
+Only ~:preview~ is required.  Most commands wire up preview
+automatically by declaring a ~:category~ that's in this alist — no
+per-command code needed.  Add your own entry to give a new category
+preview behavior.
+
+For one-off previews that don't warrant a shared registry entry
+(e.g. ~fzfa-theme~, whose handlers only make sense for that command),
+pass the handler directly via the ~:preview~ keyword to
+~fzfa-sync-completing-read~ or ~fzfa-async-completing-read~.  It
+accepts a function (shorthand for a `:preview'-only handler) or a
+full handler plist, and takes precedence over the registry lookup.
 
 ~fzfa-highlight~ controls C-side match highlighting.  After the scoring
 pass, the C module calls ~fzf_get_positions~ for the top N candidates and

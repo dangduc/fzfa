@@ -134,6 +134,19 @@ pauses typing the display always self-heals regardless of this value."
   :type 'float
   :group 'fzfa)
 
+(defcustom fzfa-preview-delay 2
+  "Seconds of idle time before live preview fires after a candidate change.
+Used by commands that preview the highlighted candidate as the selection
+moves (e.g. `fzfa-theme' loading the theme under point).  Implemented with
+`run-with-idle-timer', so fast typing or arrow-key bursts naturally suppress
+intermediate previews — the timer only fires once input settles.
+A value of 0 previews immediately on every selection change, which can make
+typing feel sluggish for expensive preview actions.  Set to nil to disable
+live preview entirely (global escape hatch)."
+  :type '(choice (const  :tag "Disabled" nil)
+                 (number :tag "Idle seconds"))
+  :group 'fzfa)
+
 (defcustom fzfa-highlight 200
   "Controls C-side match highlighting of completion candidates.
 nil or a negative integer — no highlighting.
@@ -307,6 +320,183 @@ Handles vertico and icomplete.  `ivy' is handled separately."
        ((bound-and-true-p icomplete-mode)
         (icomplete-exhibit))))))
 
+;;; Live preview
+;;
+;; Categories declare per-action handlers in `fzfa-preview-functions'.
+;; The lifecycle is:
+;;
+;;   :setup    ()             once at minibuffer entry
+;;   :preview  (CAND)         each debounced candidate change; nil = reset
+;;   :exit     ()             just before minibuffer closes (still live)
+;;   :return   (CAND-OR-NIL)  after minibuffer closes; nil = aborted
+;;
+;; Handlers share state via `fzfa-preview-get' / `fzfa-preview-put',
+;; backed by a dynamically-bound session cons whose cdr is a plist.
+;; The session let-binding spans both `completing-read' and the
+;; :return dispatch in `unwind-protect', so :return sees the same
+;; state that :setup stashed even though the minibuffer is gone.
+;; Only :preview is required.
+
+(defcustom fzfa-preview-functions
+  '((fzfa-grep . (:preview fzfa--grep-preview)))
+  "Per-category preview handlers.
+Alist of (CATEGORY . PLIST), where PLIST recognizes :setup, :preview,
+:exit, :return slots (see commentary in fzfa.el).  Only :preview is
+required.  Categories without an entry get no preview.
+Disable preview globally by setting `fzfa-preview-delay' to nil.
+
+Built-in handlers are listed in the default; redefine the entire
+alist to opt out of a category, or extend it (e.g. via `customize'
+or `setq') to add categories of your own."
+  :type '(alist :key-type symbol
+                :value-type (plist :options ((:setup function)
+                                             (:preview function)
+                                             (:exit function)
+                                             (:return function))))
+  :group 'fzfa)
+
+(defvar fzfa--preview-session nil
+  "Active preview session: (HANDLER . STATE-PLIST).
+`let'-bound by `fzfa-sync/async-completing-read' so the session is
+visible from :setup, :preview, :exit, and :return.  Use
+`fzfa-preview-get' / `fzfa-preview-put' to access the state plist.")
+
+(defvar-local fzfa--preview-timer nil
+  "Buffer-local debounce timer; lives in the minibuffer only.")
+(defvar-local fzfa--preview-last 'unset
+  "Last previewed candidate in this minibuffer (for change detection).")
+
+(defun fzfa-preview-get (key &optional default)
+  "Return KEY from the active preview session's state plist, or DEFAULT."
+  (let ((cell (plist-member (cdr fzfa--preview-session) key)))
+    (if cell (cadr cell) default)))
+
+(defun fzfa-preview-put (key value)
+  "Set KEY to VALUE in the active preview session's state plist."
+  (setcdr fzfa--preview-session
+          (plist-put (cdr fzfa--preview-session) key value)))
+
+(defun fzfa--preview-handler (preview category)
+  "Resolve the handler plist for this call, or nil if preview is disabled.
+PREVIEW is the explicit `:preview' keyword value (nil means \"fall back
+to the registry\"):
+  nil        — look up CATEGORY in `fzfa-preview-functions'.
+  a function — treat as a `:preview'-only plist (shorthand for the
+               common ad-hoc case with no lifecycle).
+  a plist    — use as-is.
+Returns nil unconditionally when `fzfa-preview-delay' is nil (the global
+escape hatch — users disable preview by setting the delay rather than by
+wiring `nil' into individual calls)."
+  (when fzfa-preview-delay
+    (cond
+     ((functionp preview) (list :preview preview))
+     ((and (listp preview) preview) preview)
+     (t (alist-get category fzfa-preview-functions)))))
+
+(defun fzfa--preview-call (action &rest args)
+  "Dispatch ACTION to the active session's handler with ARGS.
+Selects the captured origin window, makes its buffer current, rebinds
+`default-directory' to the value captured at install time, and traps
+errors so a bad handler can't break completion.  No-op when ACTION has
+no slot in the handler or when there is no active session."
+  (when-let* ((handler (car fzfa--preview-session))
+              (fn (plist-get handler action)))
+    (let ((win (fzfa-preview-get :origin-window))
+          (buf (fzfa-preview-get :origin-buffer))
+          (dir (fzfa-preview-get :default-directory)))
+      (condition-case err
+          (if (and (window-live-p win) (buffer-live-p buf))
+              (with-selected-window win
+                (with-current-buffer buf
+                  (let ((default-directory (or dir default-directory)))
+                    (apply fn args))))
+            (let ((default-directory (or dir default-directory)))
+              (apply fn args)))
+        (error
+         (message "fzfa preview %s error: %s"
+                  action (error-message-string err)))))))
+
+(defun fzfa--preview-install (&optional delay)
+  "Install live preview in the current minibuffer for the active session.
+Call from inside a `minibuffer-with-setup-hook' lambda.  Reads the
+handler from `fzfa--preview-session', captures origin window/buffer
+and `default-directory' into the session state, dispatches :setup, and
+registers the debounced post-command-hook + minibuffer-exit-hook.
+
+DELAY defaults to `fzfa-preview-delay'.  When positive, scheduling
+uses `run-with-idle-timer' so fast typing or arrow-key bursts suppress
+intermediate previews until input settles.  A pending timer is reused
+rather than reset; the callback re-reads the current candidate at fire
+time so reuse never previews a stale selection.  DELAY of 0 previews
+immediately on every selection change."
+  (let* ((delay (or delay fzfa-preview-delay 0))
+         (run (lambda ()
+                (when-let* ((cand (fzfa--frontend-candidate)))
+                  (unless (equal cand fzfa--preview-last)
+                    (setq fzfa--preview-last cand)
+                    (fzfa--preview-call :preview cand))))))
+    (fzfa-preview-put :origin-window    (minibuffer-selected-window))
+    (fzfa-preview-put :origin-buffer    (window-buffer
+                                         (minibuffer-selected-window)))
+    (fzfa-preview-put :default-directory default-directory)
+    (setq fzfa--preview-last 'unset)
+    (fzfa--preview-call :setup)
+    (add-hook
+     'post-command-hook
+     (if (<= delay 0)
+         run
+       (lambda ()
+         (unless (timerp fzfa--preview-timer)
+           (setq fzfa--preview-timer
+                 (run-with-idle-timer
+                  delay nil
+                  (lambda ()
+                    (when (timerp fzfa--preview-timer)
+                      (cancel-timer fzfa--preview-timer))
+                    (setq fzfa--preview-timer nil)
+                    (funcall run)))))))
+     nil t)
+    (add-hook
+     'minibuffer-exit-hook
+     (lambda ()
+       (when (timerp fzfa--preview-timer)
+         (cancel-timer fzfa--preview-timer)
+         (setq fzfa--preview-timer nil))
+       (fzfa--preview-call :preview nil)
+       (fzfa--preview-call :exit))
+     nil t)))
+
+(defun fzfa--preview-return (cand)
+  "Dispatch :return on the active session with CAND (nil = aborted).
+Called from the constructors after `completing-read' unwinds.  The
+session `let'-binding still encloses this call, so handlers see their
+stashed state and the captured `default-directory'."
+  (fzfa--preview-call :return cand))
+
+;;; Built-in preview handlers
+
+(defun fzfa--grep-preview (cand)
+  "Open the FILE from a FILE:LINE:CONTENT grep CAND at LINE for preview.
+Resolves FILE against the captured `default-directory' (the search root
+when invoked from `fzfa-async-completing-read').  Displays the buffer
+in a side window without stealing selection."
+  (when (and cand
+             (string-match "\\`\\(.+?\\):\\([0-9]+\\):" cand))
+    (let* ((file (match-string 1 cand))
+           (line (string-to-number (match-string 2 cand)))
+           (path (expand-file-name file)))
+      (when (file-readable-p path)
+        (let ((buf (find-file-noselect path)))
+          (with-current-buffer buf
+            (save-restriction
+              (widen)
+              (goto-char (point-min))
+              (forward-line (1- line))))
+          (display-buffer buf '(display-buffer-use-some-window
+                                (inhibit-same-window . t))))))))
+
+;;; Completing-read helpers
+
 (defun fzfa--minibuffer-format-reset ()
   "Disable frontend count formats in the active minibuffer.
 Called from a `minibuffer-with-setup-hook' lambda so that vertico's
@@ -318,8 +508,6 @@ the target package isn't loaded."
     (setq-local vertico-count-format nil))
   (when (boundp 'icomplete-matches-format)
     (setq-local icomplete-matches-format nil)))
-
-;;; Completing-read helpers
 
 (defun fzfa--commas (n)
   "Format integer N with comma thousand-separators.
@@ -551,7 +739,8 @@ Returns the selected candidate string, or nil on cancel."
                                       (category 'fzfa-file)
                                       group
                                       (resolve-paths t)
-                                      skip-executable-check)
+                                      skip-executable-check
+                                      preview)
   "Run shell COMMAND with asynchronous `completing-read'.
 
 :PROMPT                 Minibuffer prompt.  Derived from the first token of
@@ -573,6 +762,9 @@ Returns the selected candidate string, or nil on cancel."
                         output where the raw text matters).
 :SKIP-EXECUTABLE-CHECK  When non-nil, skip the `executable-find' guard on
                         the first token of COMMAND.
+:PREVIEW                Per-call live-preview handler that bypasses the
+                        `fzfa-preview-functions' registry lookup for
+                        CATEGORY.  See `fzfa-sync-completing-read'.
 
 The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
   DIR      — abbreviated working directory
@@ -609,6 +801,9 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
           :skip-executable-check skip-executable-check)
          directory resolve-paths)))
     (let* ((completion-styles '(fzfa))
+           (handler (fzfa--preview-handler preview category))
+           (fzfa--preview-session (and handler (list handler)))
+           (selection nil)
            (handle (fzf-native-async-start command (expand-file-name directory)))
            (dir (abbreviate-file-name directory))
            (last-gen -1)
@@ -679,7 +874,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                  ;; relative candidates against the working directory the
                  ;; command actually ran in.
                  (setq-local default-directory directory)
-                 (fzfa--minibuffer-format-reset))
+                 (fzfa--minibuffer-format-reset)
+                 (when handler (fzfa--preview-install)))
              (let ((ivy-completing-read-dynamic-collection t)
                    (ivy-count-format
                     (when (bound-and-true-p ivy-mode) ""))
@@ -689,50 +885,52 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                         (fzfa--format-stats (concat dir " ")
                                             (fzfa--frontend-index)
                                             last-filtered last-total)))))
-               (completing-read
-                prompt
-                (lambda (str _pred action)
-                  (pcase action
-                    ('metadata (fzfa--completion-metadata category :group group))
-                    ;; Treat the whole input as one field; prevents space-splitting.
-                    (`(boundaries . ,_) (cons 0 0))
-                    ('t (let* ((query (fzfa--current-query str))
-                               (r (while-no-input
-                                    (fzf-native-async-candidates handle query limit))))
-                          (if (eq r t)
-                              ;; Scoring was interrupted by pending input.
-                              ;; Debounce a retry so the display self-heals once
-                              ;; the user pauses typing.
-                              (progn
-                                (when retry-timer (cancel-timer retry-timer))
-                                (setq retry-timer
-                                      (run-with-idle-timer
-                                       fzfa-input-debounce nil
-                                       (lambda ()
-                                         (setq retry-timer nil)
-                                         (if (bound-and-true-p ivy-mode)
-                                             (funcall ivy-push)
-                                           (fzfa--frontend-exhibit))))))
-                            (when-let* ((stats (fzf-native-async-stats handle)))
-                              (setq last-filtered (car stats)
-                                    last-total    (cdr stats)))
-                            (unless (bound-and-true-p ivy-mode)
-                              (when-let* ((win (active-minibuffer-window)))
-                                (with-selected-window win
-                                  (unless stats-overlay
-                                    (setq stats-overlay
-                                          (make-overlay (point-min) (minibuffer-prompt-end))))
-                                  (funcall refresh-overlay))))
-                            (when (fzfa--async-final-p r handle query)
-                              (setq last-query query
-                                    last-result r)))
-                          (when (equal query last-query) last-result)))
-                    (_ t))))))
+               (setq selection
+                     (completing-read
+                      prompt
+                      (lambda (str _pred action)
+                        (pcase action
+                          ('metadata (fzfa--completion-metadata category :group group))
+                          ;; Treat the whole input as one field; prevents space-splitting.
+                          (`(boundaries . ,_) (cons 0 0))
+                          ('t (let* ((query (fzfa--current-query str))
+                                     (r (while-no-input
+                                          (fzf-native-async-candidates handle query limit))))
+                                (if (eq r t)
+                                    ;; Scoring was interrupted by pending input.
+                                    ;; Debounce a retry so the display self-heals once
+                                    ;; the user pauses typing.
+                                    (progn
+                                      (when retry-timer (cancel-timer retry-timer))
+                                      (setq retry-timer
+                                            (run-with-idle-timer
+                                             fzfa-input-debounce nil
+                                             (lambda ()
+                                               (setq retry-timer nil)
+                                               (if (bound-and-true-p ivy-mode)
+                                                   (funcall ivy-push)
+                                                 (fzfa--frontend-exhibit))))))
+                                  (when-let* ((stats (fzf-native-async-stats handle)))
+                                    (setq last-filtered (car stats)
+                                          last-total    (cdr stats)))
+                                  (unless (bound-and-true-p ivy-mode)
+                                    (when-let* ((win (active-minibuffer-window)))
+                                      (with-selected-window win
+                                        (unless stats-overlay
+                                          (setq stats-overlay
+                                                (make-overlay (point-min) (minibuffer-prompt-end))))
+                                        (funcall refresh-overlay))))
+                                  (when (fzfa--async-final-p r handle query)
+                                    (setq last-query query
+                                          last-result r)))
+                                (when (equal query last-query) last-result)))
+                          (_ t)))))))
          (cancel-timer timer)
          (when retry-timer (cancel-timer retry-timer))
          (remove-hook 'post-command-hook refresh-overlay)
          (when stats-overlay (delete-overlay stats-overlay))
-         (fzfa--defer-async-stop handle))
+         (fzfa--defer-async-stop handle)
+         (when handler (fzfa--preview-return selection)))
        directory resolve-paths))))
 
 ;;; Two-pass (consult-style) `completing-read'
@@ -1088,7 +1286,8 @@ routed to `%s' so its post-action runs."
                                      group
                                      history
                                      (require-match t)
-                                     default)
+                                     default
+                                     preview)
   "Run `completing-read' over CANDIDATES using fzf-native for scoring.
 
 :CANDIDATES List of strings to score with `fzf-native-score-all'.
@@ -1115,7 +1314,14 @@ routed to `%s' so its post-action runs."
 :REQUIRE-MATCH Forwarded to `completing-read'.  Defaults to t.  Set nil
             to accept free-form input (treat CANDIDATES as suggestions).
 :DEFAULT    Forwarded to `completing-read'.  Returned when the user
-            submits empty input; also seeded into history."
+            submits empty input; also seeded into history.
+:PREVIEW    Per-call live-preview handler that bypasses the
+            `fzfa-preview-functions' registry lookup for CATEGORY.
+            Pass a function that takes a CAND for a simple preview-only
+            handler, or a full handler plist with `:setup',
+            `:preview', `:exit', `:return' slots.  Nil (the default)
+            falls back to the registry.  Set `fzfa-preview-delay' to nil
+            to disable previews."
   (fzfa--ensure-setup)
   (cond
    ((eq fzfa--multi-mode :extract)
@@ -1128,23 +1334,32 @@ routed to `%s' so its post-action runs."
     (let ((cand (cdr fzfa--multi-mode)))
       (setq fzfa--multi-mode nil)
       (cl-return-from fzfa-sync-completing-read cand))))
-  (let ((completion-styles '(fzfa)))
-    (completing-read
-     prompt
-     (lambda (str _pred action)
-       (pcase action
-         ('metadata (fzfa--completion-metadata category
-                                               :annotate annotate
-                                               :affix affix
-                                               :group group))
-         (`(boundaries . ,_) (cons 0 0))
-         ('lambda t)
-         ('t (let ((query (fzfa--current-query str)))
-               (if (string-empty-p query)
-                   candidates
-                 (fzfa--bridge-defcustoms
-                  #'fzf-native-score-all candidates query))))))
-     nil require-match nil history default)))
+  (let* ((completion-styles '(fzfa))
+         (handler (fzfa--preview-handler preview category))
+         (fzfa--preview-session (and handler (list handler)))
+         (selection nil))
+    (unwind-protect
+        (minibuffer-with-setup-hook
+            (lambda () (when handler (fzfa--preview-install)))
+          (setq selection
+                (completing-read
+                 prompt
+                 (lambda (str _pred action)
+                   (pcase action
+                     ('metadata (fzfa--completion-metadata category
+                                                           :annotate annotate
+                                                           :affix affix
+                                                           :group group))
+                     (`(boundaries . ,_) (cons 0 0))
+                     ('lambda t)
+                     ('t (let ((query (fzfa--current-query str)))
+                           (if (string-empty-p query)
+                               candidates
+                             (fzfa--bridge-defcustoms
+                              #'fzf-native-score-all candidates query))))))
+                 nil require-match nil history default)))
+      (when handler (fzfa--preview-return selection)))
+    selection))
 
 ;;; Multi-source `completing-read'
 

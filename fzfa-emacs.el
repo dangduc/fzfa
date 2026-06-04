@@ -139,45 +139,46 @@ yanked text with the selection (mirroring `yank-pop' / `consult-yank-pop')."
                          :category 'fzfa-bookmark)))
       (bookmark-jump result))))
 
+(defun fzfa--theme-switch (sym)
+  "Disable currently enabled themes (except SYM) and enable SYM, if any.
+SYM nil means leave nothing enabled."
+  (dolist (th custom-enabled-themes)
+    (unless (eq th sym) (disable-theme th)))
+  (when (and sym (not (memq sym custom-enabled-themes)))
+    (if (custom-theme-p sym)
+        (enable-theme sym)
+      (load-theme sym :no-confirm))))
+
+(defun fzfa--theme-symbol (cand)
+  "Return the theme symbol for CAND, or nil for the \"default\" sentinel."
+  (and cand (not (equal cand "default")) (intern cand)))
+
 ;;;###autoload
 (defun fzfa-theme ()
   "Prompt for a theme to enable, previewing each candidate live.
 Aborting (e.g. \\[keyboard-quit]) restores the themes that were enabled
 when the command was invoked.  Selecting \"default\" disables all themes."
   (interactive)
-  (cl-labels ((switch (sym)
-                (dolist (th custom-enabled-themes)
-                  (unless (eq th sym) (disable-theme th)))
-                (when (and sym (not (memq sym custom-enabled-themes)))
-                  (if (custom-theme-p sym)
-                      (enable-theme sym)
-                    (load-theme sym :no-confirm)))))
-    (let* ((saved custom-enabled-themes)
-           (last 'unset)
-           (preview
-            (lambda ()
-              (when-let* ((cand (fzfa--frontend-candidate)))
-                (unless (equal cand last)
-                  (setq last cand)
-                  (condition-case _
-                      (switch (and (not (equal cand "default")) (intern cand)))
-                    (error nil))))))
-           selection)
-      (unwind-protect
-          (minibuffer-with-setup-hook
-              (lambda ()
-                (add-hook 'post-command-hook preview nil t))
-            (setq selection
-                  (fzfa-sync-completing-read
-                   :candidates (cons "default"
-                                     (mapcar #'symbol-name
-                                             (custom-available-themes)))
-                   :prompt "theme: "
-                   :category 'fzfa-theme)))
-        (if selection
-            (switch (and (not (equal selection "default")) (intern selection)))
-          (mapc #'disable-theme custom-enabled-themes)
-          (mapc #'enable-theme (reverse saved)))))))
+  (fzfa-sync-completing-read
+   :candidates (cons "default"
+                     (mapcar #'symbol-name (custom-available-themes)))
+   :prompt "theme: "
+   :category 'fzfa-theme
+   :preview `(:setup
+              ,(lambda ()
+                 (fzfa-preview-put :saved
+                                   (copy-sequence custom-enabled-themes)))
+              :preview
+              ,(lambda (cand)
+                 (when cand
+                   (fzfa--theme-switch (fzfa--theme-symbol cand))))
+              :return
+              ,(lambda (cand)
+                 (if cand
+                     (fzfa--theme-switch (fzfa--theme-symbol cand))
+                   (mapc #'disable-theme custom-enabled-themes)
+                   (mapc #'enable-theme
+                         (reverse (fzfa-preview-get :saved))))))))
 
 ;;;###autoload
 (defun fzfa-tramp ()

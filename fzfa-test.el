@@ -487,5 +487,57 @@ when the inner sources arrive without `:narrow'."
     (fzfa--multi-allocate-narrow-keys sources)
     (should (null (plist-get src :narrow)))))
 
+;;; Preview framework
+
+(ert-deftest fzfa-preview-handler-lookup ()
+  "Resolver honours the explicit :preview, the registry, and the delay."
+  ;; With no override, registered category returns the handler plist.
+  (let ((fzfa-preview-functions '((cat . (:preview ignore))))
+        (fzfa-preview-delay 0.3))
+    (should (eq (plist-get (fzfa--preview-handler nil 'cat) :preview)
+                #'ignore)))
+  ;; Unknown category yields nil even when delay is set.
+  (let ((fzfa-preview-functions '((cat . (:preview ignore))))
+        (fzfa-preview-delay 0.3))
+    (should (null (fzfa--preview-handler nil 'unknown))))
+  ;; nil delay disables preview globally — registry + explicit override both ignored.
+  (let ((fzfa-preview-functions '((cat . (:preview ignore))))
+        (fzfa-preview-delay nil))
+    (should (null (fzfa--preview-handler nil 'cat)))
+    (should (null (fzfa--preview-handler #'identity 'cat))))
+  ;; Explicit function override bypasses the registry.
+  (let ((fzfa-preview-functions '((cat . (:preview ignore))))
+        (fzfa-preview-delay 0.3))
+    (should (eq (plist-get (fzfa--preview-handler #'identity 'cat) :preview)
+                #'identity)))
+  ;; Explicit plist override bypasses the registry.
+  (let ((fzfa-preview-functions '((cat . (:preview ignore))))
+        (fzfa-preview-delay 0.3))
+    (should (eq (plist-get
+                 (fzfa--preview-handler '(:preview my-fn :return my-ret) 'cat)
+                 :return)
+                'my-ret))))
+
+(ert-deftest fzfa-preview-state-get-put ()
+  "State plist round-trips through the dynamically-bound session."
+  (let ((fzfa--preview-session (list nil))) ; (HANDLER . STATE-PLIST)
+    (fzfa-preview-put :a 1)
+    (fzfa-preview-put :b 'foo)
+    (should (= 1 (fzfa-preview-get :a)))
+    (should (eq 'foo (fzfa-preview-get :b)))
+    (should (eq :missing (fzfa-preview-get :c :missing)))
+    ;; Stored nil differs from absent key (DEFAULT not applied).
+    (fzfa-preview-put :a nil)
+    (should (null (fzfa-preview-get :a :default)))))
+
+(ert-deftest fzfa-grep-preview-parses-candidate ()
+  "Grep preview accepts FILE:LINE:CONTENT and ignores malformed input."
+  ;; No-op for nil / wrong shape — must not error.
+  (fzfa--grep-preview nil)
+  (fzfa--grep-preview "no-colons")
+  (fzfa--grep-preview "only:one-colon")
+  ;; Well-formed candidate to a nonexistent path is a silent no-op.
+  (fzfa--grep-preview "no-such-file.xyz:1:irrelevant"))
+
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here
