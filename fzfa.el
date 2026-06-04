@@ -134,7 +134,7 @@ pauses typing the display always self-heals regardless of this value."
   :type 'float
   :group 'fzfa)
 
-(defcustom fzfa-preview-delay 2
+(defcustom fzfa-preview-delay 0.8
   "Seconds of idle time before live preview fires after a candidate change.
 Used by commands that preview the highlighted candidate as the selection
 moves (e.g. `fzfa-theme' loading the theme under point).  Implemented with
@@ -337,8 +337,22 @@ Handles vertico and icomplete.  `ivy' is handled separately."
 ;; state that :setup stashed even though the minibuffer is gone.
 ;; Only :preview is required.
 
+(defcustom fzfa-preview-file-size-limit (* 1 1024 1024)
+  "Maximum file size in bytes that `fzfa--file-preview' will open.
+Files larger than this are skipped (no preview) to keep selection
+movement snappy even when the cursor lands on multi-megabyte binaries.
+Set to nil to remove the cap (not recommended for large repositories).
+Set to 0 to disable file preview entirely without dropping the
+`fzfa-file' handler from `fzfa-preview-functions'."
+  :type '(choice (const :tag "No cap" nil)
+                 (integer :tag "Bytes"))
+  :group 'fzfa)
+
 (defcustom fzfa-preview-functions
   '((fzfa-buffer :preview fzfa--buffer-preview)
+    (fzfa-file   :setup   fzfa--file-preview-setup
+                 :preview fzfa--file-preview
+                 :return  fzfa--file-preview-return)
     (fzfa-grep   :preview fzfa--grep-preview))
   "Per-category preview handlers.
 Alist of (CATEGORY . PLIST), where PLIST recognizes :setup, :preview,
@@ -512,6 +526,66 @@ when invoked from `fzfa-async-completing-read')."
   "Show CAND (a buffer name) in a side window for preview."
   (when-let* ((buf (and cand (get-buffer cand))))
     (fzfa-preview-show buf)))
+
+(defun fzfa--temporary-files ()
+  "Return an opener closure that owns ephemeral preview buffers.
+
+The closure has three call forms:
+
+  (FN PATH)  → return a buffer for PATH.  Uses an existing
+               file-visiting buffer when one is already loaded;
+               otherwise creates one and remembers it as ephemeral.
+  (FN BUF)   → promote BUF: it is no longer considered ephemeral
+               and will not be killed on cleanup.
+  (FN)       → kill every still-ephemeral buffer.  Idempotent.
+
+Intended pattern: stash the opener via `fzfa-preview-put :opener'
+during `:setup', call it with paths during `:preview', and on
+`:return' promote the chosen file's buffer (if any) then call with
+no args to reap the rest."
+  (let (ephemerals)
+    (lambda (&optional arg)
+      (cond
+       ((null arg)
+        (dolist (b ephemerals)
+          (when (buffer-live-p b) (kill-buffer b)))
+        (setq ephemerals nil))
+       ((bufferp arg)
+        (setq ephemerals (delq arg ephemerals)))
+       ((stringp arg)
+        (let ((path (expand-file-name arg)))
+          (or (get-file-buffer path)
+              (let ((buf (find-file-noselect path 'nowarn)))
+                (push buf ephemerals)
+                buf))))))))
+
+(defun fzfa--file-preview-setup ()
+  "Initialize a fresh `fzfa--temporary-files' opener for this session."
+  (fzfa-preview-put :opener (fzfa--temporary-files)))
+
+(defun fzfa--file-preview (cand)
+  "Open CAND (a file path) for preview, gated by size + readability."
+  (when (and cand fzfa-preview-file-size-limit
+             (> fzfa-preview-file-size-limit 0))
+    (let ((path (expand-file-name cand)))
+      (when-let* (((file-readable-p path))
+                  ((not (file-directory-p path)))
+                  (attrs (file-attributes path))
+                  (size (file-attribute-size attrs))
+                  ((< size fzfa-preview-file-size-limit))
+                  (opener (fzfa-preview-get :opener))
+                  (buf (funcall opener path)))
+        (fzfa-preview-show buf)))))
+
+(defun fzfa--file-preview-return (cand)
+  "Promote CAND's buffer (if accepted) and kill the remaining ephemerals.
+The promoted buffer survives so the caller's subsequent `find-file'
+reuses it instead of re-loading from disk."
+  (when-let* ((opener (fzfa-preview-get :opener)))
+    (when cand
+      (when-let* ((buf (get-file-buffer (expand-file-name cand))))
+        (funcall opener buf)))
+    (funcall opener)))
 
 ;;; Completing-read helpers
 

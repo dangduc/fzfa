@@ -544,6 +544,61 @@ when the inner sources arrive without `:narrow'."
   (fzfa--buffer-preview nil)
   (fzfa--buffer-preview "*no-such-buffer*-fzfa-test*"))
 
+(ert-deftest fzfa-temporary-files-creates-and-kills ()
+  "Opener creates an ephemeral buffer for a new file and kills it on cleanup."
+  (let ((tmpfile (make-temp-file "fzfa-tmpfiles-test")))
+    (unwind-protect
+        (let* ((opener (fzfa--temporary-files))
+               (buf (funcall opener tmpfile)))
+          (should (buffer-live-p buf))
+          (should (equal (expand-file-name tmpfile)
+                         (buffer-file-name buf)))
+          (funcall opener)              ; cleanup
+          (should-not (buffer-live-p buf)))
+      (delete-file tmpfile))))
+
+(ert-deftest fzfa-temporary-files-reuses-loaded-buffer ()
+  "Opener returns an already-loaded buffer and does NOT kill it on cleanup."
+  (let* ((tmpfile (make-temp-file "fzfa-tmpfiles-test"))
+         (pre-loaded (find-file-noselect tmpfile 'nowarn)))
+    (unwind-protect
+        (let* ((opener (fzfa--temporary-files))
+               (buf (funcall opener tmpfile)))
+          (should (eq buf pre-loaded))
+          (funcall opener)              ; cleanup
+          (should (buffer-live-p pre-loaded)))   ; not killed
+      (when (buffer-live-p pre-loaded) (kill-buffer pre-loaded))
+      (delete-file tmpfile))))
+
+(ert-deftest fzfa-temporary-files-promotes-buffer ()
+  "Promoted buffers survive cleanup; siblings are still killed."
+  (let ((f1 (make-temp-file "fzfa-tmpfiles-test"))
+        (f2 (make-temp-file "fzfa-tmpfiles-test")))
+    (unwind-protect
+        (let* ((opener (fzfa--temporary-files))
+               (b1 (funcall opener f1))
+               (b2 (funcall opener f2)))
+          (funcall opener b1)            ; promote b1
+          (funcall opener)               ; cleanup
+          (should (buffer-live-p b1))
+          (should-not (buffer-live-p b2))
+          (kill-buffer b1))
+      (delete-file f1)
+      (delete-file f2))))
+
+(ert-deftest fzfa-file-preview-skips-oversize ()
+  "Preview is a no-op when the file exceeds `fzfa-preview-file-size-limit'."
+  (let ((tmpfile (make-temp-file "fzfa-file-preview-test")))
+    (unwind-protect
+        (let ((fzfa--preview-session (list nil))
+              (fzfa-preview-file-size-limit 0))
+          (fzfa--file-preview-setup)
+          ;; Limit of 0 disables — opener should not produce a buffer.
+          (fzfa--file-preview tmpfile)
+          ;; Nothing was opened (no file-visiting buffer for our path).
+          (should-not (get-file-buffer (expand-file-name tmpfile))))
+      (delete-file tmpfile))))
+
 (ert-deftest fzfa-preview-show-moves-point ()
   "`fzfa-preview-show' moves point in BUFFER when POS is supplied."
   (with-temp-buffer

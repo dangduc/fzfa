@@ -621,22 +621,23 @@ A [[https://github.com/jojojames/matcha/blob/master/matcha-fzfa.el][matcha trans
 single keybinding via [[https://github.com/jojojames/matcha][matcha]].
 * Customization
 
-| Variable                 |                  Default | Description                                                               |
-|--------------------------+--------------------------+---------------------------------------------------------------------------|
-| ~fzfa-max-candidates~    |                    10000 | Max candidates returned to Elisp (see note below).                        |
-| ~fzfa-refresh-delay~     |                     0.05 | Seconds between generation polls.                                         |
-| ~fzfa-input-debounce~    |                      0.1 | Idle seconds to retry after an interrupted scoring.                       |
-| ~fzfa-input-throttle~    |                      0.2 | Min seconds between UI refreshes driven by new data.                      |
-| ~fzfa-preview-delay~     |                        2 | Idle seconds before live-preview fires (nil = disabled; see note below).  |
-| ~fzfa-preview-functions~ |         (theme, grep, …) | Category → preview handler plist (see note below).                        |
-| ~fzfa-directory~         |                    ~nil~ | Per-call directory override; supersedes project backend (see note below). |
-| ~fzfa-project-backend~   |                ~project~ | How to resolve the root directory (see note below).                       |
-| ~fzfa-highlight~         |                      200 | C-side match highlighting; nil/t/N (see note below).                      |
-| ~fzfa-max-line-length~   |                      256 | Per-line character limit; nil/+N/-N (see note below).                     |
-| ~fzfa-cache-size~        |                       40 | Per-session LRU cache entries (see note below).                           |
-| ~fzfa-case-mode~         |                  ~smart~ | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.                         |
-| ~fzfa-multi-narrow-key~  |                      ~<~ | Prefix key for narrowing in multi-source sessions; nil disables.          |
-| ~fzfa-extensions~        | (see *Extensions* below) | Extensions to ~require~ during setup.                                     |
+| Variable                       |                  Default | Description                                                                   |
+|--------------------------------+--------------------------+-------------------------------------------------------------------------------|
+| ~fzfa-max-candidates~          |                    10000 | Max candidates returned to Elisp (see note below).                            |
+| ~fzfa-refresh-delay~           |                     0.05 | Seconds between generation polls.                                             |
+| ~fzfa-input-debounce~          |                      0.1 | Idle seconds to retry after an interrupted scoring.                           |
+| ~fzfa-input-throttle~          |                      0.2 | Min seconds between UI refreshes driven by new data.                          |
+| ~fzfa-preview-delay~           |                      0.8 | Idle seconds before live-preview fires (nil = disabled; see note below).      |
+| ~fzfa-preview-functions~       |  (buffer, file, grep, …) | Category → preview handler plist (see note below).                            |
+| ~fzfa-preview-file-size-limit~ |                    1 MiB | Skip file preview when the file exceeds this size (nil/0 disables; see note). |
+| ~fzfa-directory~               |                    ~nil~ | Per-call directory override; supersedes project backend (see note below).     |
+| ~fzfa-project-backend~         |                ~project~ | How to resolve the root directory (see note below).                           |
+| ~fzfa-highlight~               |                      200 | C-side match highlighting; nil/t/N (see note below).                          |
+| ~fzfa-max-line-length~         |                      256 | Per-line character limit; nil/+N/-N (see note below).                         |
+| ~fzfa-cache-size~              |                       40 | Per-session LRU cache entries (see note below).                               |
+| ~fzfa-case-mode~               |                  ~smart~ | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.                             |
+| ~fzfa-multi-narrow-key~        |                      ~<~ | Prefix key for narrowing in multi-source sessions; nil disables.              |
+| ~fzfa-extensions~              | (see *Extensions* below) | Extensions to ~require~ during setup.                                         |
 
 ~fzfa-preview-delay~ controls live preview for commands that act on the
 highlighted candidate as the selection moves (e.g. ~fzfa-theme~ loading
@@ -644,7 +645,7 @@ themes, ~fzfa-grep~ jumping to the matching line in a side window).
 Scheduling uses ~run-with-idle-timer~, so fast typing or arrow-key bursts
 naturally suppress intermediate previews — the timer only fires once input
 settles, and at fire time the *current* candidate is re-read (never a stale
-one captured at schedule time).  The default of ~2~ seconds is conservative:
+one captured at schedule time).  The default may be conservative:
 It can be lowered for faster previews, set to ~0~ for immediate preview or
 set to ~nil~ to disable the preview.
 
@@ -664,10 +665,22 @@ Only ~:preview~ is required.  Most commands wire up preview
 automatically by declaring a ~:category~ that's in this alist — no
 per-command code needed.  Built-in defaults:
 
-| Category      | Behavior                                                       |
-|---------------+----------------------------------------------------------------|
-| ~fzfa-buffer~ | Show the buffer in a side window without stealing focus.       |
-| ~fzfa-grep~   | Parse ~FILE:LINE:CONTENT~, open FILE at LINE in a side window. |
+| Category      | Behavior                                                                                |
+|---------------+-----------------------------------------------------------------------------------------|
+| ~fzfa-buffer~ | Show the buffer in a side window without stealing focus.                                |
+| ~fzfa-file~   | Open the file in a side window; kill on abort if not previously loaded (see note).      |
+| ~fzfa-grep~   | Parse ~FILE:LINE:CONTENT~, open FILE at LINE in a side window.                          |
+
+For previews, ~fzfa-file~ tracks which buffers it newly created vs.
+which were already loaded.  On abort, only the newly-created ones
+are killed — buffers you had open before invoking the picker are
+untouched.
+
+On accept, the chosen file's buffer is promoted (not killed) so the
+caller's ~find-file~ reuses it instead of re-reading from disk.
+Files larger than ~fzfa-preview-file-size-limit~ (default 1 MiB)
+are skipped silently so that landing on a big binary doesn't stall
+selection movement.
 
 Categories whose candidates carry auxiliary state (e.g. an in-memory
 lookup hash table — ~fzfa-imenu~, ~fzfa-evil-mark~, ~fzfa-evil-jump~,
