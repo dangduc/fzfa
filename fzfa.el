@@ -590,8 +590,11 @@ no args to reap the rest."
        ((bufferp arg)
         (setq ephemerals (delq arg ephemerals)))
        ((stringp arg)
+        ;; `find-buffer-visiting' matches by truename, so it handles
+        ;; Windows DOS short paths and Unix symlinks uniformly —
+        ;; unlike `get-file-buffer', which is a literal string match.
         (let ((path (expand-file-name arg)))
-          (or (get-file-buffer path)
+          (or (find-buffer-visiting path)
               (let ((buf (find-file-noselect path 'nowarn)))
                 (push buf ephemerals)
                 buf))))))))
@@ -620,7 +623,7 @@ The promoted buffer survives so the caller's subsequent `find-file'
 reuses it instead of re-loading from disk."
   (when-let* ((opener (fzfa-preview-get :opener)))
     (when cand
-      (when-let* ((buf (get-file-buffer (expand-file-name cand))))
+      (when-let* ((buf (find-buffer-visiting (expand-file-name cand))))
         (funcall opener buf)))
     (funcall opener)))
 

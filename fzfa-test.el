@@ -553,8 +553,7 @@ when the inner sources arrive without `:narrow'."
         (let* ((opener (fzfa--temporary-files))
                (buf (funcall opener tmpfile)))
           (should (buffer-live-p buf))
-          (should (equal (expand-file-name tmpfile)
-                         (buffer-file-name buf)))
+          (should (file-equal-p tmpfile (buffer-file-name buf)))
           (funcall opener)              ; cleanup
           (should-not (buffer-live-p buf)))
       (delete-file tmpfile))))
@@ -598,7 +597,7 @@ when the inner sources arrive without `:narrow'."
           ;; Limit of 0 disables — opener should not produce a buffer.
           (fzfa--file-preview tmpfile)
           ;; Nothing was opened (no file-visiting buffer for our path).
-          (should-not (get-file-buffer (expand-file-name tmpfile))))
+          (should-not (find-buffer-visiting tmpfile)))
       (delete-file tmpfile))))
 
 (ert-deftest fzfa-multi-router-routes-preview-per-source ()
