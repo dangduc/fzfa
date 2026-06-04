@@ -876,7 +876,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
       (throw 'fzfa-extracted
              (list :prompt prompt :command command
                    :directory directory :category category :group group
-                   :resolve-paths resolve-paths)))
+                   :resolve-paths resolve-paths :preview preview)))
      ((eq (car-safe fzfa--multi-mode) :inject)
       ;; One-shot consume: mutate the outer action's `let' cell so the
       ;; rest of the caller's body (and any nested fzfa calls) run with
@@ -1421,7 +1421,7 @@ routed to `%s' so its post-action runs."
            ;; Translate :candidates → :items so multi consumes one key.
            (list :items candidates :prompt prompt :category category
                  :annotate annotate :affix affix :group group
-                 :history history)))
+                 :history history :preview preview)))
    ((eq (car-safe fzfa--multi-mode) :inject)
     (let ((cand (cdr fzfa--multi-mode)))
       (setq fzfa--multi-mode nil)
@@ -1512,6 +1512,81 @@ SOURCES-V is the vector of source plists; HASH maps CAND to source index."
        (let ((idx (or (get-text-property 0 'fzfa-src-idx cand)
                       (gethash cand hash))))
          (and idx (aref sources-v idx)))))
+
+(defun fzfa--multi-source-idx (cand hash)
+  "Return the source index for CAND, or nil."
+  (and (stringp cand) (> (length cand) 0)
+       (or (get-text-property 0 'fzfa-src-idx cand)
+           (gethash cand hash))))
+
+(defun fzfa--multi-build-router (sources-v cand->src)
+  "Build a synthetic preview handler that dispatches per source.
+SOURCES-V is the vector of source plists; CAND->SRC is the
+candidate→source-idx hash table.  Returns nil when no source has a
+registered handler (preview wiring then no-ops).
+
+For each source, a fresh handler plist is resolved via
+`fzfa--preview-handler' using the source's own `:preview' override
+and `:category'.  Per-source state is stored in its own session
+cell, so an `:opener' stashed by one source's `:setup' never
+collides with another's.
+
+Lifecycle:
+  :setup    Broadcast to every source; propagates origin
+            window/buffer/`default-directory' from the parent
+            session into each per-source cell first.
+  :preview  Routes to the source of CAND only.
+  :exit     Broadcast to every source.
+  :return   Broadcast: the source containing CAND receives CAND,
+            every other source receives nil (\"aborted from its
+            perspective\")."
+  (let* ((n (length sources-v))
+         (cells (make-vector n nil))
+         (any nil))
+    (dotimes (i n)
+      (let* ((src (aref sources-v i))
+             (handler (fzfa--preview-handler
+                       (plist-get src :preview)
+                       (plist-get src :category))))
+        (when handler
+          (aset cells i (cons handler nil))
+          (setq any t))))
+    (when any
+      (cl-flet ((broadcast (action &optional cand cand-i)
+                  (dotimes (i n)
+                    (when-let* ((cell (aref cells i)))
+                      (let ((fzfa--preview-session cell))
+                        (fzfa--preview-call
+                         action
+                         (when (and cand (eql i cand-i))
+                           (fzfa--tofu-hide cand))))))))
+        (list
+         :setup
+         (lambda ()
+           (let ((win (fzfa-preview-get :origin-window))
+                 (buf (fzfa-preview-get :origin-buffer))
+                 (dir (fzfa-preview-get :default-directory)))
+             (dotimes (i n)
+               (when-let* ((cell (aref cells i)))
+                 (let ((fzfa--preview-session cell))
+                   (fzfa-preview-put :origin-window    win)
+                   (fzfa-preview-put :origin-buffer    buf)
+                   (fzfa-preview-put :default-directory dir)
+                   (fzfa--preview-call :setup))))))
+         :preview
+         (lambda (cand)
+           (if-let* ((i (and cand
+                             (fzfa--multi-source-idx cand cand->src)))
+                     (cell (aref cells i)))
+               (let ((fzfa--preview-session cell))
+                 (fzfa--preview-call :preview (fzfa--tofu-hide cand)))
+             ;; cand=nil (reset) — broadcast.
+             (unless cand (broadcast :preview nil nil))))
+         :exit  (lambda () (broadcast :exit))
+         :return
+         (lambda (cand)
+           (let ((i (and cand (fzfa--multi-source-idx cand cand->src))))
+             (broadcast :return cand i))))))))
 
 (defun fzfa--multi-rank (results query async-p)
   "Top fzf score for RESULTS under QUERY.
@@ -1759,6 +1834,8 @@ Per-source plist keys:
                   (fzfa--frontend-index)
                   (cl-loop for x across filtered sum x)
                   (cl-loop for x across totals sum x)))))))
+         (router       (fzfa--multi-build-router sources-v cand->src))
+         (fzfa--preview-session (and router (list router)))
          retry-timer timer result)
     (dotimes (i n)
       (let* ((src   (aref sources-v i))
@@ -1805,6 +1882,7 @@ Per-source plist keys:
                 (minibuffer-with-setup-hook
                     (lambda ()
                       (fzfa--minibuffer-format-reset)
+                      (when router (fzfa--preview-install))
                       ;; Capture source idx from the propertized minibuffer
                       ;; text before completing-read returns and strips text
                       ;; properties from its return value.  Reliable
@@ -1977,7 +2055,8 @@ Per-source plist keys:
       (when retry-timer (cancel-timer retry-timer))
       (remove-hook 'post-command-hook refresh-overlay)
       (when stats-overlay (delete-overlay stats-overlay))
-      (fzfa--defer-async-stop handles))
+      (fzfa--defer-async-stop handles)
+      (when router (fzfa--preview-return result)))
     (when result
       (let* ((src    (or (and selected-idx (aref sources-v selected-idx))
                          (fzfa--multi-source-of

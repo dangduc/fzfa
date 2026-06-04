@@ -599,6 +599,72 @@ when the inner sources arrive without `:narrow'."
           (should-not (get-file-buffer (expand-file-name tmpfile))))
       (delete-file tmpfile))))
 
+(ert-deftest fzfa-multi-router-routes-preview-per-source ()
+  "Router's :preview dispatches to the source identified by CAND's tagged idx."
+  (let* ((calls nil)
+         (h0 (list :preview (lambda (c) (push (cons 0 c) calls))))
+         (h1 (list :preview (lambda (c) (push (cons 1 c) calls))))
+         (fzfa-preview-functions `((cat-a :preview ,(plist-get h0 :preview))
+                                   (cat-b :preview ,(plist-get h1 :preview))))
+         (fzfa-preview-delay 0.3)
+         (sources-v (vector (list :name "A" :category 'cat-a)
+                            (list :name "B" :category 'cat-b)))
+         (cand->src (make-hash-table :test 'equal))
+         (router (fzfa--multi-build-router sources-v cand->src))
+         ;; Pretend the framework already installed and set origin/dir.
+         (fzfa--preview-session (list router)))
+    (fzfa-preview-put :origin-window nil)
+    (fzfa-preview-put :origin-buffer nil)
+    (fzfa-preview-put :default-directory "/")
+    ;; Run :setup → broadcasts to both sources.
+    (funcall (plist-get router :setup))
+    ;; Source 0 candidate
+    (let ((c0 (propertize "alpha" 'fzfa-src-idx 0)))
+      (puthash c0 0 cand->src)
+      (funcall (plist-get router :preview) c0))
+    ;; Source 1 candidate
+    (let ((c1 (propertize "beta" 'fzfa-src-idx 1)))
+      (puthash c1 1 cand->src)
+      (funcall (plist-get router :preview) c1))
+    (should (equal (reverse calls)
+                   '((0 . "alpha") (1 . "beta"))))))
+
+(ert-deftest fzfa-multi-router-nil-when-no-handlers ()
+  "Router builder returns nil if no source has a resolvable handler."
+  (let* ((fzfa-preview-functions nil)
+         (fzfa-preview-delay 0.3)
+         (sources-v (vector (list :name "A" :category 'no-such)
+                            (list :name "B" :category 'also-no))))
+    (should (null (fzfa--multi-build-router
+                   sources-v (make-hash-table :test 'equal))))))
+
+(ert-deftest fzfa-multi-router-return-routes-selection ()
+  "On :return, the selected source gets CAND; others get nil."
+  (let* ((returns nil)
+         (h0 (list :return (lambda (c) (push (cons 0 c) returns))))
+         (h1 (list :return (lambda (c) (push (cons 1 c) returns))))
+         (fzfa-preview-functions `((cat-a :return ,(plist-get h0 :return)
+                                          :preview ignore)
+                                   (cat-b :return ,(plist-get h1 :return)
+                                          :preview ignore)))
+         (fzfa-preview-delay 0.3)
+         (sources-v (vector (list :name "A" :category 'cat-a)
+                            (list :name "B" :category 'cat-b)))
+         (cand->src (make-hash-table :test 'equal))
+         (router (fzfa--multi-build-router sources-v cand->src))
+         (fzfa--preview-session (list router))
+         (sel (propertize "picked" 'fzfa-src-idx 1)))
+    (fzfa-preview-put :origin-window nil)
+    (fzfa-preview-put :origin-buffer nil)
+    (fzfa-preview-put :default-directory "/")
+    (funcall (plist-get router :setup))
+    (puthash sel 1 cand->src)
+    (funcall (plist-get router :return) sel)
+    ;; Source 1 got the candidate; source 0 got nil.
+    (should (equal (sort (copy-sequence returns) (lambda (a b)
+                                                   (< (car a) (car b))))
+                   '((0 . nil) (1 . "picked"))))))
+
 (ert-deftest fzfa-preview-show-moves-point ()
   "`fzfa-preview-show' moves point in BUFFER when POS is supplied."
   (with-temp-buffer
