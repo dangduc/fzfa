@@ -1,5 +1,7 @@
 ;;; fzfa-flymake.el --- Flymake interface to `fzfa' -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2026 James Nguyen
+
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
 ;; Keywords: convenience, matching

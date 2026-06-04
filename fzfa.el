@@ -1,5 +1,7 @@
 ;;; fzfa.el --- Async fuzzy completion via `fzf-native' -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2026 James Nguyen
+
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
 ;; Package-Requires: ((emacs "29.1") (fzf-native "1.1"))

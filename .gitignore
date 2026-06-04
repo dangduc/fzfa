@@ -1,2 +1,5 @@
 /project.org
 /fzf-async-pkg.el
+/.agent-shell/
+/.claude/
+/fzfa-pkg.el
