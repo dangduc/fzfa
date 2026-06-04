@@ -337,6 +337,42 @@ Handles vertico and icomplete.  `ivy' is handled separately."
 ;; state that :setup stashed even though the minibuffer is gone.
 ;; Only :preview is required.
 
+(defcustom fzfa-preview-display-action
+  '((display-buffer-reuse-window display-buffer-use-some-window))
+  "Display action passed to `display-buffer' by `fzfa-preview-show'.
+A list `(FUNCTIONS . ALIST)' where FUNCTIONS is one of (or a list of)
+`display-buffer-*' action functions and ALIST is the conditions plist
+that tunes their behavior.  See Info node `(elisp) Display Action Functions'
+for the full set.
+
+Default tries `display-buffer-reuse-window' first (so successive
+previews land in the same window slot) and falls back to
+`display-buffer-use-some-window' (picks an existing window, never
+splits).  Net effect: 1 window — uses it (preview replaces whatever
+was there); 2+ windows — `get-lru-window' picks the least-recently-
+used window, which is normally the non-selected one.
+
+Other example action functions:
+  `display-buffer-use-some-window'
+  `display-buffer-reuse-window'
+  `display-buffer-in-side-window'
+  `display-buffer-pop-up-window'
+  `display-buffer-in-direction'
+  `display-buffer-below-selected'
+  `display-buffer-pop-up-frame'
+
+Examples:
+  ;; Default — reuse or pick an existing window; never splits.
+  ((display-buffer-reuse-window display-buffer-use-some-window))
+
+  ;; Dedicated half-width right side window.
+  (display-buffer-in-side-window (side . right) (window-width . 0.5))
+
+  ;; Split a fresh window below the current one.
+  (display-buffer-below-selected (window-height . 0.4))"
+  :type 'sexp
+  :group 'fzfa)
+
 (defcustom fzfa-preview-file-size-limit (* 1 1024 1024)
   "Maximum file size in bytes that `fzfa--file-preview' will open.
 Files larger than this are skipped (no preview) to keep selection
@@ -491,7 +527,7 @@ stashed state and the captured `default-directory'."
 ;;; Built-in preview handlers
 
 (defun fzfa-preview-show (buffer &optional pos)
-  "Show BUFFER (optionally moved to POS) in a side window for preview.
+  "Show BUFFER (optionally moved to POS) using `fzfa-preview-display-action'.
 Does not steal the minibuffer's input focus.  POS may be a buffer
 position number or a marker; when nil, point is left where it was.
 Public helper for `:preview' handlers to call."
@@ -501,8 +537,7 @@ Public helper for `:preview' handlers to call."
         (save-restriction
           (widen)
           (goto-char (if (markerp pos) (marker-position pos) pos)))))
-    (display-buffer buffer '(display-buffer-use-some-window
-                             (inhibit-same-window . t)))))
+    (display-buffer buffer fzfa-preview-display-action)))
 
 (defun fzfa--grep-preview (cand)
   "Open the FILE from a FILE:LINE:CONTENT grep CAND at LINE for preview.

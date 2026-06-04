@@ -125,6 +125,9 @@ yanked text with the selection (mirroring `yank-pop' / `consult-yank-pop')."
         (insert-for-yank text)))
       (setq this-command 'yank))))
 
+(declare-function bookmark-get-filename "bookmark" (bookmark-name-or-record))
+(declare-function bookmark-get-position "bookmark" (bookmark-name-or-record))
+
 ;;;###autoload
 (defun fzfa-bookmark ()
   "Jump to a bookmark."
@@ -134,9 +137,44 @@ yanked text with the selection (mirroring `yank-pop' / `consult-yank-pop')."
   (let ((names (bookmark-all-names)))
     (unless names
       (user-error "No bookmarks defined"))
-    (when-let* ((result (fzfa-sync-completing-read
-                         :candidates names :prompt "bookmark: "
-                         :category 'fzfa-bookmark)))
+    (when-let* ((result
+                 (fzfa-sync-completing-read
+                  :candidates names :prompt "bookmark: "
+                  :category 'fzfa-bookmark
+                  :preview
+                  `(:setup
+                    ,(lambda ()
+                       (fzfa-preview-put :opener (fzfa--temporary-files)))
+                    :preview
+                    ,(lambda (cand)
+                       (when-let* ((file (ignore-errors
+                                           (bookmark-get-filename cand)))
+                                   ((stringp file))
+                                   (path (expand-file-name file))
+                                   ((file-readable-p path))
+                                   ((not (file-directory-p path)))
+                                   (attrs (file-attributes path))
+                                   (size (file-attribute-size attrs))
+                                   (limit fzfa-preview-file-size-limit)
+                                   ((or (null limit) (zerop limit)
+                                        (< size limit)))
+                                   (opener (fzfa-preview-get :opener))
+                                   (buf (funcall opener path))
+                                   (pos (or (ignore-errors
+                                              (bookmark-get-position cand))
+                                            1)))
+                         (fzfa-preview-show buf pos)))
+                    :return
+                    ,(lambda (cand)
+                       (when-let* ((opener (fzfa-preview-get :opener)))
+                         (when cand
+                           (when-let* ((file (ignore-errors
+                                               (bookmark-get-filename cand)))
+                                       ((stringp file))
+                                       (buf (get-file-buffer
+                                             (expand-file-name file))))
+                             (funcall opener buf)))
+                         (funcall opener)))))))
       (bookmark-jump result))))
 
 (defun fzfa--theme-switch (sym)

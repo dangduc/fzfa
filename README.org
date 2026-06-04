@@ -630,6 +630,7 @@ single keybinding via [[https://github.com/jojojames/matcha][matcha]].
 | ~fzfa-preview-delay~           |                      0.8 | Idle seconds before live-preview fires (nil = disabled; see note below).      |
 | ~fzfa-preview-functions~       |  (buffer, file, grep, …) | Category → preview handler plist (see note below).                            |
 | ~fzfa-preview-file-size-limit~ |                    1 MiB | Skip file preview when the file exceeds this size (nil/0 disables; see note). |
+| ~fzfa-preview-display-action~  |    reuse existing window | `display-buffer' action used by `fzfa-preview-show' (see note below).         |
 | ~fzfa-directory~               |                    ~nil~ | Per-call directory override; supersedes project backend (see note below).     |
 | ~fzfa-project-backend~         |                ~project~ | How to resolve the root directory (see note below).                           |
 | ~fzfa-highlight~               |                      200 | C-side match highlighting; nil/t/N (see note below).                          |
@@ -690,11 +691,28 @@ Those commands pass a closure-bound ~:preview~ lambda directly (see
 next paragraph) and so don't appear in the registry default.
 
 For one-off previews that don't warrant a shared registry entry
-(e.g. ~fzfa-theme~, whose handlers only make sense for that command),
-pass the handler directly via the ~:preview~ keyword to
+(e.g. ~fzfa-theme~ for theme snapshot/restore, ~fzfa-bookmark~ which
+reuses the file opener for file-targeting bookmarks), pass the
+handler directly via the ~:preview~ keyword to
 ~fzfa-sync-completing-read~ or ~fzfa-async-completing-read~.  It
 accepts a function (shorthand for a `:preview'-only handler) or a
 full handler plist, and takes precedence over the registry lookup.
+
+~fzfa-preview-display-action~ is the `display-buffer' action used by
+~fzfa-preview-show~ (which every built-in handler funnels through).
+Default tries `display-buffer-reuse-window' first (so successive
+previews land in the same window slot) and falls back to
+`display-buffer-use-some-window' (an existing window; never splits).
+Net effect: 1 window — uses it (preview replaces whatever was there);
+2+ — `get-lru-window' picks the least-recently-used window, normally
+the non-selected one.
+
+Set to any other `display-buffer' action to customize placement —
+for example `(display-buffer-in-side-window (side . right) (window-width . 0.5))'
+for a dedicated right side window, or `(display-buffer-below-selected
+(window-height . 0.4))' to always split a fresh window below the
+current one.  See the variable's docstring for the common
+`display-buffer-*' function set.
 
 ~fzfa-highlight~ controls C-side match highlighting.  After the scoring
 pass, the C module calls ~fzf_get_positions~ for the top N candidates and

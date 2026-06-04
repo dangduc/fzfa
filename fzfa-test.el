@@ -665,6 +665,19 @@ when the inner sources arrive without `:narrow'."
                                                    (< (car a) (car b))))
                    '((0 . nil) (1 . "picked"))))))
 
+(ert-deftest fzfa-preview-show-honors-display-action ()
+  "`fzfa-preview-show' passes `fzfa-preview-display-action' to `display-buffer'."
+  (with-temp-buffer
+    (let* ((buf (current-buffer))
+           captured
+           (fzfa-preview-display-action
+            '(display-buffer-in-side-window (side . left)
+                                            (window-width . 0.3))))
+      (cl-letf (((symbol-function 'display-buffer)
+                 (lambda (_b action) (setq captured action))))
+        (fzfa-preview-show buf))
+      (should (equal captured fzfa-preview-display-action)))))
+
 (ert-deftest fzfa-preview-show-moves-point ()
   "`fzfa-preview-show' moves point in BUFFER when POS is supplied."
   (with-temp-buffer
