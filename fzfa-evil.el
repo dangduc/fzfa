@@ -114,7 +114,17 @@ to filter."
       (when-let* ((sel (fzfa-sync-completing-read
                         :candidates cands
                         :prompt "evil mark: "
-                        :category 'fzfa-evil-mark))
+                        :category 'fzfa-evil-mark
+                        :preview
+                        (lambda (cand)
+                          (when-let* ((char (gethash cand map))
+                                      (val (ignore-errors
+                                             (evil-get-marker (aref char 0)))))
+                            (cond
+                             ((markerp val)
+                              (fzfa-preview-show (marker-buffer val) val))
+                             ((integerp val)
+                              (fzfa-preview-show (current-buffer) val)))))))
                   (char (gethash sel map)))
         (evil-goto-mark (aref char 0))))))
 
@@ -220,7 +230,14 @@ the fzf scorer can match against the preview text."
     (when-let* ((sel (fzfa-sync-completing-read
                       :candidates cands
                       :prompt "evil jump: "
-                      :category 'fzfa-evil-jump))
+                      :category 'fzfa-evil-jump
+                      :preview
+                      (lambda (cand)
+                        (when-let* ((plist (gethash cand map))
+                                    (buf (plist-get plist :buffer))
+                                    ((buffer-live-p buf))
+                                    (pos (plist-get plist :pos)))
+                          (fzfa-preview-show buf pos)))))
                 (plist (gethash sel map)))
       (let ((buf (plist-get plist :buffer))
             (file (plist-get plist :file))

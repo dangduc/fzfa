@@ -332,6 +332,19 @@ Display differences:
                             ('others "imenu-others: ")
                             (_       "imenu: "))
                   :category 'fzfa-imenu
+                  :preview
+                  (lambda (cand)
+                    (when-let* ((hit (gethash cand lookup))
+                                (idx (car hit))
+                                ((< idx (length buf-vec)))
+                                (buf (aref buf-vec idx))
+                                (entry (cdr hit))
+                                (val (cdr entry))
+                                (pos (cond
+                                      ((markerp val) val)
+                                      ((numberp val) val)
+                                      ((overlayp val) (overlay-start val)))))
+                      (fzfa-preview-show buf pos)))
                   :group
                   (lambda (cand transform)
                     (cond

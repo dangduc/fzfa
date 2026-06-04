@@ -117,7 +117,13 @@ PROMPT is the minibuffer prompt string."
                          :candidates candidates
                          :prompt prompt
                          :category 'fzfa-flymake
-                         :group (fzfa-flymake--group lookup)))
+                         :group (fzfa-flymake--group lookup)
+                         :preview
+                         (lambda (cand)
+                           (when-let* ((m (gethash cand lookup))
+                                       ((markerp m))
+                                       (buf (marker-buffer m)))
+                             (fzfa-preview-show buf m)))))
                 (marker (gethash result lookup))
                 ((markerp marker))
                 (buffer (marker-buffer marker))

@@ -662,8 +662,19 @@ Handlers share state across the lifecycle via ~fzfa-preview-get~ /
 ~fzfa-preview-put~ (a plist scoped to the active preview session).
 Only ~:preview~ is required.  Most commands wire up preview
 automatically by declaring a ~:category~ that's in this alist — no
-per-command code needed.  Add your own entry to give a new category
-preview behavior.
+per-command code needed.  Built-in defaults:
+
+| Category      | Behavior                                                       |
+|---------------+----------------------------------------------------------------|
+| ~fzfa-buffer~ | Show the buffer in a side window without stealing focus.       |
+| ~fzfa-grep~   | Parse ~FILE:LINE:CONTENT~, open FILE at LINE in a side window. |
+
+Categories whose candidates carry auxiliary state (e.g. an in-memory
+lookup hash table — ~fzfa-imenu~, ~fzfa-evil-mark~, ~fzfa-evil-jump~,
+~fzfa-flymake~) can't be wired through the global registry alone
+because the handler needs access to that closure-captured state.
+Those commands pass a closure-bound ~:preview~ lambda directly (see
+next paragraph) and so don't appear in the registry default.
 
 For one-off previews that don't warrant a shared registry entry
 (e.g. ~fzfa-theme~, whose handlers only make sense for that command),

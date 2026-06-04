@@ -338,7 +338,8 @@ Handles vertico and icomplete.  `ivy' is handled separately."
 ;; Only :preview is required.
 
 (defcustom fzfa-preview-functions
-  '((fzfa-grep . (:preview fzfa--grep-preview)))
+  '((fzfa-buffer :preview fzfa--buffer-preview)
+    (fzfa-grep   :preview fzfa--grep-preview))
   "Per-category preview handlers.
 Alist of (CATEGORY . PLIST), where PLIST recognizes :setup, :preview,
 :exit, :return slots (see commentary in fzfa.el).  Only :preview is
@@ -475,11 +476,24 @@ stashed state and the captured `default-directory'."
 
 ;;; Built-in preview handlers
 
+(defun fzfa-preview-show (buffer &optional pos)
+  "Show BUFFER (optionally moved to POS) in a side window for preview.
+Does not steal the minibuffer's input focus.  POS may be a buffer
+position number or a marker; when nil, point is left where it was.
+Public helper for `:preview' handlers to call."
+  (when (buffer-live-p buffer)
+    (when pos
+      (with-current-buffer buffer
+        (save-restriction
+          (widen)
+          (goto-char (if (markerp pos) (marker-position pos) pos)))))
+    (display-buffer buffer '(display-buffer-use-some-window
+                             (inhibit-same-window . t)))))
+
 (defun fzfa--grep-preview (cand)
   "Open the FILE from a FILE:LINE:CONTENT grep CAND at LINE for preview.
 Resolves FILE against the captured `default-directory' (the search root
-when invoked from `fzfa-async-completing-read').  Displays the buffer
-in a side window without stealing selection."
+when invoked from `fzfa-async-completing-read')."
   (when (and cand
              (string-match "\\`\\(.+?\\):\\([0-9]+\\):" cand))
     (let* ((file (match-string 1 cand))
@@ -492,8 +506,12 @@ in a side window without stealing selection."
               (widen)
               (goto-char (point-min))
               (forward-line (1- line))))
-          (display-buffer buf '(display-buffer-use-some-window
-                                (inhibit-same-window . t))))))))
+          (fzfa-preview-show buf))))))
+
+(defun fzfa--buffer-preview (cand)
+  "Show CAND (a buffer name) in a side window for preview."
+  (when-let* ((buf (and cand (get-buffer cand))))
+    (fzfa-preview-show buf)))
 
 ;;; Completing-read helpers
 

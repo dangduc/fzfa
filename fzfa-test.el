@@ -492,26 +492,26 @@ when the inner sources arrive without `:narrow'."
 (ert-deftest fzfa-preview-handler-lookup ()
   "Resolver honours the explicit :preview, the registry, and the delay."
   ;; With no override, registered category returns the handler plist.
-  (let ((fzfa-preview-functions '((cat . (:preview ignore))))
+  (let ((fzfa-preview-functions '((cat :preview ignore)))
         (fzfa-preview-delay 0.3))
     (should (eq (plist-get (fzfa--preview-handler nil 'cat) :preview)
                 #'ignore)))
   ;; Unknown category yields nil even when delay is set.
-  (let ((fzfa-preview-functions '((cat . (:preview ignore))))
+  (let ((fzfa-preview-functions '((cat :preview ignore)))
         (fzfa-preview-delay 0.3))
     (should (null (fzfa--preview-handler nil 'unknown))))
   ;; nil delay disables preview globally — registry + explicit override both ignored.
-  (let ((fzfa-preview-functions '((cat . (:preview ignore))))
+  (let ((fzfa-preview-functions '((cat :preview ignore)))
         (fzfa-preview-delay nil))
     (should (null (fzfa--preview-handler nil 'cat)))
     (should (null (fzfa--preview-handler #'identity 'cat))))
   ;; Explicit function override bypasses the registry.
-  (let ((fzfa-preview-functions '((cat . (:preview ignore))))
+  (let ((fzfa-preview-functions '((cat :preview ignore)))
         (fzfa-preview-delay 0.3))
     (should (eq (plist-get (fzfa--preview-handler #'identity 'cat) :preview)
                 #'identity)))
   ;; Explicit plist override bypasses the registry.
-  (let ((fzfa-preview-functions '((cat . (:preview ignore))))
+  (let ((fzfa-preview-functions '((cat :preview ignore)))
         (fzfa-preview-delay 0.3))
     (should (eq (plist-get
                  (fzfa--preview-handler '(:preview my-fn :return my-ret) 'cat)
@@ -538,6 +538,27 @@ when the inner sources arrive without `:narrow'."
   (fzfa--grep-preview "only:one-colon")
   ;; Well-formed candidate to a nonexistent path is a silent no-op.
   (fzfa--grep-preview "no-such-file.xyz:1:irrelevant"))
+
+(ert-deftest fzfa-buffer-preview-handles-missing-buffer ()
+  "Buffer preview is a silent no-op when the named buffer does not exist."
+  (fzfa--buffer-preview nil)
+  (fzfa--buffer-preview "*no-such-buffer*-fzfa-test*"))
+
+(ert-deftest fzfa-preview-show-moves-point ()
+  "`fzfa-preview-show' moves point in BUFFER when POS is supplied."
+  (with-temp-buffer
+    (let ((buf (current-buffer)))
+      (insert "one\ntwo\nthree\n")
+      (cl-letf (((symbol-function 'display-buffer) (lambda (&rest _) nil)))
+        (fzfa-preview-show buf 5)             ; start of "two"
+        (with-current-buffer buf
+          (should (= (point) 5))))
+      ;; Marker POS also accepted.
+      (cl-letf (((symbol-function 'display-buffer) (lambda (&rest _) nil)))
+        (let ((m (copy-marker 9)))            ; start of "three"
+          (fzfa-preview-show buf m)
+          (with-current-buffer buf
+            (should (= (point) 9))))))))
 
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here
