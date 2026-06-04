@@ -1810,53 +1810,17 @@ Per-source plist keys:
          ;; for "all sources".  Mutated by `narrow-handler' on a narrow
          ;; key press and read by the candidate function in `'t' below.
          (narrow-idx nil)
-         (narrow-handler
-          (lambda ()
-            (interactive)
-            ;; Three states:
-            ;;   1. widened (narrow-idx nil) — no menu, query freely
-            ;;   2. narrow menu — this handler is running
-            ;;   3. narrowed (narrow-idx set) — no menu, query freely
-            ;;
-            ;; From the menu: source letter narrows/switches; the
-            ;; prefix key widens (-> 1); any other key cancels the
-            ;; menu and returns to the prior state (1 or 3).
-            (let* ((seq (and fzfa-multi-narrow-key
-                             (listify-key-sequence
-                              (kbd fzfa-multi-narrow-key))))
-                   (prefix-event (car (last seq)))
-                   (before narrow-idx))
-              ;; Replace the stats overlay with the menu for the
-              ;; duration of `read-char'.  `refresh-overlay' on
-              ;; `post-command-hook' restores the normal overlay when
-              ;; this handler returns.
-              (when (and stats-overlay (active-minibuffer-window))
-                (with-selected-window (active-minibuffer-window)
-                  (overlay-put stats-overlay 'display
-                               (concat (fzfa--format-narrow-hint
-                                        sources-v narrow-idx nil
-                                        fzfa-multi-narrow-key)
-                                       " "))
-                  (redisplay)))
-              (let* ((c (read-char))
-                     (target
-                      (cl-position-if
-                       (lambda (src)
-                         (when-let* ((k (plist-get src :narrow)))
-                           (and (stringp k)
-                                (= (length k) 1)
-                                (= (string-to-char k) c))))
-                       sources-v)))
-                (cond
-                 ((and prefix-event (eql c prefix-event))
-                  (setq narrow-idx nil))
-                 (target (setq narrow-idx target))
-                 (t nil))
-                (unless (eql before narrow-idx)
-                  (fzfa--frontend-exhibit))))))
+         ;; When the narrow menu is on screen (during the
+         ;; `narrow-handler''s `read-char') we must NOT overwrite the
+         ;; overlay with the stats line on every tick — otherwise async
+         ;; sources streaming new generations (a 50ms cadence) erase
+         ;; the menu before the user has had a chance to read it.
+         (menu-active nil)
          (refresh-overlay
           (lambda ()
-            (when (and stats-overlay (active-minibuffer-window))
+            (when (and stats-overlay
+                       (not menu-active)
+                       (active-minibuffer-window))
               (with-selected-window (active-minibuffer-window)
                 (overlay-put
                  stats-overlay 'display
@@ -1874,6 +1838,59 @@ Per-source plist keys:
                   (fzfa--frontend-index)
                   (cl-loop for x across filtered sum x)
                   (cl-loop for x across totals sum x)))))))
+         (narrow-handler
+          (lambda ()
+            (interactive)
+            ;; Three states:
+            ;;   1. widened (narrow-idx nil) — no menu, query freely
+            ;;   2. narrow menu — this handler is running
+            ;;   3. narrowed (narrow-idx set) — no menu, query freely
+            ;;
+            ;; From the menu: source letter narrows/switches; the
+            ;; prefix key widens (-> 1); any other key cancels the
+            ;; menu and returns to the prior state (1 or 3).
+            (let* ((seq (and fzfa-multi-narrow-key
+                             (listify-key-sequence
+                              (kbd fzfa-multi-narrow-key))))
+                   (prefix-event (car (last seq)))
+                   (before narrow-idx))
+              ;; Suspend `refresh-overlay' (which otherwise restores the
+              ;; stats line on every async tick) so the menu stays put
+              ;; until `read-char' returns.  `unwind-protect' guarantees
+              ;; the flag clears on `C-g' / error too.
+              (setq menu-active t)
+              (unwind-protect
+                  (progn
+                    (when (and stats-overlay (active-minibuffer-window))
+                      (with-selected-window (active-minibuffer-window)
+                        (overlay-put stats-overlay 'display
+                                     (concat (fzfa--format-narrow-hint
+                                              sources-v narrow-idx nil
+                                              fzfa-multi-narrow-key)
+                                             " "))
+                        (redisplay)))
+                    (let* ((c (read-char))
+                           (target
+                            (cl-position-if
+                             (lambda (src)
+                               (when-let* ((k (plist-get src :narrow)))
+                                 (and (stringp k)
+                                      (= (length k) 1)
+                                      (= (string-to-char k) c))))
+                             sources-v)))
+                      (cond
+                       ((and prefix-event (eql c prefix-event))
+                        (setq narrow-idx nil))
+                       (target (setq narrow-idx target))
+                       (t nil))
+                      (setq menu-active nil)
+                      (unless (eql before narrow-idx)
+                        (fzfa--frontend-exhibit))
+                      ;; Restore the normal overlay now that the menu
+                      ;; is dismissed (the 't action's own refresh path
+                      ;; only fires on candidate computations).
+                      (funcall refresh-overlay)))
+                (setq menu-active nil)))))
          (router       (fzfa--multi-build-router sources-v cand->src))
          (fzfa--preview-session (and router (list router)))
          retry-timer timer result)
