@@ -1253,16 +1253,25 @@ present yet."
 
 (defun fzfa--2pass-compact-make-overlays (cmd-beg cmd-end)
   "Return overlays compacting flag regions between CMD-BEG and CMD-END.
-Uses the first balanced `\\='…\\=' / \"…\" pair as anchor: text from
-the end of the program name up to the opening quote renders as
-\" ... \", and any tail after the closing quote renders as \"\".
-Without a quoted argument, everything after the program name is
-hidden with an empty display.  Whitespace-only spans are left alone."
+Uses the *last* balanced `\\='…\\=' / \"…\" pair as anchor (so an
+earlier quoted flag value like `-flag=\\='val\\='' is ignored in favor
+of the trailing input slot): text from the end of the program name up
+to the opening quote renders as \" ... \", and any tail after the
+closing quote renders as \"\".  Without a quoted argument, everything
+after the program name is hidden with an empty display.  Whitespace-
+only spans are left alone."
   (let* ((cmd-text (buffer-substring-no-properties cmd-beg cmd-end))
          (prog-end (if (string-match "\\`[^ \t]+" cmd-text)
                        (+ cmd-beg (match-end 0))
                      cmd-end))
-         (qm (string-match "\\('[^']*'\\|\"[^\"]*\"\\)" cmd-text))
+         (last-pair
+          (save-match-data
+            (let ((pos 0) last)
+              (while (string-match "\\('[^']*'\\|\"[^\"]*\"\\)"
+                                   cmd-text pos)
+                (setq last (cons (match-beginning 0) (match-end 0))
+                      pos  (match-end 0)))
+              last)))
          overlays)
     (cl-flet ((mk (beg end display)
                 (when (and (< beg end)
@@ -1274,9 +1283,9 @@ hidden with an empty display.  Whitespace-only spans are left alone."
                     (overlay-put ov 'fzfa-2pass-compact t)
                     (push ov overlays)))))
       (cond
-       (qm
-        (let ((qb (+ cmd-beg qm))
-              (qe (+ cmd-beg (match-end 0))))
+       (last-pair
+        (let ((qb (+ cmd-beg (car last-pair)))
+              (qe (+ cmd-beg (cdr last-pair))))
           (mk prog-end qb " ... ")
           (mk qe cmd-end "")))
        (t
