@@ -91,6 +91,16 @@
 (declare-function vertico-next "vertico" (&optional n))
 (declare-function vertico-previous "vertico" (&optional n))
 
+(defvar-local fzfa-vertico--initial-snap-done nil
+  "Per-minibuffer one-shot flag for the initial selection snap.
+`vertico--update' resets `vertico--index' to 0 on entry, which —
+once partitioned by `fzfa-vertico-columns-source-sort' — points
+at whichever candidate `fzfa--sort-by-history' promoted to the
+top, not necessarily column 0 row 0.  After the first render in
+each minibuffer session we move the selection to the partition's
+top-left cell and set this flag so subsequent renders honour the
+user's explicit navigation.")
+
 (defgroup fzfa-vertico nil
   "Vertico extensions for fzfa."
   :group 'fzfa
@@ -493,6 +503,18 @@ past its last item."
          (parts (and gf (fzfa-vertico--partition gf))))
     (if (or (null parts) (<= (length parts) 1))
         (cl-call-next-method)
+      ;; One-shot: place the initial selection at column 0 row 0 of
+      ;; the partition.  Goes through `vertico--goto' so the lock-
+      ;; candidate flag is set — vertico then preserves our snapped
+      ;; candidate through subsequent rescores rather than resetting
+      ;; to index 0 on every input change.
+      (unless fzfa-vertico--initial-snap-done
+        (setq fzfa-vertico--initial-snap-done t)
+        (when-let* ((first-cand (cadr (car parts)))
+                    (target (cl-position first-cand vertico--candidates
+                                         :test #'eq))
+                    ((/= target vertico--index)))
+          (vertico--goto target)))
       (let* ((nparts (length parts))
              (max-cols (max 1 fzfa-vertico-columns-max))
              (ncols (min max-cols nparts))
