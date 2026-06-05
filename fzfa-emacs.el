@@ -271,16 +271,17 @@ when the command was invoked.  Selecting \"default\" disables all themes."
 ;;;###autoload
 (defun fzfa-swiper-all ()
   "Search lines across all open buffers using fzf.
-Candidates are formatted as SOURCE:LINE:CONTENT where SOURCE is the
-buffer's file path when file-backed, else its buffer name.  Buffer
-names containing `:DIGITS:' substrings are not encoded specially and
-may parse ambiguously — a rare-enough hazard to accept."
+Candidates display LINE:CONTENT; the originating buffer (file path or
+buffer name) is carried on each candidate as an `fzfa-location' text
+property and shown as the group header.  fzf scores only against
+LINE:CONTENT — buffer names never enter the search input."
   (interactive)
   (let* ((buffers (cl-remove-if
                    (lambda (b)
                      (or (minibufferp b)
                          (string-prefix-p " " (buffer-name b))))
                    (buffer-list)))
+         (used (make-hash-table :test 'equal))
          (candidates
           (cl-loop
            for buf in buffers
@@ -295,17 +296,22 @@ may parse ambiguously — a rare-enough hazard to accept."
                                             (line-beginning-position)
                                             (line-end-position))))
                               (unless (string-empty-p content)
-                                (push (format "%s:%d:%s" source j content)
-                                      lines)))
+                                (let ((display (format "%d:%s" j content)))
+                                  (while (gethash display used)
+                                    (setq display (concat display " ")))
+                                  (puthash display t used)
+                                  (push (fzfa--location-candidate
+                                         display source j)
+                                        lines))))
                             (forward-line 1)
                             (cl-incf j))))
                       (nreverse lines))))))
-    (when-let* ((r (fzfa-sync-completing-read
-                    :candidates candidates
-                    :prompt "swiper-all: "
-                    :category 'fzfa-grep
-                    :group #'fzfa--grep-group)))
-      (fzfa--grep-jump r))))
+    (fzfa--location-jump
+     (fzfa-sync-completing-read
+      :candidates candidates
+      :prompt "swiper-all: "
+      :category 'fzfa-location
+      :group #'fzfa--location-group))))
 
 (defun fzfa--imenu (scope)
   "Implementation of `fzfa-imenu' / `fzfa-imenu-all'.
@@ -484,9 +490,10 @@ mirroring `execute-extended-command-for-buffer'."
       (fzfa--run-command result))))
 
 (defun fzfa--mark-candidates (markers)
-  "Build FILE:LINE:CONTENT candidates from MARKERS.
-Each marker contributes one candidate showing the buffer (or
-file path) it points into, the line number, and the line text.
+  "Build `fzfa-location' candidates from MARKERS.
+Each marker contributes one candidate showing LINE:CONTENT of the
+target line, with the originating buffer (file path or buffer name)
+and the line number carried as an `fzfa-location' text property.
 Disambiguates duplicate display strings with a trailing space so
 fzf-native's distinct-candidate guarantee holds."
   (let ((used (make-hash-table :test 'equal)))
@@ -505,11 +512,11 @@ fzf-native's distinct-candidate guarantee holds."
                   (content (buffer-substring-no-properties
                             (line-beginning-position)
                             (line-end-position)))
-                  (display (format "%s:%d:%s" source line content)))
+                  (display (format "%d:%s" line content)))
              (while (gethash display used)
                (setq display (concat display " ")))
              (puthash display t used)
-             display)))))))
+             (fzfa--location-candidate display source line))))))))
 
 ;;;###autoload
 (defun fzfa-mark ()
@@ -529,10 +536,10 @@ position is recoverable with \\[set-mark-command] \\[set-mark-command]."
     (when-let* ((r (fzfa-sync-completing-read
                     :candidates candidates
                     :prompt "mark: "
-                    :category 'fzfa-grep
-                    :group #'fzfa--grep-group)))
+                    :category 'fzfa-location
+                    :group #'fzfa--location-group)))
       (push-mark nil t)
-      (fzfa--grep-jump r))))
+      (fzfa--location-jump r))))
 
 ;;;###autoload
 (defun fzfa-global-mark ()
@@ -551,10 +558,10 @@ silently skipped."
     (when-let* ((r (fzfa-sync-completing-read
                     :candidates candidates
                     :prompt "global-mark: "
-                    :category 'fzfa-grep
-                    :group #'fzfa--grep-group)))
+                    :category 'fzfa-location
+                    :group #'fzfa--location-group)))
       (push-mark nil t)
-      (fzfa--grep-jump r))))
+      (fzfa--location-jump r))))
 
 ;;;###autoload
 (defun fzfa-register ()
@@ -607,8 +614,9 @@ Walks every line matching `outline-regexp' (set by `outline-mode',
 programming modes set one).  Selection pushes point onto the mark
 ring and moves to the heading line.
 
-Candidates are formatted as SOURCE:LINE:CONTENT so the `fzfa-grep'
-category's group function and embark map apply automatically."
+Candidates display LINE:CONTENT; the source buffer/file is carried as
+an `fzfa-location' text property so fzf scores only the heading text
+and line number."
   (interactive)
   (require 'outline)
   (unless (and (boundp 'outline-regexp) outline-regexp)
@@ -624,21 +632,21 @@ category's group function and embark map apply automatically."
                        (content (buffer-substring-no-properties
                                  (line-beginning-position)
                                  (line-end-position)))
-                       (display (format "%s:%d:%s" source line content)))
+                       (display (format "%d:%s" line content)))
                   (while (gethash display used)
                     (setq display (concat display " ")))
                   (puthash display t used)
-                  (push display out)))
+                  (push (fzfa--location-candidate display source line)
+                        out)))
               (nreverse out)))))
     (unless candidates
       (user-error "No outline headings in buffer"))
     (when-let* ((r (fzfa-sync-completing-read
                     :candidates candidates
                     :prompt "outline: "
-                    :category 'fzfa-grep
-                    :group #'fzfa--grep-group)))
+                    :category 'fzfa-location)))
       (push-mark nil t)
-      (fzfa--grep-jump r))))
+      (fzfa--location-jump r))))
 
 ;;;###autoload
 (defun fzfa-compile-error ()
