@@ -91,6 +91,14 @@
 (declare-function vertico-next "vertico" (&optional n))
 (declare-function vertico-previous "vertico" (&optional n))
 
+(defvar-local fzfa-vertico--band-offset 0
+  "Per-minibuffer first visible band index, for pagination.
+When `fzfa-vertico-columns-page-size' caps the number of bands
+rendered, this offset slides as the selection moves between
+bands so the band containing the selection always stays in
+view.  Recomputed from `vertico--index' on every arrange, so
+nothing else needs to mutate it directly.")
+
 (defvar-local fzfa-vertico--initial-snap-done nil
   "Per-minibuffer one-shot flag for the initial selection snap.
 `vertico--update' resets `vertico--index' to 0 on entry, which —
@@ -113,6 +121,27 @@ overflow groups wrap into additional bands stacked below.  For
 example, with `fzfa-vertico-columns-max' = 3 and 7 groups, the
 layout is three bands of (3 3 1) columns."
   :type 'natnum
+  :group 'fzfa-vertico)
+
+(defcustom fzfa-vertico-columns-page-size 6
+  "Maximum sources displayed simultaneously; pagination kicks in beyond.
+
+When the active completion produces more groups than this, the
+layout paginates: only a window containing at most PAGE-SIZE
+sources is visible at any time.  The window scrolls
+automatically as the selection moves between bands — M-j past
+the last visible band's bottom row brings the next band into
+view; M-k past the top scrolls back.
+
+Counted as `(ceil PAGE-SIZE / fzfa-vertico-columns-max)' bands.
+With the default of 6 and `fzfa-vertico-columns-max' = 3 you see
+2 bands of 3 columns at a time.  Each visible band gets a larger
+share of `vertico-count' rows than it would if every band were
+on-screen, which is the main UX win for many-source pickers.
+
+Set to 0 or nil to disable pagination (all bands always visible)."
+  :type '(choice (const :tag "Disable pagination" nil)
+                 (natnum :tag "Page size (sources)"))
   :group 'fzfa-vertico)
 
 (defcustom fzfa-vertico-columns-min-width 12
@@ -458,12 +487,20 @@ Falls back to `vertico-previous' when the layout is single-column."
 
 ;;; Rendering
 
-(defun fzfa-vertico--render-cell (cand idx width)
+(defun fzfa-vertico--render-cell (cand idx width &optional group-fun)
   "Render CAND at flat index IDX, truncated/padded to WIDTH.
 Reuses `vertico--format-candidate' so selection highlighting and
-match-fontification stay consistent with vertico's defaults."
+match-fontification stay consistent with vertico's defaults.
+When GROUP-FUN is non-nil, the candidate is passed through
+\(funcall GROUP-FUN cand \\='transform) before rendering, mirroring
+the display swap `vertico--arrange-candidates' does for the
+stacked layout.  Highlighting runs first so per-source transforms
+that take a substring of CAND (e.g. `fzfa--grep-group' stripping
+the FILE: prefix) inherit the match faces."
   (let* ((hi (vertico--hilit (copy-sequence cand)))
-         (formatted (vertico--format-candidate hi "" "" idx 0))
+         (display (or (and group-fun (funcall group-fun hi 'transform))
+                      hi))
+         (formatted (vertico--format-candidate display "" "" idx 0))
          (trimmed (string-trim-right formatted "[\r\n]+")))
     (truncate-string-to-width trimmed width 0 ?\s)))
 
@@ -518,7 +555,34 @@ past its last item."
       (let* ((nparts (length parts))
              (max-cols (max 1 fzfa-vertico-columns-max))
              (ncols (min max-cols nparts))
-             (nbands (max 1 (ceiling (/ (float nparts) ncols))))
+             (nbands-total (max 1 (ceiling (/ (float nparts) ncols))))
+             ;; Pagination: cap visible bands to fit `page-size' sources.
+             ;; `page-size' nil / 0 → show all bands (no pagination).
+             (page-size fzfa-vertico-columns-page-size)
+             (nbands (if (and page-size (> page-size 0))
+                         (max 1 (min nbands-total
+                                     (ceiling (/ (float page-size) ncols))))
+                       nbands-total))
+             ;; Selection's (source-idx . row-in-source).  Only the
+             ;; containing source scrolls; others stay parked at top.
+             (sel-pos (fzfa-vertico--locate parts vertico--index))
+             (sel-src (car sel-pos))
+             (sel-row (cdr sel-pos))
+             ;; Slide the band window so the selection's band stays
+             ;; visible.  Past the right edge → advance offset; past
+             ;; the left edge → retreat; otherwise keep the prior
+             ;; offset (so a stable selection doesn't trigger scroll
+             ;; jitter as rescores reorder).
+             (sel-band (and sel-src (/ sel-src ncols)))
+             (prev-offset fzfa-vertico--band-offset)
+             (raw-offset
+              (cond
+               ((null sel-band) prev-offset)
+               ((< sel-band prev-offset) sel-band)
+               ((>= sel-band (+ prev-offset nbands))
+                (1+ (- sel-band nbands)))
+               (t prev-offset)))
+             (band-offset (max 0 (min raw-offset (- nbands-total nbands))))
              (sep fzfa-vertico-columns-separator)
              (sepw (string-width sep))
              (win-w (vertico--window-width))
@@ -527,21 +591,17 @@ past its last item."
                          (min fzfa-vertico-columns-max-width
                               (/ avail ncols))))
              (header? fzfa-vertico-columns-headers)
-             ;; Distribute `vertico-count' rows evenly across bands,
-             ;; reserving 1 row per band for the header.  At least 1
-             ;; data row per band — otherwise headers eat the budget
-             ;; and no candidates show.
+             ;; Distribute `vertico-count' rows across VISIBLE bands.
+             ;; Pagination's headline benefit: fewer bands on-screen →
+             ;; more rows per band.
              (rows-per-band (max (if header? 2 1)
                                  (/ vertico-count nbands)))
              (data-cap (max 1 (- rows-per-band (if header? 1 0))))
-             ;; Selection's (source-idx . row-in-source).  Only the
-             ;; containing source scrolls; others stay parked at top.
-             (sel-pos (fzfa-vertico--locate parts vertico--index))
-             (sel-src (car sel-pos))
-             (sel-row (cdr sel-pos))
              (lines nil))
-        (dotimes (band-idx nbands)
-          (let* ((start (* band-idx ncols))
+        (setq fzfa-vertico--band-offset band-offset)
+        (dotimes (i nbands)
+          (let* ((band-idx (+ band-offset i))
+                 (start (* band-idx ncols))
                  (end (min nparts (+ start ncols)))
                  (band-entries
                   (cl-loop for s from start below end
@@ -583,7 +643,7 @@ past its last item."
                      (if-let* ((cand)
                                (idx (cl-position cand vertico--candidates
                                                  :test #'eq)))
-                         (fzfa-vertico--render-cell cand idx col-w)
+                         (fzfa-vertico--render-cell cand idx col-w gf)
                        (make-string col-w ?\s))))
                  band-entries sep)
                 "\n")

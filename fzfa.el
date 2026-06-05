@@ -2083,8 +2083,9 @@ Per-source plist keys:
                          'fzfa-multi
                          :group
                          (lambda (cand transform)
-                           (let ((src (fzfa--multi-source-of
-                                       cand sources-v cand->src)))
+                           (let* ((src (fzfa--multi-source-of
+                                        cand sources-v cand->src))
+                                  (g   (plist-get src :group)))
                              (if transform
                                  ;; Per-source :group transform — lets a
                                  ;; source strip an internal "IDX:" prefix
@@ -2097,10 +2098,20 @@ Per-source plist keys:
                                  ;; `display ""' text property, so the raw
                                  ;; CAND fallback renders cleanly without an
                                  ;; explicit strip.
-                                 (or (when-let* ((g (plist-get src :group)))
-                                       (funcall g (fzfa--tofu-hide cand) t))
+                                 (or (and g (funcall
+                                             g (fzfa--tofu-hide cand) t))
                                      cand)
-                               (or (plist-get src :name) ""))))
+                               ;; Section header.  When narrowed to a single
+                               ;; source, delegate to the per-source :group's
+                               ;; nil branch so any internal sub-grouping
+                               ;; (e.g. per-file headers for grep-style
+                               ;; sources) takes over — matching the
+                               ;; standalone command's layout.  Across
+                               ;; sources, the source name is the only
+                               ;; header that meaningfully separates them.
+                               (or (and narrow-idx g
+                                        (funcall g (fzfa--tofu-hide cand) nil))
+                                   (plist-get src :name) ""))))
                          :affix
                          (lambda (cands)
                            (let* ((displays
