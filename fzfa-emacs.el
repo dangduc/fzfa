@@ -257,13 +257,16 @@ when the command was invoked.  Selecting \"default\" disables all themes."
                                   (line-beginning-position)
                                   (line-end-position))))
                     (unless (string-empty-p content)
-                      (push (format "%s:%d:%s" source i content) lines)))
+                      (push (fzfa--location-candidate
+                             (format "%d:%s" i content) source i)
+                            lines)))
                   (forward-line 1)
                   (cl-incf i))))
             (nreverse lines))))
-    (when-let* ((r (fzfa-sync-completing-read :candidates candidates :prompt "swiper: "
-                                             :category 'fzfa-grep)))
-      (fzfa--grep-jump r))))
+    (fzfa--location-jump
+     (fzfa-sync-completing-read :candidates candidates
+                                :prompt "swiper: "
+                                :category 'fzfa-location))))
 
 ;;;###autoload
 (defun fzfa-swiper-all ()

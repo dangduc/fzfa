@@ -2448,6 +2448,47 @@ TRANSFORM non-nil → strip the filename prefix; display LINE:CONTENT only."
         (match-string 1 cand))
     cand))
 
+;;; Location candidates (in-Emacs line search)
+
+(defun fzfa--location-candidate (cand source line)
+  "Tag CAND with SOURCE and LINE as an `fzfa-location' text property.
+Modifies CAND in place and returns it.  The property is attached at index
+0 only so the interval tree stays one node per candidate.  SOURCE is a
+file path or buffer name; LINE is the 1-based line number.
+
+Use this when building candidates for the `fzfa-location' category — line
+search commands like `fzfa-swiper' where the source should be carried
+in-band for jump but never enter fzf's scoring."
+  (when (> (length cand) 0)
+    (add-text-properties 0 1 `(fzfa-location (,source . ,line)) cand))
+  cand)
+
+(defun fzfa--location-jump (cand)
+  "Open SOURCE and jump to LINE recorded on CAND's `fzfa-location' property.
+Used as the embark default action for the `fzfa-location' category and
+as the post-selection handler for swiper-style commands."
+  (when-let* ((loc (and (stringp cand) (> (length cand) 0)
+                        (get-text-property 0 'fzfa-location cand))))
+    (fzfa--goto-source (car loc) (cdr loc))))
+
+(defvar-keymap fzfa-location-map
+  :doc "Embark keymap for `fzfa-location' candidates.
+Composed with `embark-general-map' via `embark-keymap-alist'.")
+
+(defun fzfa--location-group (cand transform)
+  "Group function for `fzfa-location' candidate CAND.
+TRANSFORM nil  → return the source (file or buffer) as the section header.
+TRANSFORM non-nil → return CAND unchanged.
+Reads the source off CAND's `fzfa-location' text property; returns CAND
+when the property is missing so candidates without locations still
+render."
+  (if transform
+      cand
+    (or (when-let* ((loc (and (> (length cand) 0)
+                              (get-text-property 0 'fzfa-location cand))))
+          (car loc))
+        cand)))
+
 ;;; Setup
 
 (defun fzfa--bridge-defcustoms (orig-fn &rest args)
@@ -2483,10 +2524,13 @@ public entry point.
       (dolist (entry '((fzfa-file     . embark-file-map)
                        (fzfa-buffer   . embark-buffer-map)
                        (fzfa-bookmark . embark-bookmark-map)
-                       (fzfa-grep     fzfa-grep-map embark-general-map)))
+                       (fzfa-grep     fzfa-grep-map     embark-general-map)
+                       (fzfa-location fzfa-location-map embark-general-map)))
         (add-to-list 'embark-keymap-alist entry))
-      (setf (alist-get 'fzfa-grep embark-default-action-overrides)
-            #'fzfa--grep-jump))
+      (setf (alist-get 'fzfa-grep     embark-default-action-overrides)
+            #'fzfa--grep-jump)
+      (setf (alist-get 'fzfa-location embark-default-action-overrides)
+            #'fzfa--location-jump))
 
     (with-eval-after-load 'marginalia
       (dolist (entry '((fzfa-file     marginalia-annotate-file     none)
