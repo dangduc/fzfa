@@ -388,11 +388,12 @@ Set to 0 to disable file preview entirely without dropping the
   :group 'fzfa)
 
 (defcustom fzfa-preview-functions
-  '((fzfa-buffer :preview fzfa--buffer-preview)
-    (fzfa-file   :setup   fzfa--file-preview-setup
-                 :preview fzfa--file-preview
-                 :return  fzfa--file-preview-return)
-    (fzfa-grep   :preview fzfa--grep-preview))
+  '((fzfa-buffer   :preview fzfa--buffer-preview)
+    (fzfa-file     :setup   fzfa--file-preview-setup
+                   :preview fzfa--file-preview
+                   :return  fzfa--file-preview-return)
+    (fzfa-grep     :preview fzfa--grep-preview)
+    (fzfa-location :preview fzfa--location-preview))
   "Per-category preview handlers.
 Alist of (CATEGORY . PLIST), where PLIST recognizes :setup, :preview,
 :exit, :return slots (see commentary in fzfa.el).  Only :preview is
@@ -559,6 +560,30 @@ when invoked from `fzfa-async-completing-read')."
               (goto-char (point-min))
               (forward-line (1- line))))
           (fzfa-preview-show buf))))))
+
+(defun fzfa--location-preview (cand)
+  "Preview SOURCE at LINE for an `fzfa-location' CAND.
+Reads `(SOURCE . LINE)' off CAND's `fzfa-location' text property.
+SOURCE is resolved as a file path when `file-readable-p', otherwise as
+a live buffer name.  Computes the line's start position in the source
+buffer and hands off to `fzfa-preview-show'.  No-op when the property
+is missing or the target cannot be resolved."
+  (when-let* ((loc (and (stringp cand) (> (length cand) 0)
+                        (get-text-property 0 'fzfa-location cand)))
+              (source (car loc))
+              (line   (cdr loc))
+              (buf    (cond
+                       ((and (stringp source) (file-readable-p source))
+                        (find-file-noselect source))
+                       ((get-buffer source)))))
+    (let ((pos (with-current-buffer buf
+                 (save-restriction
+                   (widen)
+                   (save-excursion
+                     (goto-char (point-min))
+                     (forward-line (1- line))
+                     (point))))))
+      (fzfa-preview-show buf pos))))
 
 (defun fzfa--buffer-preview (cand)
   "Show CAND (a buffer name) in a side window for preview."
