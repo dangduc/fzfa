@@ -1199,6 +1199,20 @@ See `fzfa-2pass-split-styles-alist' for available styles."
   :type '(choice (const :tag "Perl-style (#cmd#filter)" perl))
   :group 'fzfa)
 
+(defcustom fzfa-shell-command-debounce 0.2
+  "Seconds of typing silence before a shell-command start fires.
+Each keystroke that changes the command portion of the minibuffer
+reschedules a fresh restart timer; the producer process is not
+spawned until the user pauses for this long, so a burst of
+keystrokes ends with exactly one restart on the final cmd value."
+  :type 'float
+  :group 'fzfa)
+
+(defcustom fzfa-shell-command-throttle 0.5
+  "Minimum seconds between shell-command restarts in 2 pass route."
+  :type 'float
+  :group 'fzfa)
+
 (defcustom fzfa-2pass-split-styles-alist
   `((perl :initial ?# :function ,#'fzfa--2pass-split-perl))
   "Splitting styles for `fzfa-2pass-completing-read'.
@@ -1358,7 +1372,6 @@ changing FILTER rescores in place via fzf-native.
          (last-total 0)
          (last-exhibit-scheduled 0.0)
          (last-restart-time 0.0)
-         (pending-cmd nil)
          (stats-overlay nil)
          (compact-overlays nil)
          (compact-on nil)
@@ -1416,27 +1429,22 @@ changing FILTER rescores in place via fzf-native.
                       (query (cdr split)))
                  (cond
                   ((not (equal cmd current-cmd))
-                   ;; Rate-limited restart: leading edge fires immediately
-                   ;; when the throttle window has elapsed, trailing edge
-                   ;; fires the latest pending cmd after the window.
-                   (setq pending-cmd cmd)
-                   (let* ((now     (float-time))
-                          (elapsed (- now last-restart-time)))
-                     (cond
-                      ((>= elapsed fzfa-input-throttle)
-                       (when restart-timer
-                         (cancel-timer restart-timer)
-                         (setq restart-timer nil))
-                       (funcall do-restart cmd))
-                      ((null restart-timer)
-                       (setq restart-timer
-                             (run-with-timer
-                              (max 0.01
-                                   (- fzfa-input-throttle elapsed))
-                              nil
-                              (lambda ()
-                                (setq restart-timer nil)
-                                (funcall do-restart pending-cmd)))))))
+                   ;; Cancel any pending restart and reschedule.  Each
+                   ;; keystroke debounces; the throttle term is the
+                   ;; floor on the gap between actual spawns when the
+                   ;; user keeps typing past one debounce window.
+                   (when restart-timer
+                     (cancel-timer restart-timer)
+                     (setq restart-timer nil))
+                   (let* ((elapsed (- (float-time) last-restart-time))
+                          (delay (max fzfa-shell-command-debounce
+                                      (- fzfa-shell-command-throttle elapsed))))
+                     (setq restart-timer
+                           (run-with-timer
+                            (max 0.01 delay) nil
+                            (lambda ()
+                              (setq restart-timer nil)
+                              (funcall do-restart cmd)))))
                    ;; Fetch from the *current* handle (previous cmd's
                    ;; process) so the display reflects something while the
                    ;; user is mid-typing in the cmd portion.
