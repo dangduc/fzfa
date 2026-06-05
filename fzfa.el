@@ -2374,13 +2374,16 @@ inner sources receive auto-derived keys from their own :name."
 
 (defcustom fzfa-find-any-commands
   '(fzfa-imenu
-    fzfa-vc-modified-files
+    (fzfa-vc-modified-locally :narrow l)
+    fzfa-vc-added-files
+    (fzfa-vc-staged-for-commit :narrow c)
     fzfa-buffer
     fzfa-recent-file
     (fzfa-hungry-find :narrow f)
     (fzfa-imenu-all-but-current :narrow I)
     (fzfa-M-x :narrow x)
-    (fzfa-hungry-swiper :narrow s)
+    (fzfa-swiper-all :narrow s)
+    (fzfa-hungry-swiper :narrow S)
     fzfa-locate)
   "Commands shown by `fzfa-find-any'.
 Each entry is either a bare command symbol or a list
@@ -2390,11 +2393,14 @@ Each entry is either a bare command symbol or a list
 
 (defcustom fzfa-find-some-commands
   '(fzfa-imenu
-    fzfa-vc-modified-files
+    (fzfa-vc-modified-locally :narrow l)
+    fzfa-vc-added-files
+    (fzfa-vc-staged-for-commit :narrow c)
     fzfa-buffer
     fzfa-recent-file
     fzfa-find
     (fzfa-M-x-for-buffer :narrow x)
+    (fzfa-swiper :narrow s)
     (fzfa-rg :narrow g))
   "Commands shown by `fzfa-find-some'.
 Each entry is either a bare command symbol or a list
