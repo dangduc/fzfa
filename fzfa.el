@@ -1452,6 +1452,8 @@ changing FILTER rescores in place via fzf-native.
     fzfa-grep-2p
     fzfa-locate-2p
     fzfa-rg-2p
+    fzfa-smart-find-2p
+    fzfa-smart-grep-2p
     fzfa-ugrep-2p)
   "Two-pass (consult-style) command variants to enable.
 Each entry is a symbol of the form `fzfa-COMMAND-2p'.  When the
@@ -1532,6 +1534,86 @@ the trailing separator to fuzzy-filter via fzf-native.  Selection is
 routed to `%s' so its post-action runs."
               cmd cmd))
     name))
+
+;;; Smart dispatch
+
+(defun fzfa--smart-resolve (clauses)
+  "Return the first CMD in CLAUSES whose conditions are satisfied, else nil.
+Each CLAUSE is (CMD &key executable predicate).  A clause matches when
+CMD is `fboundp', its `:executable' (if any) is on PATH, and its
+`:predicate' (if any) returns non-nil.  Clauses without either keyword
+are unconditional fallbacks."
+  (catch 'fzfa-smart-found
+    (dolist (clause clauses)
+      (let* ((cmd  (car clause))
+             (rest (cdr clause))
+             (exe  (plist-get rest :executable))
+             (pred (plist-get rest :predicate)))
+        (when (and (fboundp cmd)
+                   (or (null exe)  (executable-find exe))
+                   (or (null pred) (funcall pred)))
+          (throw 'fzfa-smart-found cmd))))
+    nil))
+
+(defun fzfa-smart-define (name clauses)
+  "Define `fzfa-smart-NAME' that dispatches to the first available CLAUSE.
+
+NAME is a symbol naming the command group (e.g. `find', `grep'); the
+generated command is interned as `fzfa-smart-NAME'.
+
+CLAUSES is a list of (CMD &key executable predicate) entries.  Each
+clause is tried in order; the first whose `:executable' (if supplied)
+is on PATH and whose `:predicate' (if supplied) returns non-nil wins,
+provided CMD is `fboundp'.  A clause with neither key is an
+unconditional fallback.
+
+The generated command is interactive and calls the chosen CMD via
+`funcall', so the active `fzfa--multi-mode' (if any) propagates and
+the smart command transparently participates in multi-source dispatch
+\(`fzfa-multi-read') and two-pass dispatch (`fzfa-2p-define') without
+needing any special-casing.
+
+Resolution runs on every invocation — no caching — so PATH changes,
+TRAMP buffers, and containerized shells are handled naturally.
+
+Returns the new symbol."
+  (let ((fname (intern (format "fzfa-smart-%s" name))))
+    (defalias fname
+      (lambda ()
+        (interactive)
+        (let ((cmd (fzfa--smart-resolve clauses)))
+          (unless cmd
+            (user-error "`%s': no available backend among %s"
+                        fname
+                        (mapconcat (lambda (c) (symbol-name (car c)))
+                                   clauses ", ")))
+          (funcall cmd)))
+      (format "Smart `%s' dispatcher.
+Tries backends in order and invokes the first whose executable is on
+PATH and whose command symbol is bound: %s."
+              name
+              (mapconcat (lambda (c) (format "`%s'" (car c))) clauses ", ")))
+    fname))
+
+(fzfa-smart-define
+ 'find
+ '((fzfa-fd       :executable "fd")
+   (fzfa-rg-files :executable "rg")
+   (fzfa-ag-files :executable "ag")
+   (fzfa-find     :executable "find"))) ;; -> `fzfa-smart-find'
+
+(fzfa-smart-define
+ 'grep
+ '((fzfa-ugrep :executable "ugrep")
+   (fzfa-rg    :executable "rg")
+   (fzfa-ag    :executable "ag")
+   (fzfa-grep  :executable "grep"))) ;; -> `fzfa-smart-grep'
+
+(when (memq 'fzfa-smart-find-2p fzfa-2p-functions)
+  (fzfa-2p-define 'fzfa-smart-find)) ;; -> `fzfa-smart-find-2p'
+
+(when (memq 'fzfa-smart-grep-2p fzfa-2p-functions)
+  (fzfa-2p-define 'fzfa-smart-grep)) ;; -> `fzfa-smart-grep-2p'
 
 ;;; Sync `completing-read'
 
@@ -2398,10 +2480,10 @@ Each entry is either a bare command symbol or a list
     (fzfa-vc-staged-for-commit :narrow c)
     fzfa-buffer
     fzfa-recent-file
-    fzfa-find
+    (fzfa-smart-find :narrow f)
     (fzfa-M-x-for-buffer :narrow x)
     (fzfa-swiper :narrow s)
-    (fzfa-rg :narrow g))
+    (fzfa-smart-grep :narrow g))
   "Commands shown by `fzfa-find-some'.
 Each entry is either a bare command symbol or a list
 \(COMMAND :narrow KEY) overriding the auto-derived narrow key."

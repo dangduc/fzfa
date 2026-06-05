@@ -702,5 +702,173 @@ when the inner sources arrive without `:narrow'."
           (with-current-buffer buf
             (should (= (point) 9))))))))
 
+;;; fzfa-smart-define / fzfa--smart-resolve
+
+(defmacro fzfa-test--with-executables (available &rest body)
+  "Run BODY with `executable-find' stubbed to recognize only AVAILABLE.
+AVAILABLE is a list of program-name strings; calls for any other
+program return nil.  Also stubs the smart-find/grep backend symbols
+referenced by the resolve tests as no-op functions so they are
+`fboundp' regardless of which extension files are loaded."
+  (declare (indent 1) (debug t))
+  `(cl-letf (((symbol-function 'executable-find)
+              (lambda (prog &rest _)
+                (and (member prog ,available) prog)))
+             ((symbol-function 'fzfa-fd)       (lambda () 'fd))
+             ((symbol-function 'fzfa-rg-files) (lambda () 'rg-files))
+             ((symbol-function 'fzfa-ag-files) (lambda () 'ag-files))
+             ((symbol-function 'fzfa-find)     (lambda () 'find))
+             ((symbol-function 'fzfa-rg)       (lambda () 'rg))
+             ((symbol-function 'fzfa-ag)       (lambda () 'ag))
+             ((symbol-function 'fzfa-ugrep)    (lambda () 'ugrep))
+             ((symbol-function 'fzfa-grep)     (lambda () 'grep)))
+     ,@body))
+
+(ert-deftest fzfa-smart-resolve-picks-first-matching-executable ()
+  "First clause whose executable is on PATH wins."
+  (fzfa-test--with-executables '("fd" "rg" "find")
+    (should (eq 'fzfa-fd
+                (fzfa--smart-resolve
+                 '((fzfa-fd       :executable "fd")
+                   (fzfa-rg-files :executable "rg")
+                   (fzfa-find     :executable "find")))))))
+
+(ert-deftest fzfa-smart-resolve-skips-missing-executable ()
+  "Clauses whose executable is absent are skipped."
+  (fzfa-test--with-executables '("rg" "find")
+    (should (eq 'fzfa-rg-files
+                (fzfa--smart-resolve
+                 '((fzfa-fd       :executable "fd")
+                   (fzfa-rg-files :executable "rg")
+                   (fzfa-find     :executable "find")))))))
+
+(ert-deftest fzfa-smart-resolve-returns-nil-when-nothing-matches ()
+  "Returns nil when no clause has a satisfied executable."
+  (fzfa-test--with-executables '()
+    (should (null (fzfa--smart-resolve
+                   '((fzfa-fd :executable "fd")
+                     (fzfa-rg-files :executable "rg")))))))
+
+(ert-deftest fzfa-smart-resolve-respects-fboundp ()
+  "A clause is skipped when its CMD symbol is not `fboundp'."
+  (let ((unbound (make-symbol "fzfa-test-unbound")))
+    (fzfa-test--with-executables '("fd" "find")
+      (should (eq 'fzfa-find
+                  (fzfa--smart-resolve
+                   `((,unbound  :executable "fd")
+                     (fzfa-find :executable "find"))))))))
+
+(ert-deftest fzfa-smart-resolve-predicate-truthy-matches ()
+  "Clause matches when `:predicate' returns non-nil."
+  (fzfa-test--with-executables '()
+    (should (eq 'fzfa-find
+                (fzfa--smart-resolve
+                 '((fzfa-find :predicate (lambda () t))))))))
+
+(ert-deftest fzfa-smart-resolve-predicate-falsy-skips ()
+  "Clause is skipped when `:predicate' returns nil."
+  (fzfa-test--with-executables '("find")
+    (should (eq 'fzfa-find
+                (fzfa--smart-resolve
+                 '((fzfa-fd   :predicate ignore)
+                   (fzfa-find :executable "find")))))))
+
+(ert-deftest fzfa-smart-resolve-predicate-and-executable-both-required ()
+  "When both `:executable' and `:predicate' are supplied, both must hold."
+  (fzfa-test--with-executables '("fd" "find")
+    ;; Executable matches but predicate fails -> skipped.
+    (should (eq 'fzfa-find
+                (fzfa--smart-resolve
+                 '((fzfa-fd   :executable "fd" :predicate ignore)
+                   (fzfa-find :executable "find")))))
+    ;; Predicate matches but executable missing -> skipped.
+    (should (eq 'fzfa-find
+                (fzfa--smart-resolve
+                 '((fzfa-fd   :executable "no-such-exe" :predicate (lambda () t))
+                   (fzfa-find :executable "find")))))))
+
+(ert-deftest fzfa-smart-resolve-bare-clause-is-unconditional ()
+  "A clause with neither `:executable' nor `:predicate' always matches."
+  (fzfa-test--with-executables '()
+    (should (eq 'fzfa-find
+                (fzfa--smart-resolve
+                 '((fzfa-fd :executable "fd")
+                   (fzfa-find)))))))
+
+(ert-deftest fzfa-smart-define-creates-named-command ()
+  "`fzfa-smart-define' interns and defines `fzfa-smart-NAME'."
+  (let ((sym (intern "fzfa-smart-test-create")))
+    (unwind-protect
+        (progn
+          (fmakunbound sym)
+          (let ((result (fzfa-smart-define
+                         'test-create
+                         '((fzfa-find :executable "find")))))
+            (should (eq result sym))
+            (should (fboundp sym))
+            (should (commandp sym))))
+      (fmakunbound sym))))
+
+(ert-deftest fzfa-smart-define-funcalls-chosen-backend ()
+  "The generated command `funcall's the resolved backend symbol."
+  (let ((sym (intern "fzfa-smart-test-dispatch"))
+        (backend (intern "fzfa-test-backend-dispatch"))
+        (called 0))
+    (unwind-protect
+        (progn
+          (fmakunbound sym)
+          (defalias backend (lambda () (cl-incf called)))
+          (fzfa-smart-define 'test-dispatch
+                             `((,backend :executable "fd")))
+          (fzfa-test--with-executables '("fd")
+            (funcall sym))
+          (should (= called 1)))
+      (fmakunbound sym)
+      (fmakunbound backend))))
+
+(ert-deftest fzfa-smart-define-errors-when-no-backend ()
+  "The generated command signals `user-error' when nothing resolves."
+  (let ((sym (intern "fzfa-smart-test-noexe")))
+    (unwind-protect
+        (progn
+          (fmakunbound sym)
+          (fzfa-smart-define 'test-noexe
+                             '((fzfa-fd :executable "no-such-tool-xyz")))
+          (fzfa-test--with-executables '()
+            (should-error (funcall sym) :type 'user-error)))
+      (fmakunbound sym))))
+
+(ert-deftest fzfa-smart-define-propagates-multi-mode ()
+  "Active `fzfa--multi-mode' propagates through the smart command.
+This is the contract that makes smart commands work transparently
+inside `fzfa-multi-read' (`:extract') and `fzfa--2pass-dispatch'."
+  (let ((sym (intern "fzfa-smart-test-multi"))
+        (backend (intern "fzfa-test-backend-multi"))
+        observed)
+    (unwind-protect
+        (progn
+          (fmakunbound sym)
+          (defalias backend
+            (lambda ()
+              (throw 'fzfa-extracted (list :seen fzfa--multi-mode))))
+          (fzfa-smart-define 'test-multi
+                             `((,backend :executable "fd")))
+          (fzfa-test--with-executables '("fd")
+            (setq observed
+                  (catch 'fzfa-extracted
+                    (let ((fzfa--multi-mode :extract))
+                      (funcall sym))
+                    nil)))
+          (should (equal observed '(:seen :extract))))
+      (fmakunbound sym)
+      (fmakunbound backend))))
+
+(ert-deftest fzfa-smart-find-and-grep-defined ()
+  "The shipped smart wrappers are defined and interactive."
+  (should (fboundp 'fzfa-smart-find))
+  (should (commandp 'fzfa-smart-find))
+  (should (fboundp 'fzfa-smart-grep))
+  (should (commandp 'fzfa-smart-grep)))
+
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here

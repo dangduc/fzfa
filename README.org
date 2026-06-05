@@ -471,6 +471,8 @@ using ~fussy~ as the ~completion-style~.):
 | ~fzfa-grep~          | ~fzfa-grep-2p~           | ~fzfa-grep.el~    |
 | ~fzfa-locate~        | ~fzfa-locate-2p~         | ~fzfa-locate.el~  |
 | ~fzfa-rg~            | ~fzfa-rg-2p~             | ~fzfa-rg.el~      |
+| ~fzfa-smart-find~    | ~fzfa-smart-find-2p~     | ~fzfa.el~         |
+| ~fzfa-smart-grep~    | ~fzfa-smart-grep-2p~     | ~fzfa.el~         |
 | ~fzfa-ugrep~         | ~fzfa-ugrep-2p~          | ~fzfa-ugrep.el~   |
 
 Each ~-2p~ variant is only *defined* when its symbol is listed in
@@ -493,22 +495,25 @@ defines it.
     :defer t
     :custom (fzfa-2p-functions '(fzfa-ag-2p fzfa-ag-files-2p fzfa-fd-2p
                                  fzfa-find-2p fzfa-git-grep-2p fzfa-grep-2p
-                                 fzfa-locate-2p fzfa-rg-2p fzfa-ugrep-2p))
+                                 fzfa-locate-2p fzfa-rg-2p fzfa-smart-find-2p
+                                 fzfa-smart-grep-2p fzfa-ugrep-2p))
     :init
     ;; Without these `autoload' forms, `fzfa-2p-functions' still gates
     ;; the defun at extension-load time, but Emacs doesn't know which
     ;; file to load for a cold `M-x fzfa-rg-2p' — leaving the variant
     ;; discoverable only after some other fzfa command has triggered
     ;; the extension to load.
-    (autoload 'fzfa-ag-2p       "fzfa-ag"     nil t)
-    (autoload 'fzfa-ag-files-2p "fzfa-ag"     nil t)
-    (autoload 'fzfa-fd-2p       "fzfa-fd"     nil t)
-    (autoload 'fzfa-find-2p     "fzfa-find"   nil t)
-    (autoload 'fzfa-git-grep-2p "fzfa-git"    nil t)
-    (autoload 'fzfa-grep-2p     "fzfa-grep"   nil t)
-    (autoload 'fzfa-locate-2p   "fzfa-locate" nil t)
-    (autoload 'fzfa-rg-2p       "fzfa-rg"     nil t)
-    (autoload 'fzfa-ugrep-2p    "fzfa-ugrep"  nil t))
+    (autoload 'fzfa-ag-2p         "fzfa-ag"     nil t)
+    (autoload 'fzfa-ag-files-2p   "fzfa-ag"     nil t)
+    (autoload 'fzfa-fd-2p         "fzfa-fd"     nil t)
+    (autoload 'fzfa-find-2p       "fzfa-find"   nil t)
+    (autoload 'fzfa-git-grep-2p   "fzfa-git"    nil t)
+    (autoload 'fzfa-grep-2p       "fzfa-grep"   nil t)
+    (autoload 'fzfa-locate-2p     "fzfa-locate" nil t)
+    (autoload 'fzfa-rg-2p         "fzfa-rg"     nil t)
+    (autoload 'fzfa-ugrep-2p      "fzfa-ugrep"  nil t)
+    (autoload 'fzfa-smart-find-2p "fzfa"        nil t)
+    (autoload 'fzfa-smart-grep-2p "fzfa"        nil t))
 #+end_src
 
 To opt into only a subset, remove the unwanted entries from
@@ -525,6 +530,53 @@ Users can also define their own ~-2p~ functions by either using:
 or wrap:
 
 ~fzfa-2pass-completing-read~ and implement manually.
+
+* Smart dispatch
+
+Some tasks have multiple interchangeable backends — finding files
+(~fd~, ~rg --files~, ~ag -g~, plain ~find~) and content search (~rg~,
+~ugrep~, ~ag~, plain ~grep~) are the canonical examples.
+~fzfa-smart-define~ generates a single command that resolves to
+whichever backend is actually installed on the current host.
+
+Two commands are pre-defined in ~fzfa.el~:
+
+#+begin_src emacs-lisp :tangle yes
+  (fzfa-smart-define
+   'find
+   '((fzfa-fd       :executable "fd")
+     (fzfa-rg-files :executable "rg")
+     (fzfa-ag-files :executable "ag")
+     (fzfa-find     :executable "find")))
+
+  (fzfa-smart-define
+   'grep
+   '((fzfa-ugrep :executable "ugrep")
+     (fzfa-rg    :executable "rg")
+     (fzfa-ag    :executable "ag")
+     (fzfa-grep  :executable "grep")))
+#+end_src
+
+These define ~fzfa-smart-find~ and ~fzfa-smart-grep~.  Each clause is
+~(CMD &key executable predicate)~.  Clauses are tried in order; the
+first whose ~:executable~ is on ~PATH~ (and whose ~:predicate~, if
+supplied, returns non-nil) wins, provided ~CMD~ is ~fboundp~.  A clause
+with neither key is an unconditional fallback.
+
+Because the generated command simply ~funcall~ s the resolved backend
+(rather than reimplementing it), it composes transparently with both
+multi-source and two-pass dispatch:
+
+- *Multi-source* — drop ~fzfa-smart-find~ into ~fzfa-find-any-commands~
+  (or any other list passed to ~fzfa-multi-read~) and the multi-source
+  machinery extracts the chosen backend's ~:command~ / ~:category~ /
+  ~:group~ as if it were that backend directly.  No special-casing.
+- *Two-pass* — wrapping with ~fzfa-2p-define~ produces
+  ~fzfa-smart-find-2p~ / ~fzfa-smart-grep-2p~ automatically; the
+  two-pass dispatcher extracts the active backend's shell command,
+  lets you edit it, and routes the selection back through the smart
+  wrapper.  Both are gated on ~fzfa-2p-functions~ alongside the other
+  ~-2p~ variants — see [[*Two-pass configuration & autoloading][Two-pass configuration & autoloading]].
 
 * Completion style compatibility
 
