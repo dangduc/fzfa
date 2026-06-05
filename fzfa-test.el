@@ -178,7 +178,11 @@ Mocks `expand-file-name' so `fzfa-tramp' reads the temp file."
 ;;; fzfa-swiper-all (SOURCE encoding via :extract)
 
 (ert-deftest fzfa-swiper-all-emits-source-line-content ()
-  "Non-file buffers use the buffer name verbatim as the SOURCE field."
+  "Candidates display LINE:CONTENT; source rides on `fzfa-location'.
+The buffer name (or file path) is no longer embedded in the candidate
+string — it is carried in-band as an `fzfa-location' text property at
+position 0, so fzf scores only against LINE:CONTENT and the source is
+surfaced via `fzfa--location-group' as the section header."
   (let ((buf (generate-new-buffer " *fzfa-test-src*")))
     (unwind-protect
         (progn
@@ -187,8 +191,11 @@ Mocks `expand-file-name' so `fzfa-tramp' reads the temp file."
             (insert "hello\n"))
           (cl-letf (((symbol-function 'buffer-list) (lambda () (list buf))))
             (let* ((args (fzfa-test--extract #'fzfa-swiper-all))
-                   (cands (plist-get args :items)))
-              (should (member "fzfa-test-buf:1:hello" cands)))))
+                   (cands (plist-get args :items))
+                   (cand (car (cl-member "1:hello" cands :test #'equal))))
+              (should cand)
+              (should (equal (get-text-property 0 'fzfa-location cand)
+                             '("fzfa-test-buf" . 1))))))
       (kill-buffer buf))))
 
 ;;; fzfa--format-stats
