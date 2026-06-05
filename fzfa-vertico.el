@@ -248,27 +248,17 @@ untouched candidate string."
   :type 'string
   :group 'fzfa-vertico)
 
-(defcustom fzfa-vertico-columns-source-sort 'source-idx
+(defcustom fzfa-vertico-columns-source-sort 'scored
   "How to order group columns.
-The default upstream candidate list reflects MRU/history
-promotion done by `fzfa--sort-by-history', so groups discovered
-in left-to-right scan order look random across sessions.  This
-option restores a stable column order:
 
-  source-idx   Sort by the `fzfa-src-idx' text property that
-               `fzfa-multi-read' stamps on each candidate — i.e.,
-               the declared source order.  Falls back to
-               discovery order for non-multi completions where
-               no candidate carries the property.
-  declared     Alias for source-idx.
-  discovered   Keep the order in which groups first appear in
-               `vertico--candidates' (MRU-driven, can shuffle).
+  declared     Sort by declared order.
+  scored       Groups are sorted by their first candidates score.
+               Default.
   alphabetical Sort group names lexicographically.
   function     A function called with the partition list
                ((GROUP . CANDS) ...) returning the reordered list."
-  :type '(choice (const :tag "By declared source order" source-idx)
-                 (const :tag "By declared source order (alias)" declared)
-                 (const :tag "First-seen / MRU-driven" discovered)
+  :type '(choice (const :tag "By declared source order (alias)" declared)
+                 (const :tag "By per-source fzf score (rank-sorted)" scored)
                  (const :tag "Alphabetical" alphabetical)
                  (function :tag "Custom function"))
   :group 'fzfa-vertico)
@@ -320,12 +310,29 @@ Used as the sort key for the `source-idx' ordering mode."
              (get-text-property 0 'fzfa-src-idx c))
         most-positive-fixnum)))
 
+(defun fzfa-vertico--empty-query-p ()
+  "Return non-nil when the active minibuffer holds no user query.
+Used by the `scored' column-sort mode to lock declared order
+while sources stream in — without a query there is no rank to
+follow, and async arrival order would otherwise shuffle columns."
+  (when-let* ((win (active-minibuffer-window)))
+    (with-current-buffer (window-buffer win)
+      (= (minibuffer-prompt-end) (point-max)))))
+
 (defun fzfa-vertico--sort-parts (parts)
   "Order PARTS according to `fzfa-vertico-columns-source-sort'.
 `sort' is stable, so groups with equal sort keys (e.g., no
 `fzfa-src-idx' property) retain their discovery order."
   (pcase fzfa-vertico-columns-source-sort
-    ('discovered parts)
+    ('scored
+     ;; Empty query → lock declared order so async streaming doesn't
+     ;; shuffle columns as sources arrive at different times.  With a
+     ;; query, follow `vertico--candidates' discovery order, which
+     ;; `fzfa--multi-read' merges in rank order (strongest source first).
+     (if (fzfa-vertico--empty-query-p)
+         (sort parts (lambda (a b) (< (fzfa-vertico--src-idx-of a)
+                                      (fzfa-vertico--src-idx-of b))))
+       parts))
     ('alphabetical
      (sort parts (lambda (a b) (string< (car a) (car b)))))
     ((or 'source-idx 'declared)

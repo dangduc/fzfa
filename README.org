@@ -678,10 +678,14 @@ Per-source scrolling kicks in when a column has more candidates than the
 band's row budget — the column containing the selection scrolls to keep it
 visible while the other columns stay parked at the top.
 
-Source-column ordering is stable by default: columns appear in the order
-declared in ~fzfa-find-any-commands~ / ~fzfa-find-some-commands~ via the
-~fzfa-src-idx~ text property that ~fzfa-multi-read~ stamps on each
-candidate.
+Source-column ordering follows fzf score by default
+(~fzfa-vertico-columns-source-sort~ = ~scored~): with a query active,
+each group is sorted by its first candidate's score, so the
+strongest-matching source's column floats to the left and the cursor
+at flat index 0 sits at column 0 row 0.  On empty input, fall back to
+~declared~ order. Set the option to ~declared~ to
+pin declared order in all cases, ~alphabetical~ for lexicographic
+group names, or a function for custom ordering.
 
 Navigation while the mode is active:
 
