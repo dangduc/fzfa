@@ -136,10 +136,11 @@ The header consumes one slot of `vertico-count'."
 (defface fzfa-vertico-columns-header
   '((t :inherit minibuffer-prompt))
   "Face for source-name header text in `fzfa-vertico-columns-mode'.
-The underline rule beneath each header is layered on at render
-time using `window-divider's foreground, so it tracks theme
-changes alongside the column-separator hairline.  Customize this
-face to change the header text's own foreground / weight."
+The overline above and underline beneath each header are layered
+on at render time using `window-divider's foreground, so the
+framing rules track theme changes alongside the column-separator
+hairline.  Customize this face to change the header text's own
+foreground / weight."
   :group 'fzfa-vertico)
 
 (defcustom fzfa-vertico-columns-header-face 'fzfa-vertico-columns-header
@@ -457,17 +458,18 @@ match-fontification stay consistent with vertico's defaults."
     (truncate-string-to-width trimmed width 0 ?\s)))
 
 (defun fzfa-vertico--header-face-spec ()
-  "Return a face spec for header text with a `window-divider'-colored rule.
-Combines `fzfa-vertico-columns-header-face' (text style) with an
-underline whose color is pulled from `window-divider's foreground
-so it visually matches the column-separator hairline.  Falls back
-to a plain foreground-colored underline when `window-divider' has
-no specified foreground."
-  (let ((color (face-attribute 'window-divider :foreground nil t)))
+  "Return a face spec for header text with `window-divider'-colored rules.
+Wraps `fzfa-vertico-columns-header-face' in an overline plus an
+underline, both drawn in `window-divider's foreground so the
+two rules visually frame each header into a tabular row that
+matches the column-separator hairline.  Falls back to plain
+foreground-colored rules when `window-divider' has no specified
+foreground."
+  (let* ((raw (face-attribute 'window-divider :foreground nil t))
+         (color (and (stringp raw) raw)))
     `(:inherit ,fzfa-vertico-columns-header-face
-               :underline ,(if (and color (not (eq color 'unspecified)))
-                               `(:color ,color :style line)
-                             t))))
+               :overline ,(or color t)
+               :underline ,(if color `(:color ,color :style line) t))))
 
 (defun fzfa-vertico--scroll-offset (data-cap cur-row n-items)
   "Per-source scroll offset that keeps CUR-ROW visible.
