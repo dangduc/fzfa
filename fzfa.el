@@ -745,18 +745,110 @@ UI even when several large pools are tearing down."
                            (run-with-idle-timer 0 nil step))))))
         (run-with-idle-timer 0 nil step)))))
 
+;;; History
+
+(defvar fzfa--hist-hash nil
+  "Cached string→position hash for the active minibuffer history.
+Lower positions are more recent.  Built lazily by `fzfa--history-hash'.")
+
+(defvar fzfa--hist-hash-last-val nil
+  "List `fzfa--hist-hash' was built from; `eq'-compared per call.
+Any update to the history list (entries cons onto the head) breaks
+identity and triggers a rebuild.")
+
+(defun fzfa--history-hash ()
+  "Return a cached string→position hash for the active minibuffer history.
+
+Reads `minibuffer-history-variable', which `completing-read' dynamically
+binds to the HIST argument supplied by the caller.  Returns nil when no
+real history variable is in effect.  Lower positions are more recent.
+
+Reuses `fzfa--hist-hash' as long as the underlying list is `eq' to the
+value the hash was built from; new entries cons onto the head, so any
+update invalidates the cache."
+  (let* ((sym (and (not (eq minibuffer-history-variable t))
+                   minibuffer-history-variable))
+         (hist (and sym (symbol-value sym))))
+    (cond
+     ((eq hist fzfa--hist-hash-last-val) fzfa--hist-hash)
+     (t
+      (setq fzfa--hist-hash-last-val hist)
+      (setq fzfa--hist-hash
+            (when hist
+              (let ((table (make-hash-table :test 'equal :size (length hist))))
+                (cl-loop for index from 0
+                         for item in hist
+                         unless (gethash item table)
+                         do (puthash item index table))
+                table)))))))
+
+(defun fzfa--sort-by-history (completions)
+  "Order COMPLETIONS by recency in the active minibuffer history.
+
+Only reorders when the fzf query is empty: with no query the candidate
+list comes back in its source order (typically alphabetical), so we
+promote recently used entries to the top.  When the query is non-empty
+COMPLETIONS arrive in fzf-native's scored order and are returned
+unchanged.  `sort' is stable, so entries absent from history keep their
+incoming relative order."
+  (let ((query (fzfa--current-query "")))
+    (if (not (string-empty-p query))
+        completions
+      (if-let* ((hist (fzfa--history-hash)))
+          (mapcar
+           #'car
+           (sort
+            (mapcar
+             (lambda (c)
+               (cons c (or (gethash c hist) most-positive-fixnum)))
+             completions)
+            (lambda (a b) (< (cdr a) (cdr b)))))
+        completions))))
+
+(defun fzfa--history-rank (candidates hist-sym)
+  "Return CANDIDATES reordered by recency in HIST-SYM, tofu-stripped.
+
+HIST-SYM is a history variable symbol (or nil).  Each candidate is
+looked up via `fzfa--tofu-hide' so multi-source entries carrying an
+invisible PUA suffix still match the bare strings stored in history.
+Candidates absent from HIST-SYM keep their incoming relative order — a
+stable `sort' preserves source order for ties at `most-positive-fixnum'.
+
+Returns CANDIDATES unchanged when HIST-SYM is nil, unbound, or empty.
+This helper is the multi-source analogue of `fzfa--sort-by-history',
+where the active `minibuffer-history-variable' isn't meaningful because
+multi's outer `completing-read' is intentionally called with HIST nil."
+  (let ((hist (and hist-sym (boundp hist-sym) (symbol-value hist-sym))))
+    (if (not hist)
+        candidates
+      (let ((table (make-hash-table :test 'equal :size (length hist))))
+        (cl-loop for index from 0
+                 for item in hist
+                 unless (gethash item table)
+                 do (puthash item index table))
+        (mapcar
+         #'car
+         (sort
+          (mapcar
+           (lambda (c)
+             (cons c (or (gethash (fzfa--tofu-hide c) table)
+                         most-positive-fixnum)))
+           candidates)
+          (lambda (a b) (< (cdr a) (cdr b)))))))))
+
 (cl-defun fzfa--completion-metadata (category &key annotate affix group)
   "Return the `metadata' alist for fzfa's `completing-read' collection lambdas.
 
 CATEGORY is the completion category symbol.  Optional ANNOTATE / AFFIX /
 GROUP attach `annotation-function', `affixation-function', and
 `group-function' when non-nil.  `display-sort-function' and
-`cycle-sort-function' are pinned to `identity' so frontends preserve the
-order produced by the C scorer."
+`cycle-sort-function' route through `fzfa--sort-by-history' so the empty
+query surfaces recent picks first, while scored output produced by the C
+scorer is preserved verbatim."
   `(metadata
     (category . ,category)
-    (display-sort-function . identity)
-    (cycle-sort-function . identity)
+    (display-sort-function . fzfa--sort-by-history)
+    (cycle-sort-function . fzfa--sort-by-history)
     ,@(when annotate `((annotation-function . ,annotate)))
     ,@(when affix    `((affixation-function . ,affix)))
     ,@(when group    `((group-function      . ,group)))))
@@ -1781,7 +1873,16 @@ Per-source plist keys:
   :directory Working directory for :command (default `default-directory').
   :annotate  Optional (cand) -> string annotation function.
   :action    Optional (cand) -> any.  Called with the selection.  When
-             omitted, the raw selection string is returned."
+             omitted, the raw selection string is returned.
+  :history   Optional history variable symbol.  When set, the cleaned
+             selection (tofu suffix stripped) is pushed via
+             `add-to-history' on exit — mirroring the HIST push that
+             would have happened if the source's own `completing-read'
+             had run.  On empty input, the source's candidate slot is
+             additionally reordered by this history so recent picks
+             surface first.  Sync sources extracted from existing
+             `fzfa-*' commands inherit this from each source's
+             `fzfa-sync-completing-read' :history argument."
   (cond
    ;; Composability: when this multi is being extracted by an outer
    ;; `fzfa-multi-read', throw our merged SOURCES so the
@@ -2102,18 +2203,31 @@ Per-source plist keys:
                                                     (minibuffer-prompt-end))))
                               (funcall refresh-overlay)))
                           (let* ((order (number-sequence 0 (1- n)))
+                                 (empty-q (string-empty-p query))
                                  ;; `sort' is stable since Emacs 25, so equal
                                  ;; ranks preserve declared source order.
                                  (sorted
-                                  (if (string-empty-p query)
+                                  (if empty-q
                                       order
                                     (sort order
                                           (lambda (a b)
                                             (> (aref rank a)
                                                (aref rank b)))))))
                             (apply #'append
-                                   (mapcar (lambda (i) (aref last-results i))
-                                           sorted)))))
+                                   (mapcar
+                                    (lambda (i)
+                                      (let* ((slot (aref last-results i))
+                                             ;; Per-source recency only on
+                                             ;; empty input — when scoring
+                                             ;; ran, fzf order wins.
+                                             (hist (and empty-q
+                                                        (plist-get
+                                                         (aref sources-v i)
+                                                         :history))))
+                                        (if hist
+                                            (fzfa--history-rank slot hist)
+                                          slot)))
+                                    sorted)))))
                        (_ t)))
                    nil t))))
       (when timer (cancel-timer timer))
@@ -2127,7 +2241,14 @@ Per-source plist keys:
                          (fzfa--multi-source-of
                           result sources-v cand->src)))
              (action (and src (plist-get src :action)))
-             (clean  (fzfa--tofu-hide result)))
+             (clean  (fzfa--tofu-hide result))
+             (hist   (and src (plist-get src :history))))
+        ;; Multi bypasses each source's inner `completing-read', so the
+        ;; source's natural HIST push never fires.  Mirror it here so
+        ;; recency-aware sources (e.g. `extended-command-history') stay
+        ;; consistent whether picked directly or via a multi.
+        (when (and hist (symbolp hist) (not (eq hist t)))
+          (add-to-history hist clean))
         (if action (funcall action clean) clean)))))
 
 ;;;###autoload
