@@ -22,10 +22,16 @@
 ;; the command is usable immediately.
 ;;
 ;; Commands:
-;;   `fzfa-vc-modified-files'  Multi-source picker over the current
-;;                             repo's modified/added/staged/HEAD files
+;;   `fzfa-vc-modified-files'      Multi-source picker over the current
+;;                                 repo's modified/added/staged/HEAD files
+;;   `fzfa-vc-modified-locally'    Single-source: locally modified files
+;;   `fzfa-vc-added-files'         Single-source: added (untracked) files
+;;   `fzfa-vc-staged-for-commit'   Single-source: staged-for-commit files
+;;   `fzfa-vc-modified-in-head'    Single-source: files modified in HEAD
 ;;
-;; The per-source commands themselves live in the backend extensions
+;; The single-source commands dispatch to the appropriate backend
+;; entry in `fzfa-vc-modified-files-sources'; the per-source commands
+;; themselves live in the backend extensions
 ;; (`fzfa-git-modified-locally', `fzfa-hg-modified-locally', ...) and
 ;; can be called directly, bypassing this dispatcher entirely.
 ;;
@@ -83,6 +89,50 @@ group headers; selection invokes the source's underlying command."
                backend))))
     (fzfa-multi-read (mapcar #'cdr sources)
                      :prompt (format "vc files [%s]: " backend))))
+
+(defun fzfa-vc--dispatch (id)
+  "Invoke the backend-specific command bound to ID in the current repo.
+ID is a key in the per-backend alists of
+`fzfa-vc-modified-files-sources' (e.g. `modified-locally')."
+  (require 'vc-hooks)
+  (let* ((backend (fzfa-vc--backend))
+         (sources (alist-get backend fzfa-vc-modified-files-sources))
+         (cmd (alist-get id sources)))
+    (unless cmd
+      (user-error "Backend %s has no `%s' source" backend id))
+    (call-interactively cmd)))
+
+;;;###autoload
+(defun fzfa-vc-modified-locally ()
+  "Pick a locally modified file from the current VC repository.
+Dispatches to the backend's `modified-locally' source in
+`fzfa-vc-modified-files-sources'."
+  (interactive)
+  (fzfa-vc--dispatch 'modified-locally))
+
+;;;###autoload
+(defun fzfa-vc-added-files ()
+  "Pick an added (untracked) file from the current VC repository.
+Dispatches to the backend's `added-files' source in
+`fzfa-vc-modified-files-sources'."
+  (interactive)
+  (fzfa-vc--dispatch 'added-files))
+
+;;;###autoload
+(defun fzfa-vc-staged-for-commit ()
+  "Pick a staged-for-commit file from the current VC repository.
+Dispatches to the backend's `staged-for-commit' source in
+`fzfa-vc-modified-files-sources'."
+  (interactive)
+  (fzfa-vc--dispatch 'staged-for-commit))
+
+;;;###autoload
+(defun fzfa-vc-modified-in-head ()
+  "Pick a file modified in HEAD from the current VC repository.
+Dispatches to the backend's `modified-in-head' source in
+`fzfa-vc-modified-files-sources'."
+  (interactive)
+  (fzfa-vc--dispatch 'modified-in-head))
 
 (provide 'fzfa-vc)
 ;;; fzfa-vc.el ends here
