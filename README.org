@@ -588,6 +588,52 @@ each input change.
 
 Caveat: I mostly use ~vertico~ these days so wasn't exhaustive with using the
 other completion systems.
+** vertico
+There's also a ~vertico~ extension that wires up
+~fzfa-vertico-columns-mode~, a per-group column layout for multi-source
+sessions.  Each completion group renders as its own vertical column instead
+of vertico's default stacked layout, which keeps every source visible at a
+glance and removes the need to scroll past one group to reach another.
+
+#+HTML: <video src="https://github.com/user-attachments/assets/0451785f-4b68-4e23-9370-88d65f4a4039" controls style="max-width: 100%; height: auto;"></video>
+
+When the number of groups exceeds ~fzfa-vertico-columns-max~ (3 by
+default), the overflow groups wrap into additional bands stacked below.
+
+Per-source scrolling kicks in when a column has more candidates than the
+band's row budget — the column containing the selection scrolls to keep it
+visible while the other columns stay parked at the top.
+
+Source-column ordering is stable by default: columns appear in the order
+declared in ~fzfa-find-any-commands~ / ~fzfa-find-some-commands~ via the
+~fzfa-src-idx~ text property that ~fzfa-multi-read~ stamps on each
+candidate.
+
+Navigation while the mode is active:
+
+| Key                  | Action                                             |
+|----------------------+----------------------------------------------------|
+| ~M-l~                | Next source in reading order (wraps at band edge)  |
+| ~M-h~                | Previous source                                    |
+| ~M-j~                | Next band (same column-in-band; whole-band jump)   |
+| ~M-k~                | Previous band                                      |
+| ~<up>~ / ~<down>~    | Within the current source's column                 |
+| ~<left>~ / ~<right>~ | Alias for ~M-h~ / ~M-l~                            |
+
+Activation is per-category via ~vertico-multiform-mode~ rather than
+global: ~fzfa-vertico-setup~ adds each category listed in
+~fzfa-vertico-multiform-categories~ (defaults to ~(fzfa-multi)~) to
+~vertico-multiform-categories~ as ~(CATEGORY fzfa-vertico-columns-mode)~,
+and enables ~vertico-multiform-mode~ if not already on.  Columns then
+activate inside ~fzfa-multi-read~ / ~fzfa-find-any~ / ~fzfa-find-some~
+sessions and tear down on exit — single-source pickers, file finders,
+and unrelated minibuffer prompts are untouched.
+
+Set ~fzfa-vertico-columns-auto~ to nil to skip all auto-wiring (e.g. to
+enable the mode globally yourself or scope it differently).  Add other
+categories to ~fzfa-vertico-multiform-categories~ to extend the layout
+to other multi-group pickers (for example ~imenu~ when its buckets are
+group-functioned).
 ** ivy / counsel
 Ivy uses a *push model*: the completion UI holds its own internal candidate
 list (~ivy--all-candidates~) and does not re-call the collection function
