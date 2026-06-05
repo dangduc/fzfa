@@ -217,6 +217,37 @@ you also want columns there."
   :type '(repeat symbol)
   :group 'fzfa-vertico)
 
+(defcustom fzfa-vertico-columns-truncate 'auto
+  "How to truncate candidates that exceed the column width.
+
+  left      Keep the leading characters; replace the tail with
+            `fzfa-vertico-columns-ellipsis'.  Matches Emacs's
+            default `truncate-string-to-width' behaviour.
+  right     Keep the trailing characters; replace the head with
+            the ellipsis.  Best for file paths and grep-style
+            FILE:LINE:CONTENT candidates where the suffix
+            (basename, match content) is the identifying part.
+  auto      Per-candidate heuristic — `right' when the candidate
+            looks path-like (contains `/' or starts with `~'),
+            `left' otherwise.  Default.
+  function  Called with (CAND WIDTH) and must return a string of
+            visible width WIDTH (pad with spaces if shorter).
+
+Truncation affects only the display: fzf scoring and the
+`completing-read' return value always operate on the full
+untouched candidate string."
+  :type '(choice (const :tag "Left-anchored (keep prefix)" left)
+                 (const :tag "Right-anchored (keep suffix)" right)
+                 (const :tag "Auto-detect path-like" auto)
+                 (function :tag "Custom function"))
+  :group 'fzfa-vertico)
+
+(defcustom fzfa-vertico-columns-ellipsis
+  (if (char-displayable-p ?…) "…" "...")
+  "String used to mark truncated candidates in the columns layout."
+  :type 'string
+  :group 'fzfa-vertico)
+
 (defcustom fzfa-vertico-columns-source-sort 'source-idx
   "How to order group columns.
 The default upstream candidate list reflects MRU/history
@@ -487,6 +518,83 @@ Falls back to `vertico-previous' when the layout is single-column."
 
 ;;; Rendering
 
+(defun fzfa-vertico--path-like-p (s)
+  "Heuristic: non-nil when S looks like a file path / grep-style result.
+Used by the `auto' value of `fzfa-vertico-columns-truncate' to
+pick right-anchored truncation for path-bearing candidates."
+  (or (string-match-p "/" s)
+      (string-prefix-p "~" s)))
+
+(defconst fzfa-vertico--match-faces
+  '(completions-common-part completions-first-difference)
+  "Faces vertico applies to matched characters in `vertico--hilit'.
+Used to detect when right-truncation would drop a matched span
+off the leading edge, so the ellipsis can carry the hint forward.")
+
+(defun fzfa-vertico--has-match-face-p (s)
+  "Return non-nil when S contains any `fzfa-vertico--match-faces' span.
+Walks face text properties with `next-single-property-change'
+so the scan stays cheap even on long candidates."
+  (let ((i 0) (len (length s)) hit)
+    (while (and (< i len) (not hit))
+      (let* ((face (get-text-property i 'face s))
+             (faces (if (listp face) face (list face))))
+        (when (cl-intersection faces fzfa-vertico--match-faces)
+          (setq hit t)))
+      (setq i (or (next-single-property-change i 'face s) len)))
+    hit))
+
+(defun fzfa-vertico--truncate-right (s width)
+  "Truncate S to visible WIDTH keeping the trailing characters.
+Prepends `fzfa-vertico-columns-ellipsis' when truncation occurs.
+Text properties on the surviving suffix are preserved, so
+vertico's match highlights and the selection face survive intact
+on whatever portion of the candidate remains visible.  When the
+dropped prefix contained a match, the ellipsis itself is
+propertized with `completions-common-part' so the column still
+signals \"there's a match in the part you can't see\"."
+  (let* ((ell fzfa-vertico-columns-ellipsis)
+         (ell-w (string-width ell))
+         (full-w (string-width s)))
+    (cond
+     ((<= full-w width)
+      (concat s (make-string (- width full-w) ?\s)))
+     ((>= ell-w width) ell)
+     (t
+      ;; Advance until we've dropped enough leading visible width to
+      ;; let the ellipsis + suffix fit, then keep the rest.  Wide
+      ;; chars may overshoot by 1 column; pad to WIDTH if so.
+      (let* ((target (- width ell-w))
+             (skip (- full-w target))
+             (acc 0) (i 0) (len (length s)))
+        (while (and (< i len) (< acc skip))
+          (setq acc (+ acc (char-width (aref s i))))
+          (cl-incf i))
+        (let* ((dropped (substring s 0 i))
+               (ell-display
+                (if (fzfa-vertico--has-match-face-p dropped)
+                    (propertize ell 'face 'completions-common-part)
+                  ell))
+               (out (concat ell-display (substring s i)))
+               (ow (string-width out)))
+          (if (>= ow width)
+              out
+            (concat out (make-string (- width ow) ?\s)))))))))
+
+(defun fzfa-vertico--truncate (s width)
+  "Truncate S to visible WIDTH per `fzfa-vertico-columns-truncate'.
+Falls back to standard left-anchored `truncate-string-to-width'
+for unrecognised values."
+  (pcase fzfa-vertico-columns-truncate
+    ('right (fzfa-vertico--truncate-right s width))
+    ('auto (if (fzfa-vertico--path-like-p (substring-no-properties s))
+               (fzfa-vertico--truncate-right s width)
+             (truncate-string-to-width s width 0 ?\s
+                                       fzfa-vertico-columns-ellipsis)))
+    ((pred functionp) (funcall fzfa-vertico-columns-truncate s width))
+    (_ (truncate-string-to-width s width 0 ?\s
+                                 fzfa-vertico-columns-ellipsis))))
+
 (defun fzfa-vertico--render-cell (cand idx width &optional group-fun)
   "Render CAND at flat index IDX, truncated/padded to WIDTH.
 Reuses `vertico--format-candidate' so selection highlighting and
@@ -496,13 +604,17 @@ When GROUP-FUN is non-nil, the candidate is passed through
 the display swap `vertico--arrange-candidates' does for the
 stacked layout.  Highlighting runs first so per-source transforms
 that take a substring of CAND (e.g. `fzfa--grep-group' stripping
-the FILE: prefix) inherit the match faces."
+the FILE: prefix) inherit the match faces.
+
+Width fitting is delegated to `fzfa-vertico--truncate' so
+path-bearing candidates can keep their identifying suffix
+instead of having their basenames chopped off the right."
   (let* ((hi (vertico--hilit (copy-sequence cand)))
          (display (or (and group-fun (funcall group-fun hi 'transform))
                       hi))
          (formatted (vertico--format-candidate display "" "" idx 0))
          (trimmed (string-trim-right formatted "[\r\n]+")))
-    (truncate-string-to-width trimmed width 0 ?\s)))
+    (fzfa-vertico--truncate trimmed width)))
 
 (defun fzfa-vertico--header-face-spec ()
   "Return a face spec for header text with `window-divider'-colored rules.
