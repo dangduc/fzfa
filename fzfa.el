@@ -1228,6 +1228,61 @@ FILTER is empty.  Without a leading separator, the whole STR is CMD."
             (cons (substring str 1) "")))))
     (cons str "")))
 
+(defcustom fzfa-2pass-compact-key "<"
+  "Key string that toggles compact view of the CMD portion.
+When compact, only the program name and the quoted-argument slot
+\(if any) are visible; flags are hidden behind a `...' display.
+Press the key again to expand and edit the full command.  The
+session starts compact.  Set to nil to disable the feature entirely
+\(no binding, no initial compaction)."
+  :type '(choice (const :tag "Disabled" nil) string)
+  :group 'fzfa)
+
+(defun fzfa--2pass-compact-cmd-bounds (sep)
+  "Return (CMD-BEG . CMD-END) for the CMD region in the current minibuffer.
+SEP is the separator character used by the active split style.  Returns
+nil when the minibuffer does not begin with SEP or no closing SEP is
+present yet."
+  (save-excursion
+    (goto-char (minibuffer-prompt-end))
+    (when (eq (char-after) sep)
+      (let ((beg (1+ (point))))
+        (goto-char beg)
+        (when (search-forward (char-to-string sep) nil t)
+          (cons beg (1- (point))))))))
+
+(defun fzfa--2pass-compact-make-overlays (cmd-beg cmd-end)
+  "Return overlays compacting flag regions between CMD-BEG and CMD-END.
+Uses the first balanced `\\='…\\=' / \"…\" pair as anchor: text from
+the end of the program name up to the opening quote renders as
+\" ... \", and any tail after the closing quote renders as \"\".
+Without a quoted argument, everything after the program name is
+hidden with an empty display.  Whitespace-only spans are left alone."
+  (let* ((cmd-text (buffer-substring-no-properties cmd-beg cmd-end))
+         (prog-end (if (string-match "\\`[^ \t]+" cmd-text)
+                       (+ cmd-beg (match-end 0))
+                     cmd-end))
+         (qm (string-match "\\('[^']*'\\|\"[^\"]*\"\\)" cmd-text))
+         overlays)
+    (cl-flet ((mk (beg end display)
+                (when (and (< beg end)
+                           (string-match-p
+                            "[^ \t]"
+                            (buffer-substring-no-properties beg end)))
+                  (let ((ov (make-overlay beg end nil t nil)))
+                    (overlay-put ov 'display display)
+                    (overlay-put ov 'fzfa-2pass-compact t)
+                    (push ov overlays)))))
+      (cond
+       (qm
+        (let ((qb (+ cmd-beg qm))
+              (qe (+ cmd-beg (match-end 0))))
+          (mk prog-end qb " ... ")
+          (mk qe cmd-end "")))
+       (t
+        (mk prog-end cmd-end ""))))
+    overlays))
+
 ;;;###autoload
 (cl-defun fzfa-2pass-completing-read
     (&key prompt
@@ -1296,6 +1351,25 @@ changing FILTER rescores in place via fzf-native.
          (last-restart-time 0.0)
          (pending-cmd nil)
          (stats-overlay nil)
+         (compact-overlays nil)
+         (compact-on nil)
+         (compact-clear
+          (lambda ()
+            (mapc #'delete-overlay compact-overlays)
+            (setq compact-overlays nil)))
+         (compact-apply
+          (lambda ()
+            (when-let* ((bounds (fzfa--2pass-compact-cmd-bounds
+                                 initial-char)))
+              (setq compact-overlays
+                    (fzfa--2pass-compact-make-overlays
+                     (car bounds) (cdr bounds))))))
+         (compact-toggle
+          (lambda ()
+            (interactive)
+            (funcall compact-clear)
+            (setq compact-on (not compact-on))
+            (when compact-on (funcall compact-apply))))
          restart-timer retry-timer poll-timer
          (refresh-overlay
           (lambda ()
@@ -1433,13 +1507,22 @@ changing FILTER rescores in place via fzf-native.
                       (when-let* ((win (active-minibuffer-window)))
                         (with-selected-window win
                           (goto-char (+ (minibuffer-prompt-end) p))))))))
-               (fzfa--minibuffer-format-reset))
+               (fzfa--minibuffer-format-reset)
+               (when fzfa-2pass-compact-key
+                 (let ((map (make-sparse-keymap)))
+                   (set-keymap-parent map (current-local-map))
+                   (define-key map (kbd fzfa-2pass-compact-key)
+                               compact-toggle)
+                   (use-local-map map))
+                 (setq compact-on t)
+                 (funcall compact-apply)))
            (completing-read prompt table nil nil init-text nil))
        (when poll-timer (cancel-timer poll-timer))
        (when retry-timer (cancel-timer retry-timer))
        (when restart-timer (cancel-timer restart-timer))
        (remove-hook 'post-command-hook refresh-overlay)
        (when stats-overlay (delete-overlay stats-overlay))
+       (funcall compact-clear)
        (fzfa--defer-async-stop handle))
      directory resolve-paths)))
 

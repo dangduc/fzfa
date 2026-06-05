@@ -460,6 +460,28 @@ using ~fussy~ as the ~completion-style~.):
 
 #+HTML: <video src="https://github.com/user-attachments/assets/d6580b1b-13ee-40df-8626-f8ed4ac2ecd8" controls style="max-width: 100%; height: auto;"></video>
 
+** Compact view
+
+The shell command in a ~-2p~ session can be long (e.g. ~rg
+--line-number --no-heading --with-filename %s ''~), and most of the
+time you only want to type into the quoted-argument slot.  Each ~-2p~
+minibuffer therefore starts in *compact* mode: flags are hidden by default.
+
+#+begin_example
+  Compact:   #rg ... '|'#
+  Expanded:  #rg --line-number --no-heading --with-filename %s '|'#
+#+end_example
+
+If there is no quoted-argument slot in the command, the entire flag
+tail is hidden silently (e.g. ~find %s -type f~ shows as ~#find#~).
+
+Press ~<~ inside the minibuffer to toggle between compact and
+expanded.
+
+Customize ~fzfa-2pass-compact-key~ to change the key, or set it to
+~nil~ to disable the feature entirely (no binding, no initial
+compaction — the full command is shown verbatim, as before).
+
 ** Two-pass configuration & autoloading
 | Command              | Variant                  | Source file       |
 |----------------------+--------------------------+-------------------|
