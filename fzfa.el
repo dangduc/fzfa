@@ -714,9 +714,9 @@ keeps fzfa functional on older fzf-native builds."
   "Schedule `fzf-native-async-stop' on HANDLES off the synchronous unwind path.
 
 HANDLES may be a single async handle, a list, or a vector; nil values
-\(including nil HANDLES) are ignored.  Stops are batched into a single
-idle timer; the closure retains the live-handle list so it survives the
-caller's unwind.
+\(including nil HANDLES) are ignored.  Stops are chained one-per-idle-tick
+so redisplay can run between them; the closure retains the live-handle
+list so it survives the caller's unwind.
 
 The C-side destroy does pthread_join on the scoring thread
 \(uninterruptible snapshot/score work for huge pools) and frees the
@@ -725,7 +725,12 @@ None of it is needed before minibuffer dismissal, so deferring this
 lets ESC return instantly.  An idle timer (rather than `run-at-time' 0)
 ensures the join is wedged between user keystrokes only when the user
 has actually paused — keeping the pthread_join out of the user's typing
-rhythm in trade for holding the arena slightly longer."
+rhythm in trade for holding the arena slightly longer.
+
+For multi sessions with N async sources, joining all N in one idle tick
+freezes Emacs for the sum of their join times.  Popping one handle per
+tick yields the main thread between joins so the user sees a responsive
+UI even when several large pools are tearing down."
   (let ((live (cond
                ((null handles) nil)
                ((vectorp handles)
@@ -733,9 +738,12 @@ rhythm in trade for holding the arena slightly longer."
                ((listp handles) (delq nil (copy-sequence handles)))
                (t (list handles)))))
     (when live
-      (run-with-idle-timer 0 nil
-                           (lambda ()
-                             (dolist (h live) (fzf-native-async-stop h)))))))
+      (letrec ((step (lambda ()
+                       (when live
+                         (fzf-native-async-stop (pop live))
+                         (when live
+                           (run-with-idle-timer 0 nil step))))))
+        (run-with-idle-timer 0 nil step)))))
 
 (cl-defun fzfa--completion-metadata (category &key annotate affix group)
   "Return the `metadata' alist for fzfa's `completing-read' collection lambdas.
