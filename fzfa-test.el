@@ -673,18 +673,18 @@ when the inner sources arrive without `:narrow'."
                                                    (< (car a) (car b))))
                    '((0 . nil) (1 . "picked"))))))
 
-(ert-deftest fzfa-preview-show-honors-display-action ()
-  "`fzfa-preview-show' passes `fzfa-preview-display-action' to `display-buffer'."
+(ert-deftest fzfa-preview-show-uses-same-window ()
+  "`fzfa-preview-show' lands the buffer in the currently selected window.
+`fzfa--preview-call' selects the originating window before invoking
+handlers, so passing `display-buffer-same-window' here keeps preview
+and the eventual post-selection action sharing one window slot."
   (with-temp-buffer
     (let* ((buf (current-buffer))
-           captured
-           (fzfa-preview-display-action
-            '(display-buffer-in-side-window (side . left)
-                                            (window-width . 0.3))))
+           captured)
       (cl-letf (((symbol-function 'display-buffer)
                  (lambda (_b action) (setq captured action))))
         (fzfa-preview-show buf))
-      (should (equal captured fzfa-preview-display-action)))))
+      (should (equal captured '(display-buffer-same-window))))))
 
 (ert-deftest fzfa-preview-show-moves-point ()
   "`fzfa-preview-show' moves point in BUFFER when POS is supplied."
