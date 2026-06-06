@@ -2232,7 +2232,8 @@ Per-source plist keys:
                           (define-key map (kbd fzfa-multi-narrow-key)
                                       narrow-handler)
                           (use-local-map map))))
-                  (let ((fzfa--multi-active-sources sources-v))
+                  (let ((fzfa--multi-active-sources sources-v)
+                        (ivy-completing-read-dynamic-collection t))
                     (completing-read
                      prompt
                      (lambda (str _pred action)
