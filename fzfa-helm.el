@@ -113,43 +113,69 @@ hasn't run yet).  Numbers comma-formatted via `fzfa--commas'."
       (format " (%s/%s)" (fzfa--commas filtered) (fzfa--commas total))
     ""))
 
-;;; Annotation transformer — `marginalia' style suffixes
+;;; Display transformer — preserves text properties and optionally annotates
 
-(defun fzfa-helm--make-annotate-transformer (annotate)
-  "Return a `:filtered-candidate-transformer' that suffixes ANNOTATE per row.
+(defun fzfa-helm--make-display-transformer (annotate)
+  "Return a `:filtered-candidate-transformer' for fzfa helm sources.
 
-ANNOTATE is a one-arg function (CAND) -> STRING.  The returned
-transformer builds (DISPLAY . REAL) cons cells where DISPLAY is the
-candidate string plus padding plus the annotation (faced as
-`completions-annotations'), and REAL is the original candidate — so
-fzf-native scoring runs against the raw candidate, and helm's
-`:action' receives the raw value rather than the rendered string.
+Always returns (DISPLAY . REAL) cons cells.  helm's cons-cell render
+path sets `helm-realvalue' on the inserted DISPLAY to REAL, which
+`helm-get-selection' reads to preserve the original (propertized)
+candidate — counteracting helm's default extraction via
+`buffer-substring-no-properties' that would otherwise strip text
+properties (load-bearing for candidates like `fzfa-swiper''s, which
+carry the buffer/line target on a `fzfa-location' property).  When
+ANNOTATE is nil this is the only thing the transformer does — REAL
+passthrough, no decoration.
 
-Pads suffixes to a shared column within each rendered batch.  Rows
-whose annotation comes back empty are returned as plain strings (no
-DISPLAY/REAL cons), so unannotated entries don't get gratuitous
-trailing whitespace."
+When ANNOTATE is non-nil it's a (CAND) -> STRING function whose
+output is rendered as a per-row suffix (faced as
+`completions-annotations', column-aligned within the rendered
+batch).  Rows whose annotation comes back empty are still wrapped
+as (CAND . CAND) so realvalue preservation is uniform.
+
+Renders the helm-side analogue of vertico+marginalia's right-column
+annotations — for buffer sources, file sources, etc., where the
+candidate string alone doesn't carry enough context."
   (lambda (cands _source)
-    (let* ((entries
-            (mapcar (lambda (c)
-                      (cons c (or (funcall annotate c) "")))
-                    cands))
-           (maxw (apply #'max 0
-                        (mapcar (lambda (e)
-                                  (string-width (car e)))
-                                entries))))
-      (mapcar (lambda (e)
-                (let* ((cand (car e))
-                       (ann  (cdr e)))
-                  (if (string-empty-p ann)
-                      cand
-                    (let ((pad (- (1+ maxw) (string-width cand))))
-                      (cons (concat cand
-                                    (make-string (max 1 pad) ?\s)
-                                    (propertize ann 'face
-                                                'completions-annotations))
-                            cand)))))
-              entries))))
+    (cond
+     ;; Annotation path: always returns cons cells (display ≠ real).
+     (annotate
+      (let* ((entries
+              (mapcar (lambda (c)
+                        (cons c (or (funcall annotate c) "")))
+                      cands))
+             (maxw (apply #'max 0
+                          (mapcar (lambda (e)
+                                    (string-width (car e)))
+                                  entries))))
+        (mapcar (lambda (e)
+                  (let* ((cand (car e))
+                         (ann  (cdr e)))
+                    (if (string-empty-p ann)
+                        (cons cand cand)
+                      (let ((pad (- (1+ maxw) (string-width cand))))
+                        (cons (concat cand
+                                      (make-string (max 1 pad) ?\s)
+                                      (propertize ann 'face
+                                                  'completions-annotations))
+                              cand)))))
+                entries)))
+     ;; No annotation: wrap as (c . c) ONLY when candidates carry text
+     ;; properties (preserving them via `helm-realvalue').  Probe the
+     ;; first candidate as a proxy for the whole batch — fzfa sources
+     ;; build candidates uniformly via the same propertizer (e.g.
+     ;; `fzfa--location-candidate' attaches `fzfa-location' to every
+     ;; row), so checking one is a safe heuristic and saves O(N)
+     ;; allocations on property-free sources (`fzfa-M-x',
+     ;; `fzfa-theme', raw shell-command output).
+     ((and (consp cands)
+           (stringp (car cands))
+           (> (length (car cands)) 0)
+           (text-properties-at 0 (car cands)))
+      (mapcar (lambda (c) (cons c c)) cands))
+     ;; Property-free passthrough: zero cons allocations.
+     (t cands))))
 
 ;;; Public source constructors
 
@@ -162,7 +188,7 @@ multi-source bulk cleanup when helm never gets a chance to call
 `:cleanup' itself).
 
 ANNOTATE, when non-nil, is a (CAND) -> STRING function rendered as a
-per-row suffix via `fzfa-helm--make-annotate-transformer'.
+per-row suffix via `fzfa-helm--make-display-transformer'.
 
 Internal — used by both `fzfa-helm-make-async-source' (single-source)
 and `fzfa-helm--multi-read' (batch with bulk-stop)."
@@ -201,9 +227,12 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
             :candidate-number-limit limit
             :cleanup stop
             :action (or action (lambda (cand) cand))
-            (when annotate
-              (list :filtered-candidate-transformer
-                    (fzfa-helm--make-annotate-transformer annotate))))
+            ;; Unconditional: transformer also preserves text
+            ;; properties on candidates via `helm-realvalue', even
+            ;; when ANNOTATE is nil.  See
+            ;; `fzfa-helm--make-display-transformer'.
+            (list :filtered-candidate-transformer
+                  (fzfa-helm--make-display-transformer annotate)))
      stop)))
 
 (cl-defun fzfa-helm-make-async-source
@@ -303,9 +332,13 @@ Each `helm-pattern' change re-scores the full ITEMS list via
            :candidate-number-limit limit
            :cleanup stop
            :action (or action (lambda (cand) cand))
-           (when annotate
-             (list :filtered-candidate-transformer
-                   (fzfa-helm--make-annotate-transformer annotate))))))
+           ;; Unconditional: transformer also preserves text properties
+           ;; on candidates via `helm-realvalue', even when ANNOTATE is
+           ;; nil.  Load-bearing for sources like `fzfa-swiper''s whose
+           ;; `fzfa-location' property would otherwise be stripped by
+           ;; helm's default `buffer-substring-no-properties' extraction.
+           (list :filtered-candidate-transformer
+                 (fzfa-helm--make-display-transformer annotate)))))
 
 ;;; Composition helper — fzfa command -> helm source(s)
 
@@ -780,10 +813,9 @@ for fuzzy-multi-source UX."
                         :candidate-number-limit limit
                         :cleanup stop
                         :action action
-                        (when annotate
-                          (list :filtered-candidate-transformer
-                                (fzfa-helm--make-annotate-transformer
-                                 annotate))))))
+                        (list :filtered-candidate-transformer
+                              (fzfa-helm--make-display-transformer
+                               annotate)))))
               (items
                ;; Sync source inlined here (rather than via
                ;; `fzfa-helm-make-sync-source') so its `:candidates'
@@ -844,10 +876,9 @@ for fuzzy-multi-source UX."
                         :candidate-number-limit limit
                         :cleanup sync-stop
                         :action action
-                        (when annotate
-                          (list :filtered-candidate-transformer
-                                (fzfa-helm--make-annotate-transformer
-                                 annotate))))))
+                        (list :filtered-candidate-transformer
+                              (fzfa-helm--make-display-transformer
+                               annotate)))))
               (t
                (error "fzfa helm multi source has neither :command nor :items: %S"
                       src))))))
