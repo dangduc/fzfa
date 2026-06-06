@@ -85,6 +85,10 @@ Default is `fzfa-helm-multi-source-candidate-limit' × 10."
 (declare-function helm-make-source "helm-source")
 (declare-function helm-force-update "helm-core")
 (declare-function helm-goto-source "helm-core")
+(declare-function helm-set-source-filter "helm-core")
+(declare-function fzfa--format-narrow-hint "fzfa")
+(defvar helm-map)
+(defvar fzfa-multi-narrow-key)
 (declare-function fzfa--multi-rank "fzfa")
 (declare-function fzf-native-async-start "fzf-native")
 (declare-function fzf-native-async-stop "fzf-native")
@@ -1107,7 +1111,53 @@ for fuzzy-multi-source UX."
             (fzfa-preview-put :default-directory default-directory)
             (fzfa--preview-call :setup)))))
     (unwind-protect
-        (progn
+        (let* (;; Narrow-by-source: press `fzfa-multi-narrow-key',
+               ;; then the source's `:narrow' key, to filter helm to
+               ;; that source only.  Press the prefix again to widen.
+               ;; Routes via `helm-set-source-filter' — helm's
+               ;; built-in mechanism for showing a subset of
+               ;; `helm-sources' without rebuilding them.  Each source
+               ;; plist already carries its allocated `:narrow' key
+               ;; (assigned by `fzfa--multi-allocate-narrow-keys' in
+               ;; `fzfa-multi-read' before the dispatch).
+               (narrow-fn
+                (lambda ()
+                  (interactive)
+                  (let* ((sources-v (vconcat sources))
+                         ;; KEY:NAME pairs separated by two spaces, with
+                         ;; the prefix-widen marker at the end, faced
+                         ;; via `fzfa--format-narrow-hint' — same
+                         ;; rendering the vertico narrow menu uses.
+                         (hint (concat
+                                (fzfa--format-narrow-hint
+                                 sources-v nil nil fzfa-multi-narrow-key)
+                                " "))
+                         (source-keys
+                          (cl-loop for src in sources
+                                   for i from 0
+                                   when (plist-get src :narrow)
+                                   collect (cons (plist-get src :narrow)
+                                                 (aref source-names i))))
+                         (c (read-char hint))
+                         (key (string c))
+                         (target (cdr (assoc key source-keys
+                                             #'equal))))
+                    (cond
+                     (target (helm-set-source-filter (list target)))
+                     ((equal key fzfa-multi-narrow-key)
+                      (helm-set-source-filter nil))
+                     (t (message "fzfa: no source bound to narrow key %S"
+                                 key))))))
+               ;; Layer the narrow binding onto a fresh COPY of
+               ;; `helm-map' so the user's helm-map customizations
+               ;; (TAB → persistent-action, etc.) are preserved.
+               (helm-map
+                (if fzfa-multi-narrow-key
+                    (let ((m (copy-keymap helm-map)))
+                      (define-key m (kbd fzfa-multi-narrow-key)
+                                  narrow-fn)
+                      m)
+                  helm-map)))
           (add-hook 'helm-after-update-hook jump-fn)
           (helm :sources helm-sources
                 :prompt (or prompt "fzf-multi: ")
