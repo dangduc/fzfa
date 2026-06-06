@@ -914,8 +914,9 @@ Priority: `fzfa-directory' >
   "Remove duplicates and subdirectory entries from DIRS.
 If directory A is a prefix of directory B, B is dropped — A's recursive
 search already covers it.  Exception: B is kept when it is itself a git
-root (contains a .git entry), since rg honors per-repo gitignores and a
-descend from A may exclude files the user expects to search."
+root (contains a .git entry), so rg's gitignore stack starts at B rather
+than inheriting A's.  Git-specific — rg only honors .gitignore, so .hg
+/ .jj / etc. would just add duplicate hits."
   (let ((unique (cl-delete-duplicates dirs :test #'string=)))
     (cl-loop for dir in unique
              unless (and (not (file-exists-p (expand-file-name ".git" dir)))
