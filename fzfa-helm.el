@@ -70,6 +70,8 @@ under helm-mode), which use the full `fzfa-max-candidates'."
 (declare-function helm "helm-core")
 (declare-function helm-make-source "helm-source")
 (declare-function helm-force-update "helm-core")
+(declare-function helm-goto-source "helm-core")
+(declare-function fzfa--multi-rank "fzfa")
 (declare-function fzf-native-async-start "fzf-native")
 (declare-function fzf-native-async-stop "fzf-native")
 (declare-function fzf-native-async-generation "fzf-native")
@@ -521,109 +523,179 @@ Each `fzfa' source maps to a `helm' source:
 
 A SINGLE shared polling timer watches every async handle and calls
 `helm-force-update' at most once per `fzfa-input-throttle' seconds
-when any source has new candidates."
+when any source has new candidates.
+
+Cursor follows the highest-ranked source: each source's `:candidates'
+closure stores its top-fzf-score in a `ranks' vector, and a
+`helm-after-update-hook' calls `helm-goto-source' on the leader when
+it changes.  Replaces helm's default \"first non-empty source\"
+positioning, which is declared-order-arbitrary and structurally wrong
+for fuzzy-multi-source UX."
   (let* ((helm-completion-style 'emacs)
          ;; Per-source render cap — see `fzfa-helm-multi-source-candidate-limit'.
          (limit (min (or (fzfa--candidate-limit) 10000)
                      fzfa-helm-multi-source-candidate-limit))
          (result nil)
+         (n-sources (length sources))
+         ;; Per-source rank tracking — leader = argmax of `ranks'.
+         (ranks        (make-vector n-sources 0))
+         (source-names (make-vector n-sources nil))
+         (last-leader  nil)
          ;; Per-source state collected during source construction.
          (handles nil)   ; reversed: list of fzf-native handles (async only)
          (stops nil)     ; reversed: list of 0-arg stop closures (async only)
          poll-timer
          (helm-sources
-          (mapcar
-           (lambda (src)
-             (let* ((name        (or (plist-get src :name) "fzfa"))
-                    (cmd         (plist-get src :command))
-                    (items       (plist-get src :items))
-                    (directory   (or (plist-get src :directory)
-                                     default-directory))
-                    (history     (plist-get src :history))
-                    (orig-action (plist-get src :action))
-                    (action
-                     (lambda (cand)
-                       (when (and history (symbolp history)
-                                  (not (eq history t)))
-                         (add-to-history history cand))
-                       (setq result
-                             (if orig-action
-                                 (funcall orig-action cand)
-                               cand)))))
-               (cond
-                (cmd
-                 (let* ((dir (expand-file-name directory))
-                        (handle (fzf-native-async-start cmd dir))
-                        (stopped nil)
-                        ;; Per-source `last-result' cache: when
-                        ;; `:candidates' is interrupted by pending
-                        ;; input (via `while-no-input'), return the
-                        ;; previous good list so the display doesn't
-                        ;; blank — same convention as the
-                        ;; completing-read multi (fzfa.el:~2336).
-                        (last-result nil)
-                        ;; Idle retry: when an interrupt leaves us
-                        ;; showing stale candidates, re-exhibit once
-                        ;; typing settles.  Without this the polling
-                        ;; timer's generation-based firing never
-                        ;; refreshes (the producer process is
-                        ;; quiescent post-typing, so no new generation
-                        ;; ticks), and the stale display persists
-                        ;; until the user types again.  Mirrors the
-                        ;; `retry-timer' in `fzfa--multi-read'.
-                        (retry-timer nil)
-                        (stop
-                         (lambda ()
-                           (unless stopped
-                             (setq stopped t)
-                             (when retry-timer
-                               (cancel-timer retry-timer)
-                               (setq retry-timer nil))
-                             (fzf-native-async-stop handle)))))
-                   (push handle handles)
-                   (push stop stops)
-                   (helm-make-source name 'helm-source-sync
-                     :header-name
-                     (lambda (n)
-                       (format "%s [%s]%s" n (abbreviate-file-name dir)
-                               (fzfa-helm--async-stats-suffix handle)))
-                     :candidates
-                     (lambda ()
-                       (unless stopped
-                         (let ((r (while-no-input
-                                    (fzf-native-async-candidates
-                                     handle helm-pattern limit))))
-                           (cond
-                            ((eq r t)
-                             (when retry-timer (cancel-timer retry-timer))
-                             (setq retry-timer
-                                   (run-with-idle-timer
-                                    fzfa-input-debounce nil
-                                    (lambda ()
-                                      (setq retry-timer nil)
-                                      (when helm-alive-p
-                                        (helm-force-update)))))
-                             last-result)
-                            (t
-                             (when retry-timer
-                               (cancel-timer retry-timer)
-                               (setq retry-timer nil))
-                             (setq last-result r)
-                             r)))))
-                     :match-dynamic t
-                     :nohighlight t
-                     :candidate-number-limit limit
-                     :cleanup stop
-                     :action action)))
-                (items
-                 (fzfa-helm-make-sync-source
-                  :name name :items items :action action
-                  :history history
-                  :candidate-number-limit limit))
-                (t
-                 (error "fzfa helm multi source has neither :command nor :items: %S"
-                        src)))))
-           sources)))
+          (cl-loop
+           for src in sources
+           for src-idx from 0
+           collect
+           ;; Fresh let-binding so closures below capture each source's
+           ;; own index — cl-loop's `for' clause binds the loop variable
+           ;; ONCE and mutates per iteration, so without this every
+           ;; closure would see the post-loop value of `src-idx' (= N)
+           ;; and `aset ranks i' would blow the vector bounds.
+           (let* ((i           src-idx)
+                  (name        (or (plist-get src :name) "fzfa"))
+                  (cmd         (plist-get src :command))
+                  (items       (plist-get src :items))
+                  (directory   (or (plist-get src :directory)
+                                   default-directory))
+                  (history     (plist-get src :history))
+                  (orig-action (plist-get src :action))
+                  (action
+                   (lambda (cand)
+                     (when (and history (symbolp history)
+                                (not (eq history t)))
+                       (add-to-history history cand))
+                     (setq result
+                           (if orig-action
+                               (funcall orig-action cand)
+                             cand)))))
+             (aset source-names i name)
+             (cond
+              (cmd
+               (let* ((dir (expand-file-name directory))
+                      (handle (fzf-native-async-start cmd dir))
+                      (stopped nil)
+                      ;; Per-source `last-result' cache: when
+                      ;; `:candidates' is interrupted by pending
+                      ;; input (via `while-no-input'), return the
+                      ;; previous good list so the display doesn't
+                      ;; blank — same convention as the
+                      ;; completing-read multi (fzfa.el:~2336).
+                      (last-result nil)
+                      ;; Idle retry: when an interrupt leaves us
+                      ;; showing stale candidates, re-exhibit once
+                      ;; typing settles.  Without this the polling
+                      ;; timer's generation-based firing never
+                      ;; refreshes (the producer process is
+                      ;; quiescent post-typing, so no new generation
+                      ;; ticks), and the stale display persists
+                      ;; until the user types again.  Mirrors the
+                      ;; `retry-timer' in `fzfa--multi-read'.
+                      (retry-timer nil)
+                      (stop
+                       (lambda ()
+                         (unless stopped
+                           (setq stopped t)
+                           (when retry-timer
+                             (cancel-timer retry-timer)
+                             (setq retry-timer nil))
+                           (fzf-native-async-stop handle)))))
+                 (push handle handles)
+                 (push stop stops)
+                 (helm-make-source name 'helm-source-sync
+                   :header-name
+                   (lambda (n)
+                     (format "%s [%s]%s" n (abbreviate-file-name dir)
+                             (fzfa-helm--async-stats-suffix handle)))
+                   :candidates
+                   (lambda ()
+                     (unless stopped
+                       (let ((r (while-no-input
+                                  (fzf-native-async-candidates
+                                   handle helm-pattern limit))))
+                         (cond
+                          ((eq r t)
+                           (when retry-timer (cancel-timer retry-timer))
+                           (setq retry-timer
+                                 (run-with-idle-timer
+                                  fzfa-input-debounce nil
+                                  (lambda ()
+                                    (setq retry-timer nil)
+                                    (when helm-alive-p
+                                      (helm-force-update)))))
+                           ;; Don't update rank — cached
+                           ;; `last-result' is for an earlier query.
+                           last-result)
+                          (t
+                           (when retry-timer
+                             (cancel-timer retry-timer)
+                             (setq retry-timer nil))
+                           (setq last-result r)
+                           (aset ranks i
+                                 (fzfa--multi-rank r (or helm-pattern "") t))
+                           r)))))
+                   :match-dynamic t
+                   :nohighlight t
+                   :candidate-number-limit limit
+                   :cleanup stop
+                   :action action)))
+              (items
+               ;; Sync source inlined here (rather than via
+               ;; `fzfa-helm-make-sync-source') so its `:candidates'
+               ;; can update the multi handler's per-source rank slot.
+               (let ((last-filtered nil)
+                     (last-total nil))
+                 (helm-make-source name 'helm-source-sync
+                   :header-name
+                   (lambda (n)
+                     (format "%s%s" n (fzfa-helm--sync-stats-suffix
+                                       last-filtered last-total)))
+                   :candidates
+                   (lambda ()
+                     (let* ((all (if (functionp items)
+                                     (funcall items)
+                                   items))
+                            (q (or helm-pattern ""))
+                            (out (if (string-empty-p q)
+                                     (if history
+                                         (fzfa--history-rank all history)
+                                       all)
+                                   (fzfa--bridge-defcustoms
+                                    #'fzf-native-score-all all q))))
+                       (setq last-total (length all)
+                             last-filtered (length out))
+                       (aset ranks i (fzfa--multi-rank out q nil))
+                       out))
+                   :match-dynamic t
+                   :nohighlight t
+                   :candidate-number-limit limit
+                   :action action)))
+              (t
+               (error "fzfa helm multi source has neither :command nor :items: %S"
+                      src))))))
+         ;; Cursor-follows-leader hook.  Runs after every helm update
+         ;; (pattern change or force-update).  When the source with the
+         ;; highest top-fzf-score changes, jump there.  Stable: ties
+         ;; lose to the first source to reach the max (the `>' check
+         ;; only succeeds on strictly-greater), matching the
+         ;; completing-read multi's stable-sort behavior.  No-op when
+         ;; pattern is empty (all ranks stay 0).
+         (jump-fn
+          (lambda ()
+            (when (and helm-alive-p
+                       (not (string-empty-p (or helm-pattern ""))))
+              (let ((best-i nil)
+                    (best-r 0))
+                (dotimes (i n-sources)
+                  (when (> (aref ranks i) best-r)
+                    (setq best-r (aref ranks i)
+                          best-i i)))
+                (when (and best-i (not (eql best-i last-leader)))
+                  (setq last-leader best-i)
+                  (helm-goto-source (aref source-names best-i))))))))
     ;; Single shared polling timer over all async handles.  Throttled to
     ;; one `helm-force-update' per `fzfa-input-throttle' to amortize the
     ;; cost of recomputing every source's `:candidates'.  Also skipped
@@ -652,9 +724,12 @@ when any source has new candidates."
                        (setq last-exhibit (float-time))
                        (helm-force-update)))))))))
     (unwind-protect
-        (helm :sources helm-sources
-              :prompt (or prompt "fzf-multi: ")
-              :buffer "*helm fzfa multi*")
+        (progn
+          (add-hook 'helm-after-update-hook jump-fn)
+          (helm :sources helm-sources
+                :prompt (or prompt "fzf-multi: ")
+                :buffer "*helm fzfa multi*"))
+      (remove-hook 'helm-after-update-hook jump-fn)
       (when poll-timer (cancel-timer poll-timer))
       ;; Bulk-stop async producers; idempotent — :cleanup may have
       ;; already fired on normal helm exit.
