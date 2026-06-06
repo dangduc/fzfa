@@ -1715,6 +1715,66 @@ PATH and whose command symbol is bound: %s."
 (when (memq 'fzfa-smart-grep-2p fzfa-2p-functions)
   (fzfa-2p-define 'fzfa-smart-grep)) ;; -> `fzfa-smart-grep-2p'
 
+;;; Smart VCS dispatchers
+
+(defun fzfa--git-repo-p ()
+  "Return non-nil when `default-directory' is inside a git working tree."
+  (locate-dominating-file default-directory ".git"))
+
+(defun fzfa--hg-repo-p ()
+  "Return non-nil when `default-directory' is inside an hg working copy."
+  (locate-dominating-file default-directory ".hg"))
+
+(fzfa-smart-define
+ 'ls-files
+ '((fzfa-git-ls-files     :executable "git" :predicate fzfa--git-repo-p)
+   (fzfa-hg-files         :executable "hg"  :predicate fzfa--hg-repo-p)
+   (fzfa-vc-modified-files)))            ;; -> `fzfa-smart-ls-files'
+
+(fzfa-smart-define
+ 'modified-locally
+ '((fzfa-git-modified-locally :executable "git" :predicate fzfa--git-repo-p)
+   (fzfa-hg-modified-locally  :executable "hg"  :predicate fzfa--hg-repo-p)
+   (fzfa-vc-modified-locally)))          ;; -> `fzfa-smart-modified-locally'
+
+(fzfa-smart-define
+ 'added-files
+ '((fzfa-git-added-files :executable "git" :predicate fzfa--git-repo-p)
+   (fzfa-hg-added-files  :executable "hg"  :predicate fzfa--hg-repo-p)
+   (fzfa-vc-added-files)))               ;; -> `fzfa-smart-added-files'
+
+(fzfa-smart-define
+ 'staged-for-commit
+ '((fzfa-git-staged-for-commit :executable "git" :predicate fzfa--git-repo-p)
+   (fzfa-vc-staged-for-commit)))         ;; -> `fzfa-smart-staged-for-commit'
+
+(fzfa-smart-define
+ 'modified-in-head
+ '((fzfa-git-modified-in-head :executable "git" :predicate fzfa--git-repo-p)
+   (fzfa-hg-modified-in-head  :executable "hg"  :predicate fzfa--hg-repo-p)
+   (fzfa-vc-modified-in-head)))          ;; -> `fzfa-smart-modified-in-head'
+
+;;; Multi-source VCS
+
+(defcustom fzfa-vcs-any-commands
+  '((fzfa-smart-modified-locally  :narrow m)
+    (fzfa-smart-added-files       :narrow a)
+    (fzfa-smart-staged-for-commit :narrow s)
+    (fzfa-smart-modified-in-head  :narrow h))
+  "Commands shown by `fzfa-vcs-any'.
+Each entry is either a bare command symbol or a list
+\(COMMAND :narrow KEY) overriding the auto-derived narrow key.
+The default uses `fzfa-smart-*' dispatchers so the active VCS
+backend is picked per project."
+  :type '(repeat (choice function (cons function plist)))
+  :group 'fzfa)
+
+;;;###autoload
+(defun fzfa-vcs-any ()
+  "Multi-source fuzzy completion over `fzfa-vcs-any-commands'."
+  (interactive)
+  (fzfa-multi-read fzfa-vcs-any-commands :prompt "vcs?: "))
+
 ;;; Sync `completing-read'
 
 (cl-defun fzfa-sync-completing-read (&key
