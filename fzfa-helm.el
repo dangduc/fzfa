@@ -198,7 +198,13 @@ Each `helm-pattern' change re-scores the full ITEMS list via
 `fzf-native-score-all'."
   (let* ((limit (or candidate-number-limit 10000))
          (last-filtered nil)
-         (last-total nil))
+         (last-total nil)
+         (last-result nil)
+         (retry-timer nil)
+         (stop (lambda ()
+                 (when retry-timer
+                   (cancel-timer retry-timer)
+                   (setq retry-timer nil)))))
     (helm-make-source (or name "fzfa") 'helm-source-sync
       :header-name
       (lambda (n)
@@ -207,17 +213,35 @@ Each `helm-pattern' change re-scores the full ITEMS list via
       :candidates
       (lambda ()
         (let* ((all (if (functionp items) (funcall items) items))
-               (result
-                (if (or (null helm-pattern) (string-empty-p helm-pattern))
-                    (if history (fzfa--history-rank all history) all)
-                  (fzfa--bridge-defcustoms
-                   #'fzf-native-score-all all helm-pattern))))
-          (setq last-total (length all)
-                last-filtered (length result))
-          result))
+               (q (or helm-pattern ""))
+               (r (while-no-input
+                    (if (string-empty-p q)
+                        (if history (fzfa--history-rank all history) all)
+                      (fzfa--bridge-defcustoms
+                       #'fzf-native-score-all all q)))))
+          (cond
+           ((eq r t)
+            (when retry-timer (cancel-timer retry-timer))
+            (setq retry-timer
+                  (run-with-idle-timer
+                   fzfa-input-debounce nil
+                   (lambda ()
+                     (setq retry-timer nil)
+                     (when helm-alive-p
+                       (helm-force-update)))))
+            last-result)
+           (t
+            (when retry-timer
+              (cancel-timer retry-timer)
+              (setq retry-timer nil))
+            (setq last-total (length all)
+                  last-filtered (length r)
+                  last-result r)
+            r))))
       :match-dynamic t
       :nohighlight t
       :candidate-number-limit limit
+      :cleanup stop
       :action (or action (lambda (cand) cand)))))
 
 ;;; Composition helper — fzfa command -> helm source(s)
@@ -646,8 +670,17 @@ for fuzzy-multi-source UX."
                ;; Sync source inlined here (rather than via
                ;; `fzfa-helm-make-sync-source') so its `:candidates'
                ;; can update the multi handler's per-source rank slot.
-               (let ((last-filtered nil)
-                     (last-total nil))
+               ;; Same `while-no-input' + `last-result' cache +
+               ;; `retry-timer' pattern as the async branch above.
+               (let* ((last-filtered nil)
+                      (last-total nil)
+                      (last-result nil)
+                      (retry-timer nil)
+                      (sync-stop
+                       (lambda ()
+                         (when retry-timer
+                           (cancel-timer retry-timer)
+                           (setq retry-timer nil)))))
                  (helm-make-source name 'helm-source-sync
                    :header-name
                    (lambda (n)
@@ -659,19 +692,39 @@ for fuzzy-multi-source UX."
                                      (funcall items)
                                    items))
                             (q (or helm-pattern ""))
-                            (out (if (string-empty-p q)
+                            (r (while-no-input
+                                 (if (string-empty-p q)
                                      (if history
                                          (fzfa--history-rank all history)
                                        all)
                                    (fzfa--bridge-defcustoms
-                                    #'fzf-native-score-all all q))))
-                       (setq last-total (length all)
-                             last-filtered (length out))
-                       (aset ranks i (fzfa--multi-rank out q nil))
-                       out))
+                                    #'fzf-native-score-all all q)))))
+                       (cond
+                        ((eq r t)
+                         (when retry-timer (cancel-timer retry-timer))
+                         (setq retry-timer
+                               (run-with-idle-timer
+                                fzfa-input-debounce nil
+                                (lambda ()
+                                  (setq retry-timer nil)
+                                  (when helm-alive-p
+                                    (helm-force-update)))))
+                         ;; Don't update rank — cache is for an
+                         ;; earlier query.
+                         last-result)
+                        (t
+                         (when retry-timer
+                           (cancel-timer retry-timer)
+                           (setq retry-timer nil))
+                         (setq last-total (length all)
+                               last-filtered (length r)
+                               last-result r)
+                         (aset ranks i (fzfa--multi-rank r q nil))
+                         r))))
                    :match-dynamic t
                    :nohighlight t
                    :candidate-number-limit limit
+                   :cleanup sync-stop
                    :action action)))
               (t
                (error "fzfa helm multi source has neither :command nor :items: %S"
