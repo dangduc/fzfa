@@ -59,8 +59,22 @@ This cap is applied to both the `fzf-native'
 the multi.  The user can always refine the query to surface entries
 ranked below the cap.
 
-Has no effect on single-source paths (`fzfa-async-completing-read'
-under helm-mode), which use the full `fzfa-max-candidates'."
+Companion var for single-source helm paths is
+`fzfa-helm-candidate-limit', which derives its default by scaling
+this value (see that defcustom for rationale)."
+  :type 'integer
+  :group 'fzfa)
+
+(defcustom fzfa-helm-candidate-limit
+  (* fzfa-helm-multi-source-candidate-limit 10)
+  "Per-source candidate cap for SINGLE-source helm paths.
+
+Used by `fzfa-helm-make-async-source', `fzfa-helm-make-sync-source',
+`fzfa-helm--async-read', `fzfa-helm--sync-read', and
+`fzfa-helm--2pass-read'.  Like the multi cap, this controls both
+fzf-native's returned-list size and helm's `:candidate-number-limit'.
+
+Default is `fzfa-helm-multi-source-candidate-limit' × 10."
   :type 'integer
   :group 'fzfa)
 
@@ -237,8 +251,7 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
 
 (cl-defun fzfa-helm-make-async-source
     (&key name command directory action annotate
-          (candidate-number-limit
-           (or (fzfa--candidate-limit) 10000)))
+          (candidate-number-limit fzfa-helm-candidate-limit))
   "Return a helm source that streams candidates from shell COMMAND.
 
 NAME is the source header.  COMMAND is the producer shell command.
@@ -261,8 +274,7 @@ timing.  The source's `:cleanup' stops it."
 
 (cl-defun fzfa-helm-make-sync-source
     (&key name items action history annotate
-          (candidate-number-limit
-           (or (fzfa--candidate-limit) 10000)))
+          (candidate-number-limit fzfa-helm-candidate-limit))
   "Return a helm source that scores ITEMS with `fzf-native'.
 
 NAME is the source header.  ITEMS is a list of strings or a zero-arg
@@ -584,7 +596,7 @@ helm (helm sources do not consume completion-read metadata)."
                     (user-error "Unknown fzfa-2pass split style: %s"
                                 style-sym)))
          (splitter (plist-get style :function))
-         (limit (or (fzfa--candidate-limit) 10000))
+         (limit fzfa-helm-candidate-limit)
          (init-text (if (consp initial-input)
                         (car initial-input)
                       initial-input))
@@ -702,8 +714,11 @@ it changes.  Replaces helm's default \"first non-empty source\"
 positioning, which is declared-order-arbitrary and structurally wrong
 for fuzzy-multi-source UX."
   (let* ((helm-completion-style 'emacs)
-         ;; Per-source render cap — see `fzfa-helm-multi-source-candidate-limit'.
-         (limit (min (or (fzfa--candidate-limit) 10000)
+         ;; Per-source render cap.  `min' of the multi cap and the
+         ;; single cap — multi cap dominates with defaults (200 < 2000),
+         ;; but the `min' guard means a user lowering
+         ;; `fzfa-helm-candidate-limit' below the multi cap still wins.
+         (limit (min fzfa-helm-candidate-limit
                      fzfa-helm-multi-source-candidate-limit))
          (result nil)
          (n-sources (length sources))
