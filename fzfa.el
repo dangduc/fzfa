@@ -67,11 +67,7 @@
 (declare-function ivy--set-candidates "ivy")
 (declare-function ivy--exhibit "ivy")
 (defvar ivy-pre-prompt-function)
-(defvar helm-alive-p)
-(defvar helm-pattern)
-(declare-function helm "helm-core")
-(declare-function helm-make-source "helm-source")
-(declare-function helm-force-update "helm-core")
+(defvar helm-completion-style)
 (declare-function projectile-project-root "projectile")
 (declare-function project-root "project")
 (declare-function vertico--exhibit "vertico")
@@ -289,6 +285,25 @@ Highlighting is applied by the C layer (see `fzfa-highlight')."
   (funcall table string pred t))
 
 ;;; Frontend abstraction
+
+(defvar fzfa-async-helm-handler nil
+  "Function called by `fzfa-async-completing-read' under `helm-mode'.
+Receives the same keyword args (:prompt :command :directory
+:skip-executable-check) and returns the selected candidate string,
+or nil on cancel.  Populated by `fzfa-helm.el' on load.  When nil,
+the helm dispatch is skipped and fzfa runs through `completing-read'.")
+
+(defvar fzfa-2pass-helm-handler nil
+  "Function called by `fzfa-2pass-completing-read' under `helm-mode'.
+Receives :prompt :directory :category :group :initial-input
+:split-style and returns the selected candidate string, or nil.
+When nil, fzfa signals a `user-error' under `helm-mode'.")
+
+(defvar fzfa-multi-helm-handler nil
+  "Function called by `fzfa--multi-read' under `helm-mode'.
+Receives the SOURCES list as the first argument and :prompt as a
+keyword.  Returns the action's return value, or nil.  When nil,
+fzfa signals a `user-error' under `helm-mode'.")
 
 (defun fzfa--frontend-index ()
   "Return the active completion UI's selection index (0-based), or nil.
@@ -925,70 +940,6 @@ descend from A may exclude files the user expects to search."
 
 ;;; Async `completing-read'
 
-(cl-defun fzfa--helm-completing-read (&key prompt command directory
-                                           skip-executable-check)
-  "Helm path for `fzfa-async-completing-read'.
-PROMPT is shown in the minibuffer.  COMMAND is the producer shell command run
-in DIRECTORY.  SKIP-EXECUTABLE-CHECK bypasses the `executable-find' guard.
-Starts an fzf-native async session and opens a helm buffer driven by a
-`helm-source-sync' with `:match-dynamic t' so helm never re-filters the
-already-scored candidates.  A timer polls the C-side generation counter and
-calls `helm-force-update' when new results arrive.
-Returns the selected candidate string, or nil on cancel."
-  (unless skip-executable-check
-    (when-let* ((prog (and command (car (split-string command nil t)))))
-      (unless (executable-find prog)
-        (user-error "%s not found in exec-path" prog))))
-  (require 'helm)
-  (require 'helm-source)
-  (let* ((prompt  (or prompt
-                      (when command
-                        (concat (car (split-string command nil t)) ": "))))
-         (dir     (expand-file-name (or directory default-directory)))
-         (handle  (fzf-native-async-start command dir))
-         (limit   (fzfa--candidate-limit))
-         (last-gen -1)
-         (stopped  nil)
-         (result   nil)
-         (cleanup  (lambda ()
-                     (unless stopped
-                       (setq stopped t)
-                       (fzf-native-async-stop handle))))
-         timer)
-    (setq timer
-          (run-with-timer
-           0 fzfa-refresh-delay
-           (lambda ()
-             (when helm-alive-p
-               (let ((gen (fzf-native-async-generation handle)))
-                 (when (and gen (> gen last-gen))
-                   (setq last-gen gen)
-                   (helm-force-update)))))))
-    (unwind-protect
-        (let ((default-directory dir))
-          (helm
-           :sources
-           (helm-make-source
-            (or prompt "fzfa") 'helm-source-sync
-            :header-name
-            (lambda (name)
-              (format "%s [%s]" name (abbreviate-file-name dir)))
-            :candidates
-            (lambda ()
-              ;; case-mode and other defcustoms are bridged onto the
-              ;; canonical fzf-native names by :around advice on
-              ;; `fzf-native-async-candidates' (see EOF).
-              (fzf-native-async-candidates handle helm-pattern limit))
-            :match-dynamic t
-            :nohighlight t
-            :candidate-number-limit (or limit 10000)
-            :cleanup cleanup
-            :action (lambda (cand) (setq result cand)))
-           :buffer "*helm fzfa*"))
-      (cancel-timer timer)
-      (funcall cleanup))
-    result))
-
 ;;;###autoload
 (cl-defun fzfa-async-completing-read (&key
                                       prompt
@@ -1051,12 +1002,12 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
         (setq fzfa--multi-mode nil)
         (cl-return-from fzfa-async-completing-read
           (fzfa--maybe-expand cand directory resolve-paths)))))
-    (when (bound-and-true-p helm-mode)
+    (when (and (bound-and-true-p helm-mode) fzfa-async-helm-handler)
       (cl-return-from fzfa-async-completing-read
         (fzfa--maybe-expand
-         (fzfa--helm-completing-read
-          :prompt prompt :command command :directory directory
-          :skip-executable-check skip-executable-check)
+         (funcall fzfa-async-helm-handler
+                  :prompt prompt :command command :directory directory
+                  :skip-executable-check skip-executable-check)
          directory resolve-paths)))
     (let* ((completion-styles '(fzfa))
            (handler (fzfa--preview-handler preview category))
@@ -1775,6 +1726,11 @@ PATH and whose command symbol is bound: %s."
       (setq fzfa--multi-mode nil)
       (cl-return-from fzfa-sync-completing-read cand))))
   (let* ((completion-styles '(fzfa))
+         ;; Force helm-mode to defer matching to `completion-styles'
+         ;; instead of running its own matcher,
+         ;; so fzfa's style scores the candidates.
+         ;; Noop when `helm' is not loaded.
+         (helm-completion-style 'emacs)
          (handler (fzfa--preview-handler preview category))
          (fzfa--preview-session (and handler (list handler)))
          (selection nil))
@@ -2763,6 +2719,9 @@ public entry point.
                        (fzfa-theme    marginalia-annotate-theme    none)
                        (fzfa-imenu    marginalia-annotate-imenu    none)))
         (add-to-list 'marginalia-annotators entry)))
+
+    (with-eval-after-load 'helm
+      (require 'fzfa-helm))
 
     (when fzfa-extensions
       (dolist (ext fzfa-extensions)
