@@ -713,17 +713,90 @@ categories to ~fzfa-vertico-multiform-categories~ to extend the layout
 to other multi-group pickers (for example ~imenu~ when its buckets are
 group-functioned).
 ** ivy / counsel
-Ivy uses a *push model*: the completion UI holds its own internal candidate
-list (~ivy--all-candidates~) and does not re-call the collection function
-on each display refresh.  This conflicts with ~fzfa~'s pull model,
-where vertico re-calls our collection lambda to get fresh scored results.
 
-~fzfa~ handles this with a dedicated push path.  The polling timer
-calls ~fzf-native-async-candidates~ directly, pushes the results via
-~ivy--set-candidates~, and redraws via ~ivy--exhibit~ — the same approach
-used by counsel's async commands.  The stats prompt (directory, selection
-index, filtered/total counts) is delivered via ~ivy-pre-prompt-function~,
-which ivy prepends to the prompt string on each redraw.
+Ivy support lives in ~fzfa-ivy.el~, loaded as part of
+~fzfa-extensions~ (which includes ~ivy~ by default).  Loading the
+file alone is a no-op; ~fzfa-ivy-setup~ — called from ~fzfa-setup~
+— defers its work via ~(with-eval-after-load 'ivy …)~ so the
+display-transformer registration kicks in only when ivy itself is
+actually loaded.
+
+The four fzfa entry points share their main code path with the
+other completing-read frontends, with ivy-specific bypass + push
+plumbing layered on:
+
+| Entry point                  | Ivy plumbing                                                                                 |
+|------------------------------+----------------------------------------------------------------------------------------------|
+| ~fzfa-async-completing-read~ | =:dynamic-collection t= binding, =ivy-push= closure on timer/retry, stats via =ivy-pre-prompt-function= |
+| ~fzfa-sync-completing-read~  | =:dynamic-collection t= binding only (sync has no streaming or stats overlay)                          |
+| ~fzfa-2pass-completing-read~ | =:dynamic-collection t= + =ivy-push-2pass= closure mirroring the cmd-split + restart logic of the =('t)= body |
+| ~fzfa--multi-read~           | =:dynamic-collection t= + =ivy-push-multi= per-source iterate/score/rank/concat + display transformer + actions for narrow |
+
+Ivy's push model means typing doesn't re-call the collection
+function the way vertico/icomplete do — so the polling timer's
+refresh path dispatches to the corresponding =ivy-push-*= closure
+under ~ivy-mode~, which forces an =ivy--set-candidates= +
+=ivy--exhibit= + =ivy--insert-prompt= against the active minibuffer
+window.  The =:dynamic-collection t= binding stops ivy from running
+its re-builder regex on top of fzf-scored output (which would
+silently drop matches for multi-word and fzf-extended-syntax
+queries).
+
+*** Multi source disambiguation
+
+Ivy ignores the ~group-function~ completion-metadata key that
+vertico / icomplete consult, so multi-source sessions render as a
+flat merged list by default.  ~fzfa-ivy.el~ registers a display
+transformer under ivy's ~t~ fallback caller that prepends
+~[source-name] ~ to each candidate carrying a fzfa tofu suffix.
+
+The face for the label is ~fzfa-multi-source-label~ (inherits
+~font-lock-comment-face~ by default).
+
+*** Multi source narrowing — ivy actions
+
+Under ~ivy-mode~, pressing ~fzfa-multi-narrow-key~ (default ~<~)
+triggers ~ivy-dispatching-call~ rather than fzfa's in-house
+~narrow-handler~.  Each source's ~:narrow~ letter is registered
+into ~ivy--actions-list~ under the ~t~ fallback caller, plus a
+widen entry on the narrow-prefix key itself — so the existing
+~<<~ muscle memory still widens.  ivy renders the action menu in
+its native UI (no contention with the prompt area), the chosen
+action mutates ~narrow-idx~, and ~ivy-call~ semantics keep you in
+the picker rather than exiting.
+
+*** Full setup example
+
+To get a consistent sorting/filtering experience in ~ivy~, use ~fussy~
+and call ~fussy-ivy-setup~. This handles the regular ~completing-read~
+case and ~fzfa~ handles the async ~completing-read~ cases.
+
+#+begin_src emacs-lisp :tangle yes
+  (use-package fussy
+    :vc (:url "https://github.com/jojojames/fussy" :rev :newest)
+    :config
+    (fussy-setup-fzf)
+    (fussy-eglot-setup)
+    (fussy-company-setup)
+    (fussy-ivy-setup))
+
+  (use-package fzfa
+    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest))
+
+  (use-package ivy
+    :ensure t
+    :bind (:map ivy-minibuffer-map
+                ("M-x" . ivy-dispatching-done))
+    :config
+    (setq ivy-initial-inputs-alist nil)
+    (setq ivy-use-selectable-prompt t)
+    (define-key ivy-minibuffer-map (kbd "RET") 'ivy-alt-done)
+    (define-key ivy-minibuffer-map (kbd "C-j") 'ivy-done)
+    (define-key ivy-minibuffer-map (kbd "<C-return>") 'ivy-immediate-done)
+    (setq ivy-count-format "")
+    (setq ivy-height 9)
+    (ivy-mode))
+#+end_src
 ** helm
 
 Helm support lives in ~fzfa-helm.el~, loaded as part of
@@ -802,9 +875,9 @@ shared polling timer and per-source caps.  Reach for
 sources mixed with non-fzfa helm sources (e.g. adding to ~helm-mini~).
 
 *** Full setup example
-To get a completion experience where each ~helm~ source matches using a
-consistent algorithm (e.g. ~fzf-native~), use ~fussy~ for non-~fzfa~ sources
-and ~fzfa~ otherwise. Example below.
+To get a consistent sorting/filtering experience in ~helm~ where each ~helm~
+source matches using a consistent algorithm (e.g. ~fzf-native~),
+use ~fussy~ for non-~fzfa~ sources and ~fzfa~ otherwise. Example below.
 
 #+begin_src emacs-lisp :tangle yes
   (use-package fussy
