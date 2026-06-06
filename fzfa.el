@@ -721,12 +721,20 @@ FILTERED and TOTAL are integer candidate counts, comma-formatted."
 (defun fzfa--current-query (str)
   "Return the live query for a `completing-read' collection lambda.
 
-STR is the string the collection function was called with; some
-frontends pass an empty STR even when the minibuffer holds a real
-query, so fall back to the active minibuffer's contents.
+STR is the string the collection function was called with.  Under
+`ivy-mode' STR is reliably `ivy-text' (the user's input), so trust
+it verbatim — ivy renders candidates as inserted minibuffer text
+below the prompt, and falling back to `minibuffer-contents' would
+pull in the rendered candidate display as a giant garbage query.
+
+Other frontends (vertico, icomplete) sometimes pass an empty STR
+even when the minibuffer holds a real query; they render candidates
+via display overlays so `minibuffer-contents' stays clean.  Fall
+back to that there.
 
 Returns the empty string otherwise."
-  (or (if (not (string-empty-p str))
+  (or (if (or (not (string-empty-p str))
+              (bound-and-true-p ivy-mode))
           str
         (when-let* ((win (active-minibuffer-window)))
           (with-current-buffer (window-buffer win)
