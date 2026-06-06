@@ -78,6 +78,30 @@ Default is `fzfa-helm-multi-source-candidate-limit' × 10."
   :type 'integer
   :group 'fzfa)
 
+(defcustom fzfa-helm-kill-buffer-on-exit t
+  "Whether to kill the helm session buffer on fzfa-helm exit.
+
+`helm' by default `bury's its session buffer on exit
+(`helm-cleanup' in `helm-core.el:~4348') rather than killing it, so
+that `helm-resume' can later restore the session.  Buried buffers
+linger in `buffer-list', though, and end up as candidates for any
+subsequent `fzfa-buffer'-backed picker (`fzfa-buffer',
+`fzfa-find-any', etc.).  Previewing a stale fzfa-helm buffer there
+re-renders the prior picker's content in the origin window —
+disorienting mid-session.
+
+When this is non-nil (the default), each fzfa-helm handler
+(`fzfa-helm--async-read', `fzfa-helm--sync-read',
+`fzfa-helm--2pass-read', `fzfa-helm--multi-read') explicitly kills
+its session buffer in unwind-protect cleanup — no leftovers in
+`buffer-list', no stale candidates downstream.
+
+Set to nil to defer to helm's default bury behavior — useful if you
+rely on `helm-resume' for fzfa sessions, though async producers
+don't restore well across resume anyway."
+  :type 'boolean
+  :group 'fzfa)
+
 (defvar helm-alive-p)
 (defvar helm-pattern)
 (defvar helm-completion-style)
@@ -591,7 +615,15 @@ Returns the selected candidate string, or nil on cancel."
           (helm :sources source :buffer "*helm fzfa*"))
       (when handler
         (fzfa--preview-call :exit)
-        (fzfa--preview-return result)))
+        (fzfa--preview-return result))
+      ;; Kill the buffer to keep `buffer-list' clean — see
+      ;; `fzfa-helm-kill-buffer-on-exit' for rationale.  helm buries
+      ;; rather than killing its buffer, which means a stale
+      ;; fzfa-helm-* buffer remains in `buffer-list' and surfaces as
+      ;; a candidate in any later `fzfa-buffer'-backed picker.
+      (when (and fzfa-helm-kill-buffer-on-exit
+                 (get-buffer "*helm fzfa*"))
+        (kill-buffer "*helm fzfa*")))
     result))
 
 ;;; Sync handler — registered as `fzfa-sync-helm-handler'
@@ -648,7 +680,11 @@ metadata."
               :buffer "*helm fzfa sync*")
       (when handler
         (fzfa--preview-call :exit)
-        (fzfa--preview-return result)))
+        (fzfa--preview-return result))
+      ;; Kill the helm buffer — see `fzfa-helm-kill-buffer-on-exit'.
+      (when (and fzfa-helm-kill-buffer-on-exit
+                 (get-buffer "*helm fzfa sync*"))
+        (kill-buffer "*helm fzfa sync*")))
     result))
 
 ;;; 2pass handler — registered as `fzfa-2pass-helm-handler'
@@ -799,7 +835,11 @@ matching line), and fire `:exit' + `:return' on exit."
       (funcall cleanup)
       (when handler
         (fzfa--preview-call :exit)
-        (fzfa--preview-return result)))
+        (fzfa--preview-return result))
+      ;; Kill the helm buffer — see `fzfa-helm-kill-buffer-on-exit'.
+      (when (and fzfa-helm-kill-buffer-on-exit
+                 (get-buffer "*helm fzfa 2pass*"))
+        (kill-buffer "*helm fzfa 2pass*")))
     result))
 
 ;;; Multi handler — registered as `fzfa-multi-helm-handler'
@@ -1190,7 +1230,11 @@ for fuzzy-multi-source UX."
               (fzfa--preview-call :exit)
               (fzfa--preview-return (if (eql i result-src-idx)
                                         result-cand
-                                      nil)))))))
+                                      nil))))))
+      ;; Kill the helm buffer — see `fzfa-helm-kill-buffer-on-exit'.
+      (when (and fzfa-helm-kill-buffer-on-exit
+                 (get-buffer "*helm fzfa multi*"))
+        (kill-buffer "*helm fzfa multi*")))
     result))
 
 ;;; Setup — registers the four handler defvars after `helm' loads
