@@ -308,7 +308,7 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
             (unless stopped
               (setq stopped t)
               (when timer (cancel-timer timer) (setq timer nil))
-              (fzf-native-async-stop handle)))))
+              (fzfa--defer-async-stop handle)))))
     (setq timer
           (run-with-timer
            0 fzfa-refresh-delay
@@ -752,7 +752,7 @@ matching line), and fire `:exit' + `:return' on exit."
                 (cancel-timer poll-timer)
                 (setq poll-timer nil))
               (when handle
-                (fzf-native-async-stop handle)
+                (fzfa--defer-async-stop handle)
                 (setq handle nil))))))
     ;; Pre-arm initial cmd's producer BEFORE helm activates so fork
     ;; happens in quiescent Lisp state (same reason as the async path).
@@ -973,7 +973,7 @@ for fuzzy-multi-source UX."
                            (when retry-timer
                              (cancel-timer retry-timer)
                              (setq retry-timer nil))
-                           (fzf-native-async-stop handle)))))
+                           (fzfa--defer-async-stop handle)))))
                  (push handle handles)
                  (push stop stops)
                  (apply #'helm-make-source name 'helm-source-sync
