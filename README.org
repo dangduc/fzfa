@@ -652,13 +652,13 @@ command (e.g. ~find~ or ~ripgrep~) and must be streamed incrementally.
 compatible with any frontend that calls the completion table function on
 each input change.
 
-| Frontend      | Status    | Notes                                                          |
-|---------------+-----------+----------------------------------------------------------------|
-| ~vertico~     | Supported | Recommended.  Generation-based refresh via ~vertico--exhibit~. |
-| ~icomplete~   | Supported | Refreshes via ~icomplete-exhibit~.                             |
-| ~fido~        | Supported | Built on ~icomplete~; works without extra configuration.       |
-| ~ivy/counsel~ | Supported | Push model via ~ivy--set-candidates~. See below.               |
-| ~helm~        | Supported | Dedicated source path; auto-dispatched when ~helm-mode~ is active. See below. |
+| Frontend      | Status    | Notes                                                                              |
+|---------------+-----------+------------------------------------------------------------------------------------|
+| ~vertico~     | Supported | Recommended.  Generation-based refresh via ~vertico--exhibit~.                     |
+| ~icomplete~   | Supported | Refreshes via ~icomplete-exhibit~.                                                 |
+| ~fido~        | Supported | Built on ~icomplete~; works without extra configuration.                           |
+| ~ivy/counsel~ | Supported | Push model via ~ivy--set-candidates~. See below.                                   |
+| ~helm~        | Supported | Dedicated handler path with stats / live preview / annotations / narrow-by-source. |
 
 Caveat: I mostly use ~vertico~ these days so wasn't exhaustive with using the
 other completion systems.
@@ -712,6 +712,24 @@ enable the mode globally yourself or scope it differently).  Add other
 categories to ~fzfa-vertico-multiform-categories~ to extend the layout
 to other multi-group pickers (for example ~imenu~ when its buckets are
 group-functioned).
+
+*** Customization
+
+| Variable                            | Default                       | Description                                                                              |
+|-------------------------------------+-------------------------------+------------------------------------------------------------------------------------------|
+| ~fzfa-vertico-columns-max~          | 3                             | Maximum number of columns rendered per band; overflow wraps into additional bands.       |
+| ~fzfa-vertico-columns-page-size~    | 6                             | Maximum sources displayed simultaneously; pagination kicks in beyond.                    |
+| ~fzfa-vertico-columns-min-width~    | 12                            | Minimum width per column, in characters.                                                 |
+| ~fzfa-vertico-columns-max-width~    | 60                            | Maximum width per column, in characters.                                                 |
+| ~fzfa-vertico-columns-separator~    | "  \vert  "                   | String inserted between columns.                                                         |
+| ~fzfa-vertico-columns-headers~      | ~t~                           | When non-nil, render group names as a header row above each column.                      |
+| ~fzfa-vertico-columns-header-face~  | ~fzfa-vertico-columns-header~ | Face applied to the column header row.                                                   |
+| ~fzfa-vertico-columns-auto~         | ~t~                           | When non-nil, ~fzfa-vertico-setup~ wires per-category activation; nil = manual setup.    |
+| ~fzfa-vertico-multiform-categories~ | ~(fzfa-multi)~                | Completion categories that auto-activate columns mode.                                   |
+| ~fzfa-vertico-columns-truncate~     | ~auto~                        | How to truncate candidates exceeding column width (~auto~ / ~ellipsis~ / nil).           |
+| ~fzfa-vertico-columns-ellipsis~     | "…"                           | String used to mark truncated candidates (falls back to "..." on systems lacking "…").   |
+| ~fzfa-vertico-columns-source-sort~  | ~scored~                      | Column order: ~scored~ (top-fzf-score first), ~declared~, ~alphabetical~, or a function. |
+
 ** ivy / counsel
 
 Ivy support lives in ~fzfa-ivy.el~, loaded as part of
@@ -720,6 +738,8 @@ file alone is a no-op; ~fzfa-ivy-setup~ — called from ~fzfa-setup~
 — defers its work via ~(with-eval-after-load 'ivy …)~ so the
 display-transformer registration kicks in only when ivy itself is
 actually loaded.
+
+#+HTML: <video src="https://github.com/user-attachments/assets/c10e3407-b59e-41be-b1ce-3164064b5aed" controls style="max-width: 100%; height: auto;"></video>
 
 The four fzfa entry points share their main code path with the
 other completing-read frontends, with ivy-specific bypass + push
@@ -806,6 +826,8 @@ defers handler registration via ~(with-eval-after-load 'helm …)~ so
 the four handler defvars get populated only when helm itself is
 actually loaded.
 
+#+HTML: <video src="https://github.com/user-attachments/assets/856a2ed4-82a0-406b-a43b-ebbeb6c90ca4" controls style="max-width: 100%; height: auto;"></video>
+
 When ~helm-mode~ is active, each ~fzfa~ entry point dispatches through
 a handler that bypasses ~completing-read~ entirely and runs
 ~(helm :sources …)~ directly:
@@ -830,6 +852,14 @@ that watches every source's handle, throttled to one
 ~helm-force-update~ per ~fzfa-input-throttle~, and skipped when
 ~input-pending-p~ — keystrokes always win against producer-driven
 refreshes.
+
+*** Customization
+
+| Variable                                 |                Default | Description                                                                                                  |
+|------------------------------------------+------------------------+--------------------------------------------------------------------------------------------------------------|
+| ~fzfa-helm-candidate-limit~              |                   2000 | Per-source cap for SINGLE-source helm paths.  Default is ~fzfa-helm-multi-source-candidate-limit~ × 10.       |
+| ~fzfa-helm-multi-source-candidate-limit~ |                    200 | Per-source cap for MULTI helm paths.  Helm renders every candidate eagerly; tighter than ~fzfa-max-candidates~.|
+| ~fzfa-helm-kill-buffer-on-exit~          |                    ~t~ | Kill the helm session buffer on exit so it doesn't linger in ~buffer-list~ and surface as a candidate in ~fzfa-buffer~-backed pickers downstream.  Set nil to defer to helm's default (bury). |
 
 *** Adding fzfa sources to a helm command
 
@@ -893,8 +923,7 @@ use ~fussy~ for non-~fzfa~ sources and ~fzfa~ otherwise. Example below.
     :ensure t
     :config
     (helm-mode)
-    ;; Setting `helm-completion-styles' to 'emacs allows `helm' to use `fussy'.
-    (setq helm-completion-style 'emacs)
+    (setq helm-completion-style 'emacs) ;; Needed for `fussy'.
     (setq helm-input-idle-delay 0.05)
     (setq helm-autoresize-max-height 30)
     (setq helm-autoresize-min-height 30)
@@ -1201,68 +1230,141 @@ Opens the selected PDF with `open'."
 #+end_src
 
 * Comparison
+|                                     | fzfa                       | affe               | helm              | counsel       | consult           | fzf.el     |
+|-------------------------------------+----------------------------+--------------------+-------------------+---------------+-------------------+------------|
+| Frontends supported                 | vertico/icomplete/helm/ivy | vertico/icomplete? | helm only         | ivy only      | vertico/icomplete | own UI     |
+| Smart fuzzy scoring                 | ✓ (C)                      | ×                  | ×                 | ×             | ×                 | ✓ (binary) |
+| Multi-component query               | ✓ (fzfa)                   | ✓ (orderless)      | ✓ (substring AND) | ✓ (regex AND) | ✓ (via orderless) | ✓ (fzf)    |
+| Producer runs once                  | ✓                          | ✓                  | ×                 | ×             | ×                 | ✓          |
+| Async multi-source                  | ✓                          | ×                  | ✓                 | ×             | sync only         | ×          |
+| Scales to large repos/sources       | ✓✓                         | ✓                  | ×                 | ×             | ×                 | ✓✓         |
+| Integrates with =completion-styles= | ✓*                         | ✓                  | ✓*                | ×             | ✓                 | ×          |
+| Language                            | Elisp + C                  | Elisp              | Elisp             | Elisp         | Elisp             | Elisp + Go |
 
-- ~fussy~ serves a similar role to ~orderless~: scoring and filtering for
-  general ~completing-read~ (M-x, buffers, code completion, etc.).
-- ~fzfa~ serves a similar role to ~consult~ / ~counsel~ / ~helm~, e.g.
-  ~counsel-rg~ / ~counsel-git~ / ~consult-ripgrep~ / ~consult-find~
-  for file and content search.
-- [[https://github.com/bling/fzf.el][fzf.el]] is another alternative that
-  serves as a frontend to the ~fzf~ binary.  It is a good option, though
-  it may feel alien to Emacs since all filtering has to be built up and
-  sent to the external process.
-- ~counsel-fzf~ is another option.  See the original implementation:
-  [[https://github.com/abo-abo/swiper/pull/1151][swiper: add counsel-fzf]]
-  The downside is that each new input resets the search, which is
-  extremely slow over millions of files.  This problem is shared with
-  ~consult~ / ~counsel~-related commands: each keystroke triggers a new filter
-  query to the underlying binary.
-- [[https://github.com/minad/affe][affe]] is the closest architectural cousin.
-  Like ~fzfa~, it runs a producer process in the background and filters
-  candidates asynchronously.  The key differences:
-  ([[https://github.com/minad/affe#details][affe: details]]):
-  - *Matching*: affe transforms the query into a list of regular expressions
-    and filters with ~all-completions~, which may plug into ~orderless~ for
-    the final filtering and sorting.
-  - *Ranking*: Both ~affe~ and ~orderless~ do not do any scoring or matching.
-  - *Performance*: affe calls out to an external process for the initial
-    filtering but a lot of postprocessing runs in Elisp. (e.g. calculating
-    highlights or general list processing)
-  A quick eye test against the home directory using ~affe-grep~ vs ~fzfa-rg~
-  shows about 1-2 million candidates processed after a few seconds compared to
-  ~fzfa~ which hits 10-20 million in the same time span.
+- There may be some fuzzy matching packages that try to interop with ~helm~ or ~counsel~ though it's hard to say how performant they are.
+- From a quick eye test, ~fzfa~ was the most performant around handling large datasets/sources with ~fzf.el~ and ~affe~ behind.
+- Multicomponent queries exist with these packages with varying functionality. For example, using multicomponent matching is possible
+with ~orderless~, but adding ~flex~ filtering to the matching will slow Emacs to a crawl.
+- ~fzfa~ integrates with ~completion-styles~ though ~fzfa~ does it by taking over the variable (ignoring the other values in the list).
+- ~helm~ integrates with ~completion-styles~ through a separate defcustom that doesn't apply to every source.
 
-(This comparison is on best efforts, so might be inaccurate. :))
+(Best-effort matrix; corrections welcome.)
 
-In comparison to similar pre-existing packages like ~consult~ / ~counsel~ / ~helm~,
-~fzfa~ provides:
+** Smart fuzzy vs filter-only
 
-*Speed.* fzf scoring runs multithreaded in C with a counting-sort final
-pass that is O(n + max_score).  Results stream incrementally so the UI
-stays responsive with *tens of millions* of candidates.  The goal is to match
-or exceed the performance of ~fzf~ in the terminal from within Emacs.
+~fzf~ scores bonuses for word boundaries, camel-case transitions,
+consecutive runs, and position (leading chars matter more).  Typing
+=fhf= matches =fzfa-helm-flymake= with a higher score than
+=fzfa-find-foo= because of the word-boundary alignment.
 
-*True fuzzy matching.* A single query string is used for both filtering
-and scoring in one pass — no two-stage conflict, no mismatches between
-what the shell tool matched and what the completion framework ranked.
+- =orderless= treats query components as substring / literal / regex
+  / flex predicates.  Its =flex= dispatcher is the only mainstream
+  pure-Elisp fuzzy implementation but is too slow for large
+  candidate sets. -The advantage of this approach is it can integrate with
+  other types of sorting Emacs provides like history/recency sorting.-
+- =affe= filters via =all-completions= + orderless regex.  Pure
+  filter; no per-character scoring; ranking is whatever
+  =all-completions= returns.
+- =helm-= sources use helm's multi-pattern matcher (substring or
+  regex), there are a few external packages that tries to hook smart
+  fuzzy matching in ~helm~ but they have the listed downsides mentioned
+  above.
 
-*Simplicity.* The core ~fzfa.el~ is <2000 lines of Emacs Lisp and ~fzf-native-module.c~ is also
-roughly 2000 lines.
+~fzfa~ runs fzf scoring in C via
+[[https://github.com/dangduc/fzf-native][fzf-native]] with the same
+algorithm as the =fzf= command-line tool — including the extended
+syntax (=^foo=, =foo$=, ='foo=, ==foo==, =!foo=).
 
-** Downsides
-~fzfa~ requires
-[[https://github.com/dangduc/fzf-native][fzf-native]],
-a compiled C dynamic module that requires a C compiler and CMake to build.
+** Multi-source
 
-If a pure-Elisp solution is preferred:
+- *helm* has native multi-source (helm-mini-style: stream from N
+  producer processes concurrently, each filtered/scored live).
+- *vertico/consult* has =consult--multi=, but it's sync only — which potentially
+  limits the scope of what you can do with a multi source function.
+  =consult-buffer= shows the shape of what's possible.
+- *ivy/counsel* has no multi-source primitive.
+  =counsel-buffer-or-recentf= and friends concatenate two lists into
+  a flat collection — no per-source narrowing, filtering, or
+  preview.  =ivy-read= ignores the =group-function= completion-
+  metadata key.  =fzfa-ivy= adds genuine multi-source functionality
+  via a display transformer (source label prefix) + a
+  =ivy-dispatching-call=-based narrow menu using
+  =ivy--actions-list=.
 
-[[https://github.com/abo-abo/swiper][counsel]]
-[[https://github.com/emacs-helm/helm][helm]]
-[[https://github.com/minad/consult][consult]]
+** Cross-frontend integration
 
-are mature, widely supported alternatives that require no native compilation.
+Emacs packages like ~helm~, ~counsel~ and ~consult~ are somewhat
+tied to their base packages e.g. ~helm~, ~ivy~, and ~vertico~ / plain
+~completing-read~. ~consult~ and ~vertico~ are
+the most -standard- in the sense that they integrate the most with base
+Emacs but users generally aren't able to use a ~consult~
+function with ~helm~'s UI or vice versa. This is why these packages
+(and this one too) generally duplicate the same async-* functions.
+e.g. There will be a helm-rg, counsel-rg, consult-rg.
 
-** Prior Discussions
+~fzfa~ tries to integrate with these packages on the other hand.
+Each frontend gets a dedicated extension (=fzfa-helm.el=, =fzfa-ivy.el=,
+=fzfa-vertico.el=). Using ~helm~ as an example, ~fzfa~ can provide "sources"
+that ~helm~ can read (e.g. with ~helm-mini~) or calling ~fzfa-*~ functions
+using ~helm~'s UI.
+
+** Per-package notes (opinions mixed in)
+
+- *=helm-=* (helm-rg, helm-find-files, etc.): mature, comprehensive
+  command set, native multi-source. Its multi-source functionality
+  can mix both async and sync sources together!
+
+  For async sources, it re-shells the command per keystroke so isn't
+  scalable. Feels slightly sluggish compared to alternatives even with
+  things tuned down. Probably the most feature rich of the bunch with
+  the most third-party extensions. It doesn't use built-in Emacs APIs
+  so can feel like you're using "helm" instead of using "emacs". Can
+  be a little inconsistent in experience as its sources can all use
+  different completion algorithms which is good or bad depending on wh
+  you ask.
+
+- *=ivy/counsel-=* (counsel-rg, counsel-fzf, etc.): also mature, comprehensive
+  ~counsel-fzf~ is a good illustrative example. It has to re-shell
+  on input which means large datasets will feel sluggish to impossible
+  to filter/search through.
+  ([[https://github.com/abo-abo/swiper/pull/1151][PR #1151]] for context)
+  Since it doesn't heavily integrate with the base Emacs packages
+  (e.g. ~completion-styles~) and development has slowed, it prevents a tricky
+  value proposition at this point. From my testing, the most typing
+  responsive of the bunch (no benchmarking).
+
+- *=vertico/consult-=*: newest of bunch, but mature/comprehensive at this point
+  The various ~consult-*~ integrates heavily with Emacs base packages so
+  it's probably the best in terms of a future-looking experience. The
+  ~all-completions~ and ~completion-regexp-list~ approach it takes to filtering
+  means it "just works" with most packages as well as ~orderless~ but that's the
+  same reason it's not yet? compatible with ~fzf~ style matching, which mostly
+  wants a clean/empty prefix to match against. It gets around this somewhat using
+  a 2 pass approach (e.g. ~consult-rg~), where you can set a specific ripgrep
+  shell command to run and a separate query to filter.
+
+- *[[https://github.com/minad/affe][affe]]*: closest architectural
+  cousin to ~fzfa~ — background producer + async filter.
+  Matching can integrate with ~orderless~ or take advantage of any
+  of the Emacs plumbing. Filtering is single-threaded Elisp;
+  plateaus around 1-2M candidates while fzf-native chews 10-20M in
+  the same wall time (again, eye test).  Strict pure-Elisp win compared
+  to fzfa's native dep. ~fzfa~ took the most learning from this project
+  and its background producer + filter flow is what ~fzfa~ does. It
+  doesn't do smart fuzzy matching, and it's still relatively "slow"
+  (in the context of fuzzy matching, not prefix matching)
+  compared to newer alternatives (e.g. fff, fzf).
+
+- *[[https://github.com/bling/fzf.el][fzf.el]]*: shells out to the
+  =fzf= command-line binary as its UI.  Doesn't participate in
+  Emacs's completion machinery (no =completing-read= integration, no
+  embark, no marginalia, no category dispatch).  Works if you want
+  fzf-the-tool inside a buffer. It's a great option if you work in a large
+  repo and don't want the C binary requirement ~fzfa~ imposes and also
+  don't care about how integrated it is with other Emacs packages.
+
+** Prior discussions
+
 [[https://github.com/abo-abo/swiper/pull/1151][swiper: add counsel-fzf]]
 [[https://github.com/abo-abo/swiper/issues/848][swiper: fzf integration]]
 [[https://github.com/minad/consult/issues/587][consult: fzf integration]]
@@ -1287,3 +1389,5 @@ For ~fussy~, the broader fuzzy completion-style framework that
 [[https://github.com/abo-abo/swiper][counsel]]
 [[https://github.com/emacs-helm/helm][helm]]
 [[https://github.com/minad/consult][consult]]
+[[https://github.com/minad/affe][affe]]
+[[https://github.com/bling/fzf.el][fzf.el]]
