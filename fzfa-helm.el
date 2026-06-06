@@ -74,10 +74,37 @@ under helm-mode), which use the full `fzfa-max-candidates'."
 (declare-function fzf-native-async-stop "fzf-native")
 (declare-function fzf-native-async-generation "fzf-native")
 (declare-function fzf-native-async-candidates "fzf-native")
+(declare-function fzf-native-async-stats "fzf-native")
 (declare-function fzf-native-score-all "fzf-native")
 (declare-function fzfa--history-rank "fzfa")
 (declare-function fzfa--2pass-extract-args "fzfa")
+(declare-function fzfa--commas "fzfa")
 (defvar fzfa--multi-mode)
+
+;;; Stats display helpers
+
+(defun fzfa-helm--async-stats-suffix (handle)
+  "Return ` (FILTERED/TOTAL)' suffix string from HANDLE's current stats.
+Returns empty string when HANDLE is nil or has no stats yet (producer
+process hasn't produced any candidates, e.g. brand-new session).
+Numbers comma-formatted via `fzfa--commas' to match the vertico-side
+stats overlay shape.
+Read by `:header-name' closures so the source's helm-buffer header
+updates live as new candidates stream in — helm re-calls `:header-name'
+on every `helm-force-update', which is what the polling timers in the
+async / 2pass / multi handlers trigger on each generation tick."
+  (if-let* ((stats (and handle (fzf-native-async-stats handle))))
+      (format " (%s/%s)" (fzfa--commas (car stats))
+              (fzfa--commas (cdr stats)))
+    ""))
+
+(defun fzfa-helm--sync-stats-suffix (filtered total)
+  "Return ` (FILTERED/TOTAL)' suffix string from sync-source counts.
+Returns empty string when either count is nil (initial state — `:candidates'
+hasn't run yet).  Numbers comma-formatted via `fzfa--commas'."
+  (if (and filtered total)
+      (format " (%s/%s)" (fzfa--commas filtered) (fzfa--commas total))
+    ""))
 
 ;;; Public source constructors
 
@@ -114,7 +141,9 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
     (cons
      (helm-make-source (or name "fzfa") 'helm-source-sync
        :header-name
-       (lambda (n) (format "%s [%s]" n (abbreviate-file-name dir)))
+       (lambda (n)
+         (format "%s [%s]%s" n (abbreviate-file-name dir)
+                 (fzfa-helm--async-stats-suffix handle)))
        :candidates
        (lambda ()
          (unless stopped
@@ -165,15 +194,25 @@ sync/multi handlers wrap their `:action' to do so).
 
 Each `helm-pattern' change re-scores the full ITEMS list via
 `fzf-native-score-all'."
-  (let ((limit (or candidate-number-limit 10000)))
+  (let* ((limit (or candidate-number-limit 10000))
+         (last-filtered nil)
+         (last-total nil))
     (helm-make-source (or name "fzfa") 'helm-source-sync
+      :header-name
+      (lambda (n)
+        (format "%s%s" n (fzfa-helm--sync-stats-suffix
+                          last-filtered last-total)))
       :candidates
       (lambda ()
-        (let ((all (if (functionp items) (funcall items) items)))
-          (if (or (null helm-pattern) (string-empty-p helm-pattern))
-              (if history (fzfa--history-rank all history) all)
-            (fzfa--bridge-defcustoms
-             #'fzf-native-score-all all helm-pattern))))
+        (let* ((all (if (functionp items) (funcall items) items))
+               (result
+                (if (or (null helm-pattern) (string-empty-p helm-pattern))
+                    (if history (fzfa--history-rank all history) all)
+                  (fzfa--bridge-defcustoms
+                   #'fzf-native-score-all all helm-pattern))))
+          (setq last-total (length all)
+                last-filtered (length result))
+          result))
       :match-dynamic t
       :nohighlight t
       :candidate-number-limit limit
@@ -430,7 +469,9 @@ helm (helm sources do not consume completion-read metadata)."
            :sources
            (helm-make-source prompt 'helm-source-sync
              :header-name
-             (lambda (n) (format "%s [%s]" n (abbreviate-file-name dir)))
+             (lambda (n)
+               (format "%s [%s]%s" n (abbreviate-file-name dir)
+                       (fzfa-helm--async-stats-suffix handle)))
              :candidates
              (lambda ()
                (let* ((split (funcall splitter helm-pattern style))
@@ -544,7 +585,8 @@ when any source has new candidates."
                    (helm-make-source name 'helm-source-sync
                      :header-name
                      (lambda (n)
-                       (format "%s [%s]" n (abbreviate-file-name dir)))
+                       (format "%s [%s]%s" n (abbreviate-file-name dir)
+                               (fzfa-helm--async-stats-suffix handle)))
                      :candidates
                      (lambda ()
                        (unless stopped
