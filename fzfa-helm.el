@@ -847,10 +847,17 @@ for fuzzy-multi-source UX."
          (any-preview nil)
          ;; Tracks which source the winning action fired from — for
          ;; broadcasting `:return' on cleanup: the winning source's
-         ;; cell receives CAND, every other cell receives nil
-         ;; ("aborted from its perspective"), mirroring
-         ;; `fzfa--multi-build-router' at fzfa.el:~1845.
+         ;; cell receives the RAW CAND (`result-cand'), every other
+         ;; cell receives nil ("aborted from its perspective"),
+         ;; mirroring `fzfa--multi-build-router' at fzfa.el:~1845.
+         ;; `result' (the helm action's return value) may differ from
+         ;; the raw cand — multi inject lambdas return whatever the
+         ;; inner command returns (e.g. a buffer object from
+         ;; `switch-to-buffer'), and feeding that into a `:return'
+         ;; handler that expects a string (e.g. `fzfa--file-preview-return')
+         ;; signals `Wrong type argument: stringp, #<buffer>'.
          (result-src-idx nil)
+         (result-cand nil)
          ;; Per-source state collected during source construction.
          (handles nil)   ; reversed: list of fzf-native handles (async only)
          (stops nil)     ; reversed: list of 0-arg stop closures (async only)
@@ -890,8 +897,11 @@ for fuzzy-multi-source UX."
                                 (not (eq history t)))
                        (add-to-history history cand))
                      ;; Record which source the winning action fired
-                     ;; from so cleanup can route `:return' correctly.
+                     ;; from so cleanup can route `:return' correctly,
+                     ;; AND the raw cand (separate from the action's
+                     ;; return value — see `result-cand' comment above).
                      (setq result-src-idx i
+                           result-cand cand
                            result
                            (if orig-action
                                (funcall orig-action cand)
@@ -1168,8 +1178,10 @@ for fuzzy-multi-source UX."
       ;; already fired on normal helm exit.
       (mapc #'funcall stops)
       ;; Per-source preview `:exit' + `:return' broadcast.  The winning
-      ;; source's cell receives RESULT; every other cell receives nil
-      ;; (interpreted as "aborted from this source's perspective").
+      ;; source's cell receives the RAW CAND (`result-cand', not the
+      ;; action's return value `result' — they can differ, see comment
+      ;; on `result-cand' in the outer let*); every other cell receives
+      ;; nil (interpreted as "aborted from this source's perspective").
       ;; Mirrors `fzfa--multi-build-router' broadcast semantics.
       (when any-preview
         (dotimes (i n-sources)
@@ -1177,7 +1189,7 @@ for fuzzy-multi-source UX."
             (let ((fzfa--preview-session cell))
               (fzfa--preview-call :exit)
               (fzfa--preview-return (if (eql i result-src-idx)
-                                        result
+                                        result-cand
                                       nil)))))))
     result))
 
