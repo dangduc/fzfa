@@ -67,7 +67,6 @@
 (declare-function ivy--set-candidates "ivy")
 (declare-function ivy--exhibit "ivy")
 (defvar ivy-pre-prompt-function)
-(defvar helm-completion-style)
 (declare-function projectile-project-root "projectile")
 (declare-function project-root "project")
 (declare-function vertico--exhibit "vertico")
@@ -292,6 +291,16 @@ Receives the same keyword args (:prompt :command :directory
 :skip-executable-check) and returns the selected candidate string,
 or nil on cancel.  Populated by `fzfa-helm.el' on load.  When nil,
 the helm dispatch is skipped and fzfa runs through `completing-read'.")
+
+(defvar fzfa-sync-helm-handler nil
+  "Function called by `fzfa-sync-completing-read' under `helm-mode'.
+Receives the same keyword args (:candidates :prompt :category
+:annotate :affix :group :history :require-match :default :preview)
+and returns the selected candidate string, or nil on cancel.
+Populated by `fzfa-helm.el' on load.  When nil, the sync path runs
+through `completing-read' (where helm-mode's advice picks it up but
+ignores the `display-sort-function' metadata, so per-history ordering
+is lost).")
 
 (defvar fzfa-2pass-helm-handler nil
   "Function called by `fzfa-2pass-completing-read' under `helm-mode'.
@@ -1734,12 +1743,14 @@ PATH and whose command symbol is bound: %s."
     (let ((cand (cdr fzfa--multi-mode)))
       (setq fzfa--multi-mode nil)
       (cl-return-from fzfa-sync-completing-read cand))))
+  (when (and (bound-and-true-p helm-mode) fzfa-sync-helm-handler)
+    (cl-return-from fzfa-sync-completing-read
+      (funcall fzfa-sync-helm-handler
+               :candidates candidates :prompt prompt :category category
+               :annotate annotate :affix affix :group group
+               :history history :require-match require-match
+               :default default :preview preview)))
   (let* ((completion-styles '(fzfa))
-         ;; Force helm-mode to defer matching to `completion-styles'
-         ;; instead of running its own matcher,
-         ;; so fzfa's style scores the candidates.
-         ;; Noop when `helm' is not loaded.
-         (helm-completion-style 'emacs)
          (handler (fzfa--preview-handler preview category))
          (fzfa--preview-session (and handler (list handler)))
          (selection nil))
@@ -2069,7 +2080,10 @@ Per-source plist keys:
       (setq fzfa--multi-mode nil)
       (cl-return-from fzfa--multi-read cand))))
   (when (bound-and-true-p helm-mode)
-    (user-error "Fzfa--multi-read does not yet support helm-mode"))
+    (if fzfa-multi-helm-handler
+        (cl-return-from fzfa--multi-read
+          (funcall fzfa-multi-helm-handler sources :prompt prompt))
+      (user-error "Fzfa--multi-read does not yet support helm-mode")))
   (let* ((n            (length sources))
          (sources-v    (vconcat sources))
          (handles      (make-vector n nil))

@@ -725,20 +725,135 @@ used by counsel's async commands.  The stats prompt (directory, selection
 index, filtered/total counts) is delivered via ~ivy-pre-prompt-function~,
 which ivy prepends to the prompt string on each redraw.
 ** helm
-When ~helm-mode~ is active, ~fzfa-async-completing-read~ automatically
-dispatches to a dedicated ~fzfa--helm-completing-read~ path — no
-extra configuration is needed.
 
-Helm uses a ~helm-source-sync~ source with ~:match-dynamic t~, which tells
-helm to call the ~:candidates~ function on every input change rather than
-holding its own filtered list.  ~:nohighlight t~ is set so helm does not
-apply its own highlighting on top of the C-side ~completions-common-part~
-faces already embedded in the candidate strings.
+Helm support lives in ~fzfa-helm.el~, auto-required during ~fzfa-setup~
+via ~(with-eval-after-load 'helm …)~ — install helm, enable
+~helm-mode~, and existing ~fzfa-*~ commands route through helm
+sources backed by ~fzf-native~ scoring.  No user configuration is
+needed; each fzfa helm handler let-binds ~helm-completion-style~ to
+~'emacs~ for the duration of its session so helm-mode defers
+matching to ~completion-styles~ (where fzfa's style is registered).
+The user's global ~helm-completion-style~ is left untouched.
 
-A polling timer checks ~fzf-native-async-generation~ at
-~fzfa-refresh-delay~ intervals and calls ~helm-force-update~ whenever
-the background scoring thread has produced new results, keeping the helm
-buffer live as candidates stream in.
+When ~helm-mode~ is active, each fzfa entry point dispatches through
+a handler that bypasses ~completing-read~ entirely and runs
+~(helm :sources …)~ directly:
+
+| Entry point                  | Handler var               |
+|------------------------------+---------------------------|
+| ~fzfa-async-completing-read~ | ~fzfa-async-helm-handler~ |
+| ~fzfa-sync-completing-read~  | ~fzfa-sync-helm-handler~  |
+| ~fzfa-2pass-completing-read~ | ~fzfa-2pass-helm-handler~ |
+| ~fzfa--multi-read~           | ~fzfa-multi-helm-handler~ |
+
+Each handler builds a ~helm-source-sync~ source with ~:match-dynamic t~
+(helm asks for filtered candidates on each input change rather than
+holding its own filtered list) and ~:nohighlight t~ (so helm doesn't
+paint over the ~completions-common-part~ faces already embedded by
+fzf-native).
+
+For async commands a polling timer checks
+~fzf-native-async-generation~ and calls ~helm-force-update~ as new
+candidates stream in.  The multi handler uses a single shared timer
+that watches every source's handle, throttled to one
+~helm-force-update~ per ~fzfa-input-throttle~, and skipped when
+~input-pending-p~ — keystrokes always win against producer-driven
+refreshes.
+
+*** Adding fzfa sources to a helm command
+
+Use ~fzfa-helm-source-from-command~ to lift an existing
+~fzfa-*~ command into a helm source — useful when you want to extend
+a helm-mini-style picker with ~fzf-native~-scored sources mixed in
+with built-in helm sources (~helm-source-buffers-list~,
+~helm-source-bookmarks~, ...).  The function returns a LIST (one
+source for single-source commands, N sources for multi-source
+commands like ~fzfa-find-any~), so callers can compose with ~append~:
+
+Example below:
+
+#+begin_src emacs-lisp
+  (defun my/helm-mini ()
+    (interactive)
+    (require 'helm-x-files)
+    (unless helm-source-buffers-list
+      (setq helm-source-buffers-list
+            (helm-make-source "Buffers" 'helm-source-buffers)))
+    (helm :sources
+          (append helm-mini-default-sources
+                  (fzfa-helm-source-from-command 'fzfa-find)
+                  ;; Multi-source fzfa command — expands into one
+                  ;; helm source per inner vc command (modified-locally,
+                  ;; added-files, staged-for-commit, modified-in-head).
+                  (fzfa-helm-source-from-command 'fzfa-vcs-any))
+          :buffer "*helm mini+fzfa*"))
+#+end_src
+
+The selection is routed back to the original command via fzfa's
+~:inject~ mode so each command's post-action (~find-file~, grep jump,
+history push) still fires.
+
+*** Frontend-portable multi via ~fzfa-multi-read~
+
+If every source in your picker is itself an ~fzfa-*~ command,
+~fzfa-multi-read~ is the better tool: one definition works across
+~helm~ / ~ivy~ / ~vertico~ / ~icomplete~ from a single call, and under
+~helm-mode~ it dispatches through ~fzfa-multi-helm-handler~ with the
+shared polling timer and per-source caps.  Reach for
+~fzfa-helm-source-from-command~ only when you specifically want fzfa
+sources mixed with non-fzfa helm sources (e.g. adding to ~helm-mini~).
+
+*** Full setup example
+To get a completion experience where each ~helm~ source matches using a
+consistent algorithm (e.g. ~fzf-native~), use ~fussy~ for non-~fzfa~ sources
+and ~fzfa~ otherwise. Example below.
+
+#+begin_src emacs-lisp :tangle yes
+  (use-package fussy
+    :config
+    (fussy-setup-fzf)
+    (fussy-eglot-setup)
+    (fussy-company-setup))
+
+  (use-package fzfa
+    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest))
+
+  (use-package helm
+    :ensure t
+    :config
+    (helm-mode)
+    ;; Setting `helm-completion-styles' to 'emacs allows `helm' to use `fussy'.
+    (setq helm-completion-style 'emacs)
+    (setq helm-input-idle-delay 0.05)
+    (setq helm-autoresize-max-height 30)
+    (setq helm-autoresize-min-height 30)
+    (setq helm-split-window-inside-p t
+          helm-ff-file-name-history-use-recentf t)
+    (setq helm-move-to-line-cycle-in-source nil)
+    (helm-autoresize-mode 1)
+    (setq helm-candidate-number-limit 900)
+    (set-face-attribute 'helm-source-header nil :height 1.0)
+    (setq helm-display-header-line nil)
+    (setq helm-mini-default-sources
+          '(helm-source-bookmarks
+            helm-source-buffers-list
+            helm-source-recentf
+            helm-source-buffer-not-found)))
+  (defun my/helm-mini ()
+    (interactive)
+    (require 'helm-x-files)
+    (unless helm-source-buffers-list
+      (setq helm-source-buffers-list
+            (helm-make-source "Buffers" 'helm-source-buffers)))
+    (helm :sources
+          (append helm-mini-default-sources
+                  (fzfa-helm-source-from-command 'fzfa-find)
+                  ;; Multi-source fzfa command — expands into one
+                  ;; helm source per inner vc command (modified-locally,
+                  ;; added-files, staged-for-commit, modified-in-head).
+                  (fzfa-helm-source-from-command 'fzfa-vcs-any))
+          :buffer "*helm mini+fzfa*"))
+#+end_src
 ** transient
 A [[https://github.com/jojojames/matcha/blob/master/matcha-fzfa.el][matcha transient]] is
  defined for invoking all ~fzfa~ commands from a
