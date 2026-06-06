@@ -2106,6 +2106,82 @@ Per-source plist keys:
                   (fzfa--frontend-index)
                   (cl-loop for x across filtered sum x)
                   (cl-loop for x across totals sum x)))))))
+         ;; Ivy push closure: ivy doesn't re-call the collection on
+         ;; timer ticks (push model), so async sources would stay
+         ;; stuck on the initial pattern.  Mirrors the per-source
+         ;; iterate/score/rank/concat from the `'t' collection
+         ;; action but reads `ivy-text' and pushes via
+         ;; `ivy--set-candidates' + `ivy--exhibit'.  Mutates the
+         ;; same per-source state vectors, so state stays consistent
+         ;; whether updated via the collection (vertico/icomplete)
+         ;; or this closure (ivy).
+         (ivy-push-multi
+          (lambda ()
+            (when-let* ((query (and (boundp 'ivy-text) ivy-text)))
+              (let ((interrupted nil))
+                (dotimes (i n)
+                  (if (and narrow-idx (/= narrow-idx i))
+                      (progn
+                        (aset last-results i nil)
+                        (aset filtered i 0)
+                        (aset rank i 0))
+                    (let* ((h     (aref handles i))
+                           (items (aref sync-items i))
+                           (out
+                            (cond
+                             (h (while-no-input
+                                  (fzf-native-async-candidates
+                                   h query limit)))
+                             (items
+                              (if (string-empty-p query)
+                                  items
+                                (while-no-input
+                                  (fzfa--bridge-defcustoms
+                                   #'fzf-native-score-all
+                                   items query)))))))
+                      (cond
+                       ((eq out t) (setq interrupted t))
+                       ((and h (not (fzfa--async-final-p out h query)))
+                        (when-let* ((s (fzf-native-async-stats h)))
+                          (aset totals i (cdr s))))
+                       (t
+                        (when h
+                          (setq out
+                                (mapcar
+                                 (lambda (c)
+                                   (fzfa--multi-tag c i cand->src))
+                                 out)))
+                        (aset last-results i out)
+                        (aset rank i (fzfa--multi-rank out query h))
+                        (cond
+                         (h (when-let* ((s (fzf-native-async-stats h)))
+                              (aset filtered i (car s))
+                              (aset totals   i (cdr s))))
+                         (t (aset filtered i (length out)))))))))
+                (unless interrupted
+                  (let* ((order (number-sequence 0 (1- n)))
+                         (empty-q (string-empty-p query))
+                         (sorted
+                          (if empty-q
+                              order
+                            (sort order
+                                  (lambda (a b)
+                                    (> (aref rank a) (aref rank b))))))
+                         (cands
+                          (apply #'append
+                                 (mapcar
+                                  (lambda (i)
+                                    (let* ((slot (aref last-results i))
+                                           (hist (and empty-q
+                                                      (plist-get
+                                                       (aref sources-v i)
+                                                       :history))))
+                                      (if hist
+                                          (fzfa--history-rank slot hist)
+                                        slot)))
+                                  sorted))))
+                    (ivy--set-candidates cands)
+                    (ivy--exhibit)))))))
          (narrow-handler
           (lambda ()
             (interactive)
@@ -2153,7 +2229,9 @@ Per-source plist keys:
                        (t nil))
                       (setq menu-active nil)
                       (unless (eql before narrow-idx)
-                        (fzfa--frontend-exhibit))
+                        (if (bound-and-true-p ivy-mode)
+                            (funcall ivy-push-multi)
+                          (fzfa--frontend-exhibit)))
                       ;; Restore the normal overlay now that the menu
                       ;; is dismissed (the 't action's own refresh path
                       ;; only fires on candidate computations).
@@ -2200,7 +2278,10 @@ Per-source plist keys:
                                       fzfa-input-throttle))
                          (setq last-exhibit (float-time))
                          (run-with-idle-timer
-                          0 nil #'fzfa--frontend-exhibit)))))))
+                          0 nil
+                          (if (bound-and-true-p ivy-mode)
+                              ivy-push-multi
+                            #'fzfa--frontend-exhibit))))))))
           (add-hook 'post-command-hook refresh-overlay)
           (sit-for fzfa-refresh-delay)
           (setq result
@@ -2366,7 +2447,9 @@ Per-source plist keys:
                                    fzfa-input-debounce nil
                                    (lambda ()
                                      (setq retry-timer nil)
-                                     (fzfa--frontend-exhibit)))))
+                                     (if (bound-and-true-p ivy-mode)
+                                         (funcall ivy-push-multi)
+                                       (fzfa--frontend-exhibit))))))
                           (when-let* ((win (active-minibuffer-window)))
                             (with-selected-window win
                               (unless stats-overlay
