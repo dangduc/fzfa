@@ -2138,8 +2138,15 @@ Per-source plist keys:
          ;; or this closure (ivy).
          (ivy-push-multi
           (lambda ()
-            (when-let* ((query (and (boundp 'ivy-text) ivy-text)))
-              (let ((interrupted nil))
+            (when-let* ((win   (active-minibuffer-window))
+                        (query (and (boundp 'ivy-text) ivy-text)))
+              ;; Run the ivy ops with the minibuffer buffer current —
+              ;; the closure can fire from `run-with-idle-timer'
+              ;; whose buffer context is whatever was current at idle
+              ;; time, and `ivy--insert-prompt' / `ivy--exhibit'
+              ;; silently write to the wrong buffer otherwise.
+              (with-selected-window win
+                (let ((interrupted nil))
                 (dotimes (i n)
                   (if (and narrow-idx (/= narrow-idx i))
                       (progn
@@ -2207,7 +2214,7 @@ Per-source plist keys:
                     ;; candidate body didn't change.  Force it so our
                     ;; `ivy-pre-prompt-function' lambda runs again with
                     ;; the freshest stats.
-                    (ivy--insert-prompt)))))))
+                    (ivy--insert-prompt))))))))
          ;; Ivy action list for narrow dispatch.  One entry per
          ;; source's :narrow key (mutates `narrow-idx' and refreshes
          ;; via `ivy-push-multi'), plus a widen entry on
