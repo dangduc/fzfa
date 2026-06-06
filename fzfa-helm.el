@@ -109,6 +109,27 @@ fzfa-helm handler calls this in its unwind-protect cleanup."
   (when (and fzfa-helm-kill-buffer-on-exit (get-buffer name))
     (kill-buffer name)))
 
+(defvar helm--execute-persistent-action-timer)
+
+(defun fzfa-helm--cancel-stranded-follow-timer ()
+  "Cancel helm's global follow-mode idle timer if still scheduled.
+
+helm-core's `helm-follow-execute-persistent-action-maybe' schedules
+`helm-execute-persistent-action' via a global idle timer
+(`helm--execute-persistent-action-timer', helm-core.el ~8292) but
+helm-cleanup does not cancel it, and the callback does not check
+`helm-alive-p' before invoking the persistent action — which itself
+errors out via `with-helm-alive-p' when helm has exited.
+
+Race: scroll selection (schedules timer) -> RET/ESC to exit helm
+before the idle delay elapses -> timer fires post-cleanup ->
+\"Running helm command outside of context\".  Only relevant when
+:follow 1 is in play (every fzfa-helm source that wires preview)."
+  (when (and (boundp 'helm--execute-persistent-action-timer)
+             (timerp helm--execute-persistent-action-timer))
+    (cancel-timer helm--execute-persistent-action-timer)
+    (setq helm--execute-persistent-action-timer nil)))
+
 (defvar helm-alive-p)
 (defvar helm-pattern)
 (defvar helm-completion-style)
@@ -623,6 +644,7 @@ Returns the selected candidate string, or nil on cancel."
       (when handler
         (fzfa--preview-call :exit)
         (fzfa--preview-return result))
+      (fzfa-helm--cancel-stranded-follow-timer)
       (fzfa-helm--maybe-kill-session-buffer "*helm fzfa*"))
     result))
 
@@ -681,6 +703,7 @@ metadata."
       (when handler
         (fzfa--preview-call :exit)
         (fzfa--preview-return result))
+      (fzfa-helm--cancel-stranded-follow-timer)
       (fzfa-helm--maybe-kill-session-buffer "*helm fzfa sync*"))
     result))
 
@@ -833,6 +856,7 @@ matching line), and fire `:exit' + `:return' on exit."
       (when handler
         (fzfa--preview-call :exit)
         (fzfa--preview-return result))
+      (fzfa-helm--cancel-stranded-follow-timer)
       (fzfa-helm--maybe-kill-session-buffer "*helm fzfa 2pass*"))
     result))
 
@@ -1225,6 +1249,7 @@ for fuzzy-multi-source UX."
               (fzfa--preview-return (if (eql i result-src-idx)
                                         result-cand
                                       nil))))))
+      (fzfa-helm--cancel-stranded-follow-timer)
       (fzfa-helm--maybe-kill-session-buffer "*helm fzfa multi*"))
     result))
 

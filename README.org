@@ -1244,7 +1244,7 @@ Opens the selected PDF with `open'."
 - There may be some fuzzy matching packages that try to interop with ~helm~ or ~counsel~ though it's hard to say how performant they are.
 - From a quick eye test, ~fzfa~ was the most performant around handling large datasets/sources with ~fzf.el~ and ~affe~ behind.
 - Multicomponent queries exist with these packages with varying functionality. For example, using multicomponent matching is possible
-with ~orderless~, but adding ~flex~ filtering to the matching will slow Emacs to a crawl.
+  with ~orderless~, but adding ~flex~ filtering to the matching will slow Emacs to a crawl.
 - ~fzfa~ integrates with ~completion-styles~ though ~fzfa~ does it by taking over the variable (ignoring the other values in the list).
 - ~helm~ integrates with ~completion-styles~ through a separate defcustom that doesn't apply to every source.
 
@@ -1320,7 +1320,7 @@ using ~helm~'s UI.
   the most third-party extensions. It doesn't use built-in Emacs APIs
   so can feel like you're using "helm" instead of using "emacs". Can
   be a little inconsistent in experience as its sources can all use
-  different completion algorithms which is good or bad depending on wh
+  different completion algorithms which is good or bad depending on who
   you ask.
 
 - *=ivy/counsel-=* (counsel-rg, counsel-fzf, etc.): also mature, comprehensive
@@ -1329,7 +1329,7 @@ using ~helm~'s UI.
   to filter/search through.
   ([[https://github.com/abo-abo/swiper/pull/1151][PR #1151]] for context)
   Since it doesn't heavily integrate with the base Emacs packages
-  (e.g. ~completion-styles~) and development has slowed, it prevents a tricky
+  (e.g. ~completion-styles~) and development has slowed, it presents a tricky
   value proposition at this point. From my testing, the most typing
   responsive of the bunch (no benchmarking).
 
