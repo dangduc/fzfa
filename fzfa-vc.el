@@ -134,5 +134,26 @@ Dispatches to the backend's `modified-in-head' source in
   (interactive)
   (fzfa-vc--dispatch 'modified-in-head))
 
+;;; Multi-source VCS
+
+(defcustom fzfa-vcs-any-commands
+  '((fzfa-vc-modified-locally  :narrow m)
+    (fzfa-vc-added-files       :narrow a)
+    (fzfa-vc-staged-for-commit :narrow s)
+    (fzfa-vc-modified-in-head  :narrow h))
+  "Commands shown by `fzfa-vcs-any'.
+Each entry is either a bare command symbol or a list
+\(COMMAND :narrow KEY) overriding the auto-derived narrow key.
+The defaults dispatch via `vc-responsible-backend' so the active
+VCS backend is picked per project."
+  :type '(repeat (choice function (cons function plist)))
+  :group 'fzfa)
+
+;;;###autoload
+(defun fzfa-vcs-any ()
+  "Multi-source fuzzy completion over `fzfa-vcs-any-commands'."
+  (interactive)
+  (fzfa-multi-read fzfa-vcs-any-commands :prompt "vcs?: "))
+
 (provide 'fzfa-vc)
 ;;; fzfa-vc.el ends here
