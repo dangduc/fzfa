@@ -352,6 +352,27 @@ Handles vertico and icomplete.  `ivy' is handled separately."
        ((bound-and-true-p icomplete-mode)
         (icomplete-exhibit))))))
 
+(defun fzfa--frontend-push (ivy-push-fn)
+  "Refresh the active completion display.
+Under `ivy-mode' (push model) `funcall' IVY-PUSH-FN; otherwise hand
+off to `fzfa--frontend-exhibit' for the pull-model frontends.
+Designed to be passed straight to `run-with-idle-timer' with
+IVY-PUSH-FN as the trailing argument, or called directly inline."
+  (if (bound-and-true-p ivy-mode)
+      (funcall ivy-push-fn)
+    (fzfa--frontend-exhibit)))
+
+(defun fzfa--insert-prompt-if-ivy ()
+  "Force ivy to redraw its prompt if `ivy-mode' is active.
+Required because `ivy--exhibit' skips the prompt redraw when the
+candidate body didn't change; our dynamic-state pre-prompt content
+\(stats line, narrow indicator) would otherwise stay stale.  No-op
+under non-ivy frontends."
+  (when (and (bound-and-true-p ivy-mode)
+             (active-minibuffer-window))
+    (with-selected-window (active-minibuffer-window)
+      (ivy--insert-prompt))))
+
 ;;; Live preview
 ;;
 ;; Categories declare per-action handlers in `fzfa-preview-functions'.
@@ -1044,10 +1065,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                        (setq last-gen gen)
                        (setq last-exhibit-scheduled (float-time))
                        (run-with-idle-timer
-                        0 nil
-                        (if (bound-and-true-p ivy-mode)
-                            ivy-push
-                          #'fzfa--frontend-exhibit)))))))))
+                        0 nil #'fzfa--frontend-push ivy-push))))))))
       (add-hook 'post-command-hook refresh-overlay)
       (sit-for fzfa-refresh-delay)
       (fzfa--maybe-expand
@@ -1093,9 +1111,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                              fzfa-input-debounce nil
                                              (lambda ()
                                                (setq retry-timer nil)
-                                               (if (bound-and-true-p ivy-mode)
-                                                   (funcall ivy-push)
-                                                 (fzfa--frontend-exhibit))))))
+                                               (fzfa--frontend-push ivy-push)))))
                                   (when-let* ((stats (fzf-native-async-stats handle)))
                                     (setq last-filtered (car stats)
                                           last-total    (cdr stats)))
@@ -1339,10 +1355,7 @@ changing FILTER rescores in place via fzf-native.
                  (fzfa--format-stats (concat prompt dir-abbrev " ")
                                      (fzfa--frontend-index)
                                      last-filtered last-total))))
-            (when (and (bound-and-true-p ivy-mode)
-                       (active-minibuffer-window))
-              (with-selected-window (active-minibuffer-window)
-                (ivy--insert-prompt)))))
+            (fzfa--insert-prompt-if-ivy)))
          (do-restart
           (lambda (cmd)
             (when handle
@@ -1357,9 +1370,7 @@ changing FILTER rescores in place via fzf-native.
                   last-restart-time (float-time))
             (when (and cmd (not (string-empty-p cmd)))
               (setq handle (fzf-native-async-start cmd dir)))
-            (if (bound-and-true-p ivy-mode)
-                (funcall ivy-push-2pass)
-              (fzfa--frontend-exhibit))))
+            (fzfa--frontend-push ivy-push-2pass)))
          ;; Ivy push closure: ivy doesn't re-call the collection on
          ;; timer ticks, so async streaming wouldn't update.  Mirrors
          ;; the `'t' action body but reads `ivy-text', splits via the
@@ -1416,9 +1427,7 @@ changing FILTER rescores in place via fzf-native.
                               fzfa-input-debounce nil
                               (lambda ()
                                 (setq retry-timer nil)
-                                (if (bound-and-true-p ivy-mode)
-                                    (funcall ivy-push-2pass)
-                                  (fzfa--frontend-exhibit)))))
+                                (fzfa--frontend-push ivy-push-2pass))))
                        last-result)
                       (t
                        (when-let* ((stats (fzf-native-async-stats handle)))
@@ -1503,10 +1512,7 @@ changing FILTER rescores in place via fzf-native.
                    (setq last-gen gen
                          last-exhibit-scheduled (float-time))
                    (run-with-idle-timer
-                    0 nil
-                    (if (bound-and-true-p ivy-mode)
-                        ivy-push-2pass
-                      #'fzfa--frontend-exhibit))))))))
+                    0 nil #'fzfa--frontend-push ivy-push-2pass)))))))
     (add-hook 'post-command-hook refresh-overlay)
     (sit-for fzfa-refresh-delay)
     (fzfa--maybe-expand
@@ -2187,16 +2193,7 @@ Per-source plist keys:
                   (fzfa--frontend-index)
                   (cl-loop for x across filtered sum x)
                   (cl-loop for x across totals sum x)))))
-            ;; Under ivy the overlay is invisible (ivy paints its own
-            ;; prompt area).  Force `ivy--insert-prompt' so the
-            ;; let-bound `ivy-pre-prompt-function' lambda runs with
-            ;; fresh state — `ivy--exhibit' alone skips the prompt
-            ;; redraw when the candidate body is unchanged.
-            (when (and (bound-and-true-p ivy-mode)
-                       (not menu-active)
-                       (active-minibuffer-window))
-              (with-selected-window (active-minibuffer-window)
-                (ivy--insert-prompt)))))
+            (fzfa--insert-prompt-if-ivy)))
          ;; Ivy push closure: ivy doesn't re-call the collection on
          ;; timer ticks (push model), so async sources would stay
          ;; stuck on the initial pattern.  Mirrors the per-source
@@ -2362,9 +2359,7 @@ Per-source plist keys:
                        (t nil))
                       (setq menu-active nil)
                       (unless (eql before narrow-idx)
-                        (if (bound-and-true-p ivy-mode)
-                            (funcall ivy-push-multi)
-                          (fzfa--frontend-exhibit)))
+                        (fzfa--frontend-push ivy-push-multi))
                       ;; Restore the normal overlay now that the menu
                       ;; is dismissed (the 't action's own refresh path
                       ;; only fires on candidate computations).
@@ -2418,10 +2413,7 @@ Per-source plist keys:
                                       fzfa-input-throttle))
                          (setq last-exhibit (float-time))
                          (run-with-idle-timer
-                          0 nil
-                          (if (bound-and-true-p ivy-mode)
-                              ivy-push-multi
-                            #'fzfa--frontend-exhibit))))))))
+                          0 nil #'fzfa--frontend-push ivy-push-multi)))))))
           (add-hook 'post-command-hook refresh-overlay)
           (sit-for fzfa-refresh-delay)
           (setq result
@@ -2621,9 +2613,7 @@ Per-source plist keys:
                                    fzfa-input-debounce nil
                                    (lambda ()
                                      (setq retry-timer nil)
-                                     (if (bound-and-true-p ivy-mode)
-                                         (funcall ivy-push-multi)
-                                       (fzfa--frontend-exhibit))))))
+                                     (fzfa--frontend-push ivy-push-multi)))))
                           (when-let* ((win (active-minibuffer-window)))
                             (with-selected-window win
                               (unless stats-overlay
