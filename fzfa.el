@@ -1329,7 +1329,7 @@ changing FILTER rescores in place via fzf-native.
             (funcall compact-clear)
             (setq compact-on (not compact-on))
             (when compact-on (funcall compact-apply))))
-         restart-timer retry-timer poll-timer
+         restart-timer retry-timer poll-timer ivy-push-2pass
          (refresh-overlay
           (lambda ()
             (when (and stats-overlay (active-minibuffer-window))
@@ -1338,7 +1338,11 @@ changing FILTER rescores in place via fzf-native.
                  stats-overlay 'display
                  (fzfa--format-stats (concat prompt dir-abbrev " ")
                                      (fzfa--frontend-index)
-                                     last-filtered last-total))))))
+                                     last-filtered last-total))))
+            (when (and (bound-and-true-p ivy-mode)
+                       (active-minibuffer-window))
+              (with-selected-window (active-minibuffer-window)
+                (ivy--insert-prompt)))))
          (do-restart
           (lambda (cmd)
             (when handle
@@ -1353,7 +1357,15 @@ changing FILTER rescores in place via fzf-native.
                   last-restart-time (float-time))
             (when (and cmd (not (string-empty-p cmd)))
               (setq handle (fzf-native-async-start cmd dir)))
-            (fzfa--frontend-exhibit)))
+            (if (bound-and-true-p ivy-mode)
+                (funcall ivy-push-2pass)
+              (fzfa--frontend-exhibit))))
+         ;; Ivy push closure: ivy doesn't re-call the collection on
+         ;; timer ticks, so async streaming wouldn't update.  Mirrors
+         ;; the `'t' action body but reads `ivy-text', splits via the
+         ;; current style's splitter, and pushes via
+         ;; `ivy--set-candidates' + `ivy--exhibit' (+ forced
+         ;; `ivy--insert-prompt' for the stats line refresh).
          (table
           (lambda (str _pred action)
             (pcase action
@@ -1404,7 +1416,9 @@ changing FILTER rescores in place via fzf-native.
                               fzfa-input-debounce nil
                               (lambda ()
                                 (setq retry-timer nil)
-                                (fzfa--frontend-exhibit))))
+                                (if (bound-and-true-p ivy-mode)
+                                    (funcall ivy-push-2pass)
+                                  (fzfa--frontend-exhibit)))))
                        last-result)
                       (t
                        (when-let* ((stats (fzf-native-async-stats handle)))
@@ -1421,6 +1435,58 @@ changing FILTER rescores in place via fzf-native.
                          (setq last-result r))
                        last-result)))))))
               (_ t)))))
+    ;; Install `ivy-push-2pass' into the placeholder declared in the
+    ;; let* above.  Deferred so its lambda can close over `do-restart'
+    ;; (which references back into `ivy-push-2pass'), and so `setq'
+    ;; mutates the placeholder's cell rather than shadowing it — the
+    ;; closures captured by `do-restart' and the timers reference that
+    ;; cell.
+    (setq ivy-push-2pass
+          (lambda ()
+            (when-let* ((win   (active-minibuffer-window))
+                        (query (and (boundp 'ivy-text) ivy-text)))
+              (with-selected-window win
+                (let* ((split  (funcall splitter query style))
+                       (cmd    (car split))
+                       (filter (cdr split)))
+                  (cond
+                   ((not (equal cmd current-cmd))
+                    (when restart-timer
+                      (cancel-timer restart-timer)
+                      (setq restart-timer nil))
+                    (let* ((elapsed (- (float-time) last-restart-time))
+                           (delay (max fzfa-shell-command-debounce
+                                       (- fzfa-shell-command-throttle
+                                          elapsed))))
+                      (setq restart-timer
+                            (run-with-timer
+                             (max 0.01 delay) nil
+                             (lambda ()
+                               (setq restart-timer nil)
+                               (funcall do-restart cmd)))))
+                    (let ((r (and handle
+                                  (fzf-native-async-candidates
+                                   handle filter limit))))
+                      (when (and handle
+                                 (fzfa--async-final-p r handle filter))
+                        (setq last-result r))))
+                   ((null handle) nil)
+                   (t
+                    (let ((r (while-no-input
+                               (fzf-native-async-candidates
+                                handle filter limit))))
+                      (cond
+                       ((eq r t) nil)
+                       (t
+                        (when-let* ((stats (fzf-native-async-stats handle)))
+                          (setq last-filtered (car stats)
+                                last-total    (cdr stats)))
+                        (when (fzfa--async-final-p r handle filter)
+                          (setq last-result r)))))))
+                  (when last-result
+                    (ivy--set-candidates last-result)
+                    (ivy--exhibit)
+                    (ivy--insert-prompt)))))))
     (when init-text
       (let ((cmd (car (funcall splitter init-text style))))
         (when (and cmd (not (string-empty-p cmd)))
@@ -1437,7 +1503,10 @@ changing FILTER rescores in place via fzf-native.
                    (setq last-gen gen
                          last-exhibit-scheduled (float-time))
                    (run-with-idle-timer
-                    0 nil #'fzfa--frontend-exhibit)))))))
+                    0 nil
+                    (if (bound-and-true-p ivy-mode)
+                        ivy-push-2pass
+                      #'fzfa--frontend-exhibit))))))))
     (add-hook 'post-command-hook refresh-overlay)
     (sit-for fzfa-refresh-delay)
     (fzfa--maybe-expand
@@ -1470,7 +1539,8 @@ changing FILTER rescores in place via fzf-native.
                    (use-local-map map))
                  (setq compact-on t)
                  (funcall compact-apply)))
-           (let ((ivy-count-format
+           (let ((ivy-completing-read-dynamic-collection t)
+                 (ivy-count-format
                   (when (bound-and-true-p ivy-mode) ""))
                  (ivy-pre-prompt-function
                   (when (bound-and-true-p ivy-mode)
