@@ -45,14 +45,43 @@
 (defvar ivy-re-builders-alist)
 (defvar ivy-last)
 (declare-function ivy-state-caller "ivy")
-(declare-function ivy-set-display-transformer "ivy")
+(declare-function ivy-configure "ivy")
 (declare-function ivy--set-candidates "ivy")
 (declare-function ivy--exhibit "ivy")
+
+(defface fzfa-multi-source-label
+  '((t :inherit font-lock-comment-face))
+  "Face for source labels prepended to multi-source ivy candidates."
+  :group 'fzfa)
+
+(defun fzfa-ivy--multi-display-transformer (cand)
+  "Prepend `[source-name]' to CAND when it carries a fzfa tofu suffix.
+Self-gates on `fzfa--multi-active-sources' (bound only inside a
+`fzfa--multi-read' session) so non-fzfa `ivy-completing-read'
+calls pass through unchanged."
+  (let* ((n (length cand))
+         (last (and (> n 0) (aref cand (1- n)))))
+    (if (and fzfa--multi-active-sources
+             last
+             (>= last fzfa--tofu-base)
+             (< last (+ fzfa--tofu-base (length fzfa--multi-active-sources))))
+        (let* ((idx (- last fzfa--tofu-base))
+               (name (plist-get (aref fzfa--multi-active-sources idx) :name)))
+          (concat (propertize (format "[%s] " (or name "?"))
+                              'face 'fzfa-multi-source-label)
+                  cand))
+      cand)))
 
 (defun fzfa-ivy-setup ()
   "Wire fzfa's ivy integration into the current session."
   (with-eval-after-load 'ivy
-    nil))
+    ;; Register under the `t' fallback caller — `ivy-completing-read'
+    ;; uses `this-command' as the actual caller (ivy.el:2672), so
+    ;; per-fzfa-command registration would be brittle.  The
+    ;; transformer self-gates on `fzfa--multi-active-sources' so
+    ;; non-fzfa-multi sessions pass through unchanged.
+    (ivy-configure t
+      :display-transformer-fn #'fzfa-ivy--multi-display-transformer)))
 
 (provide 'fzfa-ivy)
 ;;; fzfa-ivy.el ends here

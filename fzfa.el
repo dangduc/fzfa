@@ -1765,6 +1765,12 @@ See consult's `consult--tofu-encode' for the same trick.")
 (defvar fzfa--tofu-cache (make-hash-table :test 'eql)
   "Cache of propertized tofu suffix strings, keyed by source index.")
 
+(defvar fzfa--multi-active-sources nil
+  "Source vector bound across the active `fzfa--multi-read' session.
+Read by frontends that need per-source rendering — currently the
+ivy display transformer in `fzfa-ivy.el', which decodes each
+candidate's tofu suffix into its source name.")
+
 (defun fzfa--tofu-suffix (idx)
   "Return the cached invisible tofu suffix string for source IDX."
   (or (gethash idx fzfa--tofu-cache)
@@ -2226,9 +2232,10 @@ Per-source plist keys:
                           (define-key map (kbd fzfa-multi-narrow-key)
                                       narrow-handler)
                           (use-local-map map))))
-                  (completing-read
-                   prompt
-                   (lambda (str _pred action)
+                  (let ((fzfa--multi-active-sources sources-v))
+                    (completing-read
+                     prompt
+                     (lambda (str _pred action)
                      (pcase action
                        ('metadata
                         (fzfa--completion-metadata
@@ -2393,7 +2400,7 @@ Per-source plist keys:
                                           slot)))
                                     sorted)))))
                        (_ t)))
-                   nil t))))
+                   nil t)))))
       (when timer (cancel-timer timer))
       (when retry-timer (cancel-timer retry-timer))
       (remove-hook 'post-command-hook refresh-overlay)
