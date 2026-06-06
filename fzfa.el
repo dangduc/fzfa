@@ -910,22 +910,6 @@ Priority: `fzfa-directory' >
            (projectile-project-root))))
       default-directory))
 
-(defun fzfa--deduplicate-dirs (dirs)
-  "Remove duplicates and subdirectory entries from DIRS.
-If directory A is a prefix of directory B, B is dropped — A's recursive
-search already covers it.  Exception: B is kept when it is itself a git
-root (contains a .git entry), so rg's gitignore stack starts at B rather
-than inheriting A's.  Git-specific — rg only honors .gitignore, so .hg
-/ .jj / etc. would just add duplicate hits."
-  (let ((unique (cl-delete-duplicates dirs :test #'string=)))
-    (cl-loop for dir in unique
-             unless (and (not (file-exists-p (expand-file-name ".git" dir)))
-                         (cl-some (lambda (other)
-                                    (and (not (string= dir other))
-                                         (string-prefix-p other dir)))
-                                  unique))
-             collect dir)))
-
 ;;; Async `completing-read'
 
 ;;;###autoload

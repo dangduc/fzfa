@@ -14,44 +14,45 @@
 (require 'ert)
 (require 'fzfa)
 (require 'fzfa-emacs)
+(require 'fzfa-hungry)
 
-;;; fzfa--deduplicate-dirs
+;;; fzfa-hungry--deduplicate-dirs
 
-(ert-deftest fzfa-deduplicate-dirs-no-overlap ()
+(ert-deftest fzfa-hungry-deduplicate-dirs-no-overlap ()
   "Unrelated directories are all kept."
-  (should (equal (sort (fzfa--deduplicate-dirs
+  (should (equal (sort (fzfa-hungry--deduplicate-dirs
                         '("/a/b/" "/c/d/" "/e/f/"))
                        #'string<)
                  '("/a/b/" "/c/d/" "/e/f/"))))
 
-(ert-deftest fzfa-deduplicate-dirs-drops-subdirectory ()
+(ert-deftest fzfa-hungry-deduplicate-dirs-drops-subdirectory ()
   "A subdirectory is dropped when its parent is present."
-  (should (equal (fzfa--deduplicate-dirs
+  (should (equal (fzfa-hungry--deduplicate-dirs
                   '("/home/user/project/" "/home/user/project/src/"))
                  '("/home/user/project/"))))
 
-(ert-deftest fzfa-deduplicate-dirs-keeps-sibling-dirs ()
+(ert-deftest fzfa-hungry-deduplicate-dirs-keeps-sibling-dirs ()
   "Sibling directories (same parent, different names) are both kept."
-  (let ((result (fzfa--deduplicate-dirs
+  (let ((result (fzfa-hungry--deduplicate-dirs
                  '("/home/user/foo/" "/home/user/bar/"))))
     (should (member "/home/user/foo/" result))
     (should (member "/home/user/bar/" result))))
 
-(ert-deftest fzfa-deduplicate-dirs-removes-exact-duplicates ()
+(ert-deftest fzfa-hungry-deduplicate-dirs-removes-exact-duplicates ()
   "Exact duplicate entries are collapsed to one."
-  (should (equal (fzfa--deduplicate-dirs
+  (should (equal (fzfa-hungry--deduplicate-dirs
                   '("/a/b/" "/a/b/" "/a/b/"))
                  '("/a/b/"))))
 
-(ert-deftest fzfa-deduplicate-dirs-deep-nesting ()
+(ert-deftest fzfa-hungry-deduplicate-dirs-deep-nesting ()
   "Only the shallowest ancestor survives when multiple levels are present."
-  (let ((result (fzfa--deduplicate-dirs
+  (let ((result (fzfa-hungry--deduplicate-dirs
                  '("/a/" "/a/b/" "/a/b/c/" "/a/b/c/d/"))))
     (should (equal result '("/a/")))))
 
-(ert-deftest fzfa-deduplicate-dirs-empty-input ()
+(ert-deftest fzfa-hungry-deduplicate-dirs-empty-input ()
   "Empty input returns nil."
-  (should (null (fzfa--deduplicate-dirs '()))))
+  (should (null (fzfa-hungry--deduplicate-dirs '()))))
 
 ;;; fzfa--default-dir
 

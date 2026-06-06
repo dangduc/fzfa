@@ -31,6 +31,22 @@
 (require 'fzfa)
 (require 'cl-lib)
 
+(defun fzfa-hungry--deduplicate-dirs (dirs)
+  "Remove duplicates and subdirectory entries from DIRS.
+If directory A is a prefix of directory B, B is dropped — A's recursive
+search already covers it.  Exception: B is kept when it is itself a git
+root (contains a .git entry), so rg's gitignore stack starts at B rather
+than inheriting A's.  Git-specific — rg only honors .gitignore, so .hg
+/ .jj / etc. would just add duplicate hits."
+  (let ((unique (cl-delete-duplicates dirs :test #'string=)))
+    (cl-loop for dir in unique
+             unless (and (not (file-exists-p (expand-file-name ".git" dir)))
+                         (cl-some (lambda (other)
+                                    (and (not (string= dir other))
+                                         (string-prefix-p other dir)))
+                                  unique))
+             collect dir)))
+
 ;;;###autoload
 (defun fzfa-hungry-swiper ()
   "Grep across the parent directories of all file-visiting buffers.
@@ -42,7 +58,7 @@ Selecting a match opens the file and jumps to the line."
                             for file = (buffer-file-name buf)
                             when file
                             collect (file-name-directory (expand-file-name file))))
-         (dirs (fzfa--deduplicate-dirs raw-dirs)))
+         (dirs (fzfa-hungry--deduplicate-dirs raw-dirs)))
     (unless dirs
       (user-error "No file-visiting buffers found"))
     (let* ((rg   (executable-find "rg"))
@@ -75,7 +91,7 @@ by a shallower parent, then streams fd (or find) output through fzf."
                             for file = (buffer-file-name buf)
                             when file
                             collect (file-name-directory (expand-file-name file))))
-         (dirs (fzfa--deduplicate-dirs raw-dirs)))
+         (dirs (fzfa-hungry--deduplicate-dirs raw-dirs)))
     (unless dirs
       (user-error "No file-visiting buffers found"))
     (let* ((fd   (executable-find "fd"))
