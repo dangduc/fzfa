@@ -127,6 +127,44 @@ hasn't run yet).  Numbers comma-formatted via `fzfa--commas'."
       (format " (%s/%s)" (fzfa--commas filtered) (fzfa--commas total))
     ""))
 
+;;; Live preview wrapper
+
+(defvar fzfa-preview-delay)
+
+(defun fzfa-helm--make-debounced-preview-fn ()
+  "Return a fresh `:persistent-action' closure that debounces preview dispatch.
+
+`helm' fires `:persistent-action' on every selection change when
+`:follow 1' is set — no idle-timer debounce of its own.
+
+This wrapper closes over a private `preview-timer' + `preview-last'
+pair (per-closure, so each `helm' source in a multi gets its own
+debounce state) and:
+
+- Skips dispatch when the candidate equals the previously-previewed
+  one (`helm' sometimes re-fires persistent-action on no-op moves).
+- Cancels any pending timer before scheduling a new one so fast
+  scrolling repeatedly resets the debounce — net effect: preview
+  fires only after the user pauses for `fzfa-preview-delay'.
+- Bypasses the debounce when `fzfa-preview-delay' is 0 or less,
+  firing immediately (matches the vertico path's escape hatch)."
+  (let ((preview-timer nil)
+        (preview-last 'unset))
+    (lambda (cand)
+      (unless (equal cand preview-last)
+        (when (timerp preview-timer)
+          (cancel-timer preview-timer))
+        (if (<= (or fzfa-preview-delay 0) 0)
+            (progn (setq preview-last cand)
+                   (fzfa--preview-call :preview cand))
+          (setq preview-timer
+                (run-with-idle-timer
+                 fzfa-preview-delay nil
+                 (lambda ()
+                   (setq preview-timer nil
+                         preview-last cand)
+                   (fzfa--preview-call :preview cand)))))))))
+
 ;;; Display transformer — preserves text properties and optionally annotates
 
 (defun fzfa-helm--make-display-transformer (annotate)
@@ -194,7 +232,8 @@ candidate string alone doesn't carry enough context."
 ;;; Public source constructors
 
 (defun fzfa-helm--async-source-and-stop
-    (name command directory action limit &optional annotate)
+    (name command directory action limit
+          &optional annotate persistent-action)
   "Return (SOURCE . STOP).  Eagerly starts the fzf-native producer and
 the polling timer.  SOURCE's `:cleanup' calls STOP; STOP is idempotent
 so callers can also invoke it externally for defense-in-depth (e.g.
@@ -203,6 +242,11 @@ multi-source bulk cleanup when helm never gets a chance to call
 
 ANNOTATE, when non-nil, is a (CAND) -> STRING function rendered as a
 per-row suffix via `fzfa-helm--make-display-transformer'.
+
+PERSISTENT-ACTION, when non-nil, is a (CAND) -> ANY function wired
+to helm's `:persistent-action' slot, plus `:follow 1' so helm
+auto-fires it on every selection change.  Used by handlers to wire
+fzfa's `:preview' dispatch — live preview-as-you-scroll under helm.
 
 Internal — used by both `fzfa-helm-make-async-source' (single-source)
 and `fzfa-helm--multi-read' (batch with bulk-stop)."
@@ -245,12 +289,15 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
             ;; properties on candidates via `helm-realvalue', even
             ;; when ANNOTATE is nil.  See
             ;; `fzfa-helm--make-display-transformer'.
-            (list :filtered-candidate-transformer
-                  (fzfa-helm--make-display-transformer annotate)))
+            (append
+             (list :filtered-candidate-transformer
+                   (fzfa-helm--make-display-transformer annotate))
+             (when persistent-action
+               (list :persistent-action persistent-action :follow 1))))
      stop)))
 
 (cl-defun fzfa-helm-make-async-source
-    (&key name command directory action annotate
+    (&key name command directory action annotate persistent-action
           (candidate-number-limit fzfa-helm-candidate-limit))
   "Return a helm source that streams candidates from shell COMMAND.
 
@@ -270,10 +317,10 @@ timing.  The source's `:cleanup' stops it."
   (car (fzfa-helm--async-source-and-stop
         name command directory action
         (or candidate-number-limit 10000)
-        annotate)))
+        annotate persistent-action)))
 
 (cl-defun fzfa-helm-make-sync-source
-    (&key name items action history annotate
+    (&key name items action history annotate persistent-action
           (candidate-number-limit fzfa-helm-candidate-limit))
   "Return a helm source that scores ITEMS with `fzf-native'.
 
@@ -349,8 +396,11 @@ Each `helm-pattern' change re-scores the full ITEMS list via
            ;; nil.  Load-bearing for sources like `fzfa-swiper''s whose
            ;; `fzfa-location' property would otherwise be stripped by
            ;; helm's default `buffer-substring-no-properties' extraction.
-           (list :filtered-candidate-transformer
-                 (fzfa-helm--make-display-transformer annotate)))))
+           (append
+            (list :filtered-candidate-transformer
+                  (fzfa-helm--make-display-transformer annotate))
+            (when persistent-action
+              (list :persistent-action persistent-action :follow 1))))))
 
 ;;; Composition helper — fzfa command -> helm source(s)
 
@@ -501,11 +551,19 @@ Returns the selected candidate string, or nil on cancel."
          (helm-completion-style 'emacs)
          (handler (fzfa--preview-handler preview category))
          (fzfa--preview-session (and handler (list handler)))
+         ;; Wire live preview when handler is set — helm fires
+         ;; persistent-action on every selection change via :follow 1.
+         ;; Debounced via `fzfa-helm--make-debounced-preview-fn' to mirror
+         ;; the vertico path's `fzfa-preview-delay'-based throttling so
+         ;; fast scrolling doesn't fire expensive preview handlers per
+         ;; row.
          (source (fzfa-helm-make-async-source
                   :name (or prompt "fzfa")
                   :command command
                   :directory dir
-                  :action (lambda (cand) (setq result cand)))))
+                  :action (lambda (cand) (setq result cand))
+                  :persistent-action
+                  (and handler (fzfa-helm--make-debounced-preview-fn)))))
     (when handler
       (fzfa-preview-put :origin-window (selected-window))
       (fzfa-preview-put :origin-buffer (window-buffer (selected-window)))
@@ -564,7 +622,10 @@ metadata."
                         :name (or prompt "fzfa")
                         :items candidates
                         :history history
-                        :action action)
+                        :action action
+                        :persistent-action
+                        (and handler
+                             (fzfa-helm--make-debounced-preview-fn)))
               :prompt (or prompt "fzf > ")
               :default default
               :buffer "*helm fzfa sync*")
