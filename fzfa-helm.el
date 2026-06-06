@@ -514,15 +514,30 @@ when any source has new candidates."
                  (let* ((dir (expand-file-name directory))
                         (handle (fzf-native-async-start cmd dir))
                         (stopped nil)
-                        ;; Per-source `last-result' cache: when `:candidates'
-                        ;; is interrupted by pending input (via
-                        ;; `while-no-input'), return the previous good list
-                        ;; so the display doesn't blank.
+                        ;; Per-source `last-result' cache: when
+                        ;; `:candidates' is interrupted by pending
+                        ;; input (via `while-no-input'), return the
+                        ;; previous good list so the display doesn't
+                        ;; blank — same convention as the
+                        ;; completing-read multi (fzfa.el:~2336).
                         (last-result nil)
+                        ;; Idle retry: when an interrupt leaves us
+                        ;; showing stale candidates, re-exhibit once
+                        ;; typing settles.  Without this the polling
+                        ;; timer's generation-based firing never
+                        ;; refreshes (the producer process is
+                        ;; quiescent post-typing, so no new generation
+                        ;; ticks), and the stale display persists
+                        ;; until the user types again.  Mirrors the
+                        ;; `retry-timer' in `fzfa--multi-read'.
+                        (retry-timer nil)
                         (stop
                          (lambda ()
                            (unless stopped
                              (setq stopped t)
+                             (when retry-timer
+                               (cancel-timer retry-timer)
+                               (setq retry-timer nil))
                              (fzf-native-async-stop handle)))))
                    (push handle handles)
                    (push stop stops)
@@ -536,10 +551,23 @@ when any source has new candidates."
                          (let ((r (while-no-input
                                     (fzf-native-async-candidates
                                      handle helm-pattern limit))))
-                           (if (eq r t)
-                               last-result
+                           (cond
+                            ((eq r t)
+                             (when retry-timer (cancel-timer retry-timer))
+                             (setq retry-timer
+                                   (run-with-idle-timer
+                                    fzfa-input-debounce nil
+                                    (lambda ()
+                                      (setq retry-timer nil)
+                                      (when helm-alive-p
+                                        (helm-force-update)))))
+                             last-result)
+                            (t
+                             (when retry-timer
+                               (cancel-timer retry-timer)
+                               (setq retry-timer nil))
                              (setq last-result r)
-                             r))))
+                             r)))))
                      :match-dynamic t
                      :nohighlight t
                      :candidate-number-limit limit
