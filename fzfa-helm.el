@@ -81,7 +81,12 @@ under helm-mode), which use the full `fzfa-max-candidates'."
 (declare-function fzfa--history-rank "fzfa")
 (declare-function fzfa--2pass-extract-args "fzfa")
 (declare-function fzfa--commas "fzfa")
+(declare-function fzfa--preview-handler "fzfa")
+(declare-function fzfa--preview-call "fzfa")
+(declare-function fzfa--preview-return "fzfa")
+(declare-function fzfa-preview-put "fzfa")
 (defvar fzfa--multi-mode)
+(defvar fzfa--preview-session)
 
 ;;; Stats display helpers
 
@@ -416,10 +421,28 @@ two-pass command (`:2pass t' in the extracted args)."
 ;;; Async handler — registered as `fzfa-async-helm-handler'
 
 (cl-defun fzfa-helm--async-read (&key prompt command directory
-                                      skip-executable-check)
+                                      skip-executable-check
+                                      category preview)
   "Helm dispatch for `fzfa-async-completing-read'.
 
 PROMPT, COMMAND, DIRECTORY, SKIP-EXECUTABLE-CHECK as per the caller.
+CATEGORY and PREVIEW are threaded through to the preview framework:
+`fzfa--preview-handler' resolves a handler plist; if present we
+capture origin window/buffer/`default-directory' into the session
+state, fire `:setup' before helm activates, and fire `:exit' +
+`:return' on exit.  Replaces the preview pipeline that the vertico
+path runs via `minibuffer-with-setup-hook' +
+`fzfa--preview-install' (which doesn't translate to helm — helm has
+its own input/redisplay cycle that doesn't go through the
+minibuffer's setup hook).
+
+Live preview during the session (firing `:preview' as the selection
+moves) is not wired here; that needs `:persistent-action' +
+`:follow 1' per source — separate work.  This change is the
+\"unbreak preview-encoded actions\" minimum: commands like
+`fzfa-theme' whose actual action lives in `:preview :return' now
+fire correctly under helm.
+
 Returns the selected candidate string, or nil on cancel."
   (unless skip-executable-check
     (when-let* ((prog (and command (car (split-string command nil t)))))
@@ -431,13 +454,24 @@ Returns the selected candidate string, or nil on cancel."
          (dir (expand-file-name (or directory default-directory)))
          (result nil)
          (helm-completion-style 'emacs)
+         (handler (fzfa--preview-handler preview category))
+         (fzfa--preview-session (and handler (list handler)))
          (source (fzfa-helm-make-async-source
                   :name (or prompt "fzfa")
                   :command command
                   :directory dir
                   :action (lambda (cand) (setq result cand)))))
-    (let ((default-directory dir))
-      (helm :sources source :buffer "*helm fzfa*"))
+    (when handler
+      (fzfa-preview-put :origin-window (selected-window))
+      (fzfa-preview-put :origin-buffer (window-buffer (selected-window)))
+      (fzfa-preview-put :default-directory default-directory)
+      (fzfa--preview-call :setup))
+    (unwind-protect
+        (let ((default-directory dir))
+          (helm :sources source :buffer "*helm fzfa*"))
+      (when handler
+        (fzfa--preview-call :exit)
+        (fzfa--preview-return result)))
     result))
 
 ;;; Sync handler — registered as `fzfa-sync-helm-handler'
@@ -454,26 +488,44 @@ recent picks would otherwise be lost.  Side effect: bypassing
 `completing-read' also bypasses its HIST push, so the action wraps
 `add-to-history' to mirror what would have happened.
 
-CATEGORY, ANNOTATE, AFFIX, GROUP, REQUIRE-MATCH, PREVIEW are accepted
-for signature parity but unused — helm sources don't consume
-completion-read metadata, and preview integration under helm is a
-deferred TODO."
-  (ignore category annotate affix group require-match preview)
+PREVIEW (with CATEGORY for registry lookup) wires the preview
+lifecycle — handler resolved via `fzfa--preview-handler', session
+state captured manually (helm doesn't go through
+`minibuffer-with-setup-hook' so `fzfa--preview-install' can't be
+used), `:setup' fires before helm activates, `:exit' + `:return'
+fire on exit.  Live preview during the session (firing `:preview'
+on selection movement) is not wired here.
+
+ANNOTATE, AFFIX, GROUP, REQUIRE-MATCH are accepted for signature
+parity but unused — helm sources don't consume completion-read
+metadata."
+  (ignore annotate affix group require-match)
   (let* ((helm-completion-style 'emacs)
          (result nil)
+         (handler (fzfa--preview-handler preview category))
+         (fzfa--preview-session (and handler (list handler)))
          (action
           (lambda (cand)
             (when (and history (symbolp history) (not (eq history t)))
               (add-to-history history cand))
             (setq result cand))))
-    (helm :sources (fzfa-helm-make-sync-source
-                    :name (or prompt "fzfa")
-                    :items candidates
-                    :history history
-                    :action action)
-          :prompt (or prompt "fzf > ")
-          :default default
-          :buffer "*helm fzfa sync*")
+    (when handler
+      (fzfa-preview-put :origin-window (selected-window))
+      (fzfa-preview-put :origin-buffer (window-buffer (selected-window)))
+      (fzfa-preview-put :default-directory default-directory)
+      (fzfa--preview-call :setup))
+    (unwind-protect
+        (helm :sources (fzfa-helm-make-sync-source
+                        :name (or prompt "fzfa")
+                        :items candidates
+                        :history history
+                        :action action)
+              :prompt (or prompt "fzf > ")
+              :default default
+              :buffer "*helm fzfa sync*")
+      (when handler
+        (fzfa--preview-call :exit)
+        (fzfa--preview-return result)))
     result))
 
 ;;; 2pass handler — registered as `fzfa-2pass-helm-handler'

@@ -980,7 +980,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
         (fzfa--maybe-expand
          (funcall fzfa-async-helm-handler
                   :prompt prompt :command command :directory directory
-                  :skip-executable-check skip-executable-check)
+                  :skip-executable-check skip-executable-check
+                  :category category :preview preview)
          directory resolve-paths)))
     (let* ((completion-styles '(fzfa))
            (handler (fzfa--preview-handler preview category))
