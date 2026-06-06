@@ -203,8 +203,8 @@ Read at session start; changing it does not affect running sessions."
 
 (defcustom fzfa-extensions
   '(ag chrome company emacs embark evil fd find flymake git grep helm hg
-       hungry info locate mail make music notmuch org pass project rg shell
-       spotlight ugrep vertico vc)
+       hungry info ivy locate mail make music notmuch org pass project rg
+       shell spotlight ugrep vertico vc)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
@@ -223,6 +223,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "Mercurial (hg)" hg)
               (const :tag "Hungry (buffer-derived dirs)" hungry)
               (const :tag "Info manuals" info)
+              (const :tag "Ivy frontend" ivy)
               (const :tag "locate" locate)
               (const :tag "macOS Mail.app" mail)
               (const :tag "make / ninja targets" make)
