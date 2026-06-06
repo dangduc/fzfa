@@ -165,9 +165,127 @@ Returns the selected candidate string, or nil on cancel."
       (helm :sources source :buffer "*helm fzfa*"))
     result))
 
+;;; 2pass handler — registered as `fzfa-2pass-helm-handler'
+
+(defvar fzfa-2pass-split-style)
+(defvar fzfa-2pass-split-styles-alist)
+(defvar fzfa-shell-command-debounce)
+(defvar fzfa-shell-command-throttle)
+(declare-function fzfa--defer-async-stop "fzfa")
+
+(cl-defun fzfa--helm-2pass-read (&key prompt directory category group
+                                      initial-input split-style)
+  "Helm dispatch for `fzfa-2pass-completing-read'.
+PROMPT, DIRECTORY, INITIAL-INPUT, SPLIT-STYLE as per the caller.
+CATEGORY and GROUP are accepted for signature parity but unused under
+helm (helm sources do not consume completion-read metadata)."
+  (ignore category group)
+  (let* ((prompt (or prompt "fzfa-2pass: "))
+         (dir (expand-file-name (or directory default-directory)))
+         (style-sym (or split-style fzfa-2pass-split-style 'perl))
+         (style (or (alist-get style-sym fzfa-2pass-split-styles-alist)
+                    (user-error "Unknown fzfa-2pass split style: %s"
+                                style-sym)))
+         (splitter (plist-get style :function))
+         (limit (or (fzfa--candidate-limit) 10000))
+         (init-text (if (consp initial-input)
+                        (car initial-input)
+                      initial-input))
+         (handle nil)
+         (current-cmd nil)
+         (last-gen -1)
+         (last-restart-time 0.0)
+         (stopped nil)
+         (result nil)
+         (helm-completion-style 'emacs)
+         restart-timer poll-timer
+         (do-restart
+          (lambda (cmd)
+            (when handle
+              (fzfa--defer-async-stop handle)
+              (setq handle nil))
+            (setq current-cmd cmd
+                  last-gen -1
+                  last-restart-time (float-time))
+            (when (and cmd (not (string-empty-p cmd)))
+              (setq handle (fzf-native-async-start cmd dir)))
+            (when helm-alive-p (helm-force-update))))
+         (cleanup
+          (lambda ()
+            (unless stopped
+              (setq stopped t)
+              (when restart-timer
+                (cancel-timer restart-timer)
+                (setq restart-timer nil))
+              (when poll-timer
+                (cancel-timer poll-timer)
+                (setq poll-timer nil))
+              (when handle
+                (fzf-native-async-stop handle)
+                (setq handle nil))))))
+    ;; Pre-arm initial cmd's producer BEFORE helm activates so fork
+    ;; happens in quiescent Lisp state (same reason as the async path).
+    (when init-text
+      (let ((cmd (car (funcall splitter init-text style))))
+        (when (and cmd (not (string-empty-p cmd)))
+          (funcall do-restart cmd))))
+    (setq poll-timer
+          (run-with-timer
+           0 fzfa-refresh-delay
+           (lambda ()
+             (when (and helm-alive-p handle (not stopped))
+               (let ((gen (fzf-native-async-generation handle)))
+                 (when (and gen (> gen last-gen))
+                   (setq last-gen gen)
+                   (helm-force-update)))))))
+    (unwind-protect
+        (let ((default-directory dir))
+          (helm
+           :sources
+           (helm-make-source prompt 'helm-source-sync
+             :header-name
+             (lambda (n) (format "%s [%s]" n (abbreviate-file-name dir)))
+             :candidates
+             (lambda ()
+               (let* ((split (funcall splitter helm-pattern style))
+                      (cmd (car split))
+                      (query (cdr split)))
+                 (cond
+                  ((not (equal cmd current-cmd))
+                   ;; cmd changed — debounce restart, fetch from
+                   ;; the old handle in the meantime so the display
+                   ;; doesn't blank.
+                   (when restart-timer
+                     (cancel-timer restart-timer)
+                     (setq restart-timer nil))
+                   (let* ((elapsed (- (float-time) last-restart-time))
+                          (delay (max fzfa-shell-command-debounce
+                                      (- fzfa-shell-command-throttle
+                                         elapsed))))
+                     (setq restart-timer
+                           (run-with-timer
+                            (max 0.01 delay) nil
+                            (lambda ()
+                              (setq restart-timer nil)
+                              (funcall do-restart cmd)))))
+                   (and handle
+                        (fzf-native-async-candidates handle query limit)))
+                  ((null handle) nil)
+                  (t (fzf-native-async-candidates handle query limit)))))
+             :match-dynamic t
+             :nohighlight t
+             :candidate-number-limit limit
+             :cleanup cleanup
+             :action (lambda (cand) (setq result cand)))
+           :buffer "*helm fzfa 2pass*"
+           :input init-text))
+      (funcall cleanup))
+    result))
+
 ;;; Handler registration
 
 (setq fzfa-async-helm-handler #'fzfa--helm-async-read)
+(setq fzfa-2pass-helm-handler #'fzfa--helm-2pass-read)
 
 (provide 'fzfa-helm)
 ;;; fzfa-helm.el ends here

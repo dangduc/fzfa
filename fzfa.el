@@ -1302,7 +1302,16 @@ changing FILTER rescores in place via fzf-native.
       (cl-return-from fzfa-2pass-completing-read
         (fzfa--maybe-expand cand directory resolve-paths)))))
   (when (bound-and-true-p helm-mode)
-    (user-error "fzfa-2pass-completing-read does not yet support helm-mode"))
+    (if fzfa-2pass-helm-handler
+        (cl-return-from fzfa-2pass-completing-read
+          (fzfa--maybe-expand
+           (funcall fzfa-2pass-helm-handler
+                    :prompt prompt :directory directory
+                    :category category :group group
+                    :initial-input initial-input
+                    :split-style split-style)
+           directory resolve-paths))
+      (user-error "fzfa-2pass-completing-read does not yet support helm-mode")))
   (let* ((completion-styles '(fzfa))
          (prompt (or prompt "fzfa-2pass: "))
          (dir (expand-file-name directory))
