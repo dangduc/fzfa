@@ -108,15 +108,56 @@ hasn't run yet).  Numbers comma-formatted via `fzfa--commas'."
       (format " (%s/%s)" (fzfa--commas filtered) (fzfa--commas total))
     ""))
 
+;;; Annotation transformer — `marginalia' style suffixes
+
+(defun fzfa-helm--make-annotate-transformer (annotate)
+  "Return a `:filtered-candidate-transformer' that suffixes ANNOTATE per row.
+
+ANNOTATE is a one-arg function (CAND) -> STRING.  The returned
+transformer builds (DISPLAY . REAL) cons cells where DISPLAY is the
+candidate string plus padding plus the annotation (faced as
+`completions-annotations'), and REAL is the original candidate — so
+fzf-native scoring runs against the raw candidate, and helm's
+`:action' receives the raw value rather than the rendered string.
+
+Pads suffixes to a shared column within each rendered batch.  Rows
+whose annotation comes back empty are returned as plain strings (no
+DISPLAY/REAL cons), so unannotated entries don't get gratuitous
+trailing whitespace."
+  (lambda (cands _source)
+    (let* ((entries
+            (mapcar (lambda (c)
+                      (cons c (or (funcall annotate c) "")))
+                    cands))
+           (maxw (apply #'max 0
+                        (mapcar (lambda (e)
+                                  (string-width (car e)))
+                                entries))))
+      (mapcar (lambda (e)
+                (let* ((cand (car e))
+                       (ann  (cdr e)))
+                  (if (string-empty-p ann)
+                      cand
+                    (let ((pad (- (1+ maxw) (string-width cand))))
+                      (cons (concat cand
+                                    (make-string (max 1 pad) ?\s)
+                                    (propertize ann 'face
+                                                'completions-annotations))
+                            cand)))))
+              entries))))
+
 ;;; Public source constructors
 
 (defun fzfa-helm--async-source-and-stop
-    (name command directory action limit)
+    (name command directory action limit &optional annotate)
   "Return (SOURCE . STOP).  Eagerly starts the fzf-native producer and
 the polling timer.  SOURCE's `:cleanup' calls STOP; STOP is idempotent
 so callers can also invoke it externally for defense-in-depth (e.g.
 multi-source bulk cleanup when helm never gets a chance to call
 `:cleanup' itself).
+
+ANNOTATE, when non-nil, is a (CAND) -> STRING function rendered as a
+per-row suffix via `fzfa-helm--make-annotate-transformer'.
 
 Internal — used by both `fzfa-helm-make-async-source' (single-source)
 and `fzfa-helm--multi-read' (batch with bulk-stop)."
@@ -141,24 +182,27 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
                    (setq last-gen gen)
                    (helm-force-update)))))))
     (cons
-     (helm-make-source (or name "fzfa") 'helm-source-sync
-       :header-name
-       (lambda (n)
-         (format "%s [%s]%s" n (abbreviate-file-name dir)
-                 (fzfa-helm--async-stats-suffix handle)))
-       :candidates
-       (lambda ()
-         (unless stopped
-           (fzf-native-async-candidates handle helm-pattern limit)))
-       :match-dynamic t
-       :nohighlight t
-       :candidate-number-limit limit
-       :cleanup stop
-       :action (or action (lambda (cand) cand)))
+     (apply #'helm-make-source (or name "fzfa") 'helm-source-sync
+            :header-name
+            (lambda (n)
+              (format "%s [%s]%s" n (abbreviate-file-name dir)
+                      (fzfa-helm--async-stats-suffix handle)))
+            :candidates
+            (lambda ()
+              (unless stopped
+                (fzf-native-async-candidates handle helm-pattern limit)))
+            :match-dynamic t
+            :nohighlight t
+            :candidate-number-limit limit
+            :cleanup stop
+            :action (or action (lambda (cand) cand))
+            (when annotate
+              (list :filtered-candidate-transformer
+                    (fzfa-helm--make-annotate-transformer annotate))))
      stop)))
 
 (cl-defun fzfa-helm-make-async-source
-    (&key name command directory action
+    (&key name command directory action annotate
           (candidate-number-limit
            (or (fzfa--candidate-limit) 10000)))
   "Return a helm source that streams candidates from shell COMMAND.
@@ -168,15 +212,21 @@ DIRECTORY is its working directory (default `default-directory').
 ACTION is a one-arg function called with the selection (default
 returns it unchanged).  CANDIDATE-NUMBER-LIMIT is helm's display cap.
 
+ANNOTATE, when non-nil, is a (CAND) -> STRING function rendered as a
+per-row suffix (faced as `completions-annotations', column-aligned
+within the rendered batch).  Affects display only; fzf scoring and
+action dispatch operate on the raw candidate.
+
 The producer process and polling timer start eagerly at construction
 time, BEFORE helm activates — matches the original (pre-extraction)
 timing.  The source's `:cleanup' stops it."
   (car (fzfa-helm--async-source-and-stop
         name command directory action
-        (or candidate-number-limit 10000))))
+        (or candidate-number-limit 10000)
+        annotate)))
 
 (cl-defun fzfa-helm-make-sync-source
-    (&key name items action history
+    (&key name items action history annotate
           (candidate-number-limit
            (or (fzfa--candidate-limit) 10000)))
   "Return a helm source that scores ITEMS with `fzf-native'.
@@ -185,6 +235,11 @@ NAME is the source header.  ITEMS is a list of strings or a zero-arg
 function returning one.  ACTION is a one-arg function called with the
 selection (default returns it unchanged).  CANDIDATE-NUMBER-LIMIT is
 `helm''s display cap.
+
+ANNOTATE, when non-nil, is a (CAND) -> STRING function rendered as a
+per-row suffix (faced as `completions-annotations', column-aligned
+within the rendered batch).  Affects display only; fzf scoring and
+action dispatch operate on the raw candidate.
 
 HISTORY is an optional history variable symbol.  When set and
 `helm-pattern' is empty, ITEMS are reordered via `fzfa--history-rank'
@@ -205,44 +260,47 @@ Each `helm-pattern' change re-scores the full ITEMS list via
                  (when retry-timer
                    (cancel-timer retry-timer)
                    (setq retry-timer nil)))))
-    (helm-make-source (or name "fzfa") 'helm-source-sync
-      :header-name
-      (lambda (n)
-        (format "%s%s" n (fzfa-helm--sync-stats-suffix
-                          last-filtered last-total)))
-      :candidates
-      (lambda ()
-        (let* ((all (if (functionp items) (funcall items) items))
-               (q (or helm-pattern ""))
-               (r (while-no-input
-                    (if (string-empty-p q)
-                        (if history (fzfa--history-rank all history) all)
-                      (fzfa--bridge-defcustoms
-                       #'fzf-native-score-all all q)))))
-          (cond
-           ((eq r t)
-            (when retry-timer (cancel-timer retry-timer))
-            (setq retry-timer
-                  (run-with-idle-timer
-                   fzfa-input-debounce nil
-                   (lambda ()
-                     (setq retry-timer nil)
-                     (when helm-alive-p
-                       (helm-force-update)))))
-            last-result)
-           (t
-            (when retry-timer
-              (cancel-timer retry-timer)
-              (setq retry-timer nil))
-            (setq last-total (length all)
-                  last-filtered (length r)
-                  last-result r)
-            r))))
-      :match-dynamic t
-      :nohighlight t
-      :candidate-number-limit limit
-      :cleanup stop
-      :action (or action (lambda (cand) cand)))))
+    (apply #'helm-make-source (or name "fzfa") 'helm-source-sync
+           :header-name
+           (lambda (n)
+             (format "%s%s" n (fzfa-helm--sync-stats-suffix
+                               last-filtered last-total)))
+           :candidates
+           (lambda ()
+             (let* ((all (if (functionp items) (funcall items) items))
+                    (q (or helm-pattern ""))
+                    (r (while-no-input
+                         (if (string-empty-p q)
+                             (if history (fzfa--history-rank all history) all)
+                           (fzfa--bridge-defcustoms
+                            #'fzf-native-score-all all q)))))
+               (cond
+                ((eq r t)
+                 (when retry-timer (cancel-timer retry-timer))
+                 (setq retry-timer
+                       (run-with-idle-timer
+                        fzfa-input-debounce nil
+                        (lambda ()
+                          (setq retry-timer nil)
+                          (when helm-alive-p
+                            (helm-force-update)))))
+                 last-result)
+                (t
+                 (when retry-timer
+                   (cancel-timer retry-timer)
+                   (setq retry-timer nil))
+                 (setq last-total (length all)
+                       last-filtered (length r)
+                       last-result r)
+                 r))))
+           :match-dynamic t
+           :nohighlight t
+           :candidate-number-limit limit
+           :cleanup stop
+           :action (or action (lambda (cand) cand))
+           (when annotate
+             (list :filtered-candidate-transformer
+                   (fzfa-helm--make-annotate-transformer annotate))))))
 
 ;;; Composition helper — fzfa command -> helm source(s)
 
@@ -262,6 +320,7 @@ which is skipped when we bypass it via `:inject' mode."
          (items       (plist-get plist :items))
          (directory   (or (plist-get plist :directory) default-directory))
          (history     (plist-get plist :history))
+         (annotate    (plist-get plist :annotate))
          (orig-action (plist-get plist :action))
          (action
           (lambda (cand)
@@ -271,10 +330,12 @@ which is skipped when we bypass it via `:inject' mode."
     (cond
      (cmd
       (fzfa-helm-make-async-source
-       :name name :command cmd :directory directory :action action))
+       :name name :command cmd :directory directory :action action
+       :annotate annotate))
      (items
       (fzfa-helm-make-sync-source
-       :name name :items items :history history :action action))
+       :name name :items items :history history :action action
+       :annotate annotate))
      (t
       (error "fzfa source plist has neither :command nor :items: %S" plist)))))
 
@@ -586,6 +647,7 @@ for fuzzy-multi-source UX."
                   (directory   (or (plist-get src :directory)
                                    default-directory))
                   (history     (plist-get src :history))
+                  (annotate    (plist-get src :annotate))
                   (orig-action (plist-get src :action))
                   (action
                    (lambda (cand)
@@ -629,43 +691,47 @@ for fuzzy-multi-source UX."
                            (fzf-native-async-stop handle)))))
                  (push handle handles)
                  (push stop stops)
-                 (helm-make-source name 'helm-source-sync
-                   :header-name
-                   (lambda (n)
-                     (format "%s [%s]%s" n (abbreviate-file-name dir)
-                             (fzfa-helm--async-stats-suffix handle)))
-                   :candidates
-                   (lambda ()
-                     (unless stopped
-                       (let ((r (while-no-input
-                                  (fzf-native-async-candidates
-                                   handle helm-pattern limit))))
-                         (cond
-                          ((eq r t)
-                           (when retry-timer (cancel-timer retry-timer))
-                           (setq retry-timer
-                                 (run-with-idle-timer
-                                  fzfa-input-debounce nil
-                                  (lambda ()
-                                    (setq retry-timer nil)
-                                    (when helm-alive-p
-                                      (helm-force-update)))))
-                           ;; Don't update rank — cached
-                           ;; `last-result' is for an earlier query.
-                           last-result)
-                          (t
-                           (when retry-timer
-                             (cancel-timer retry-timer)
-                             (setq retry-timer nil))
-                           (setq last-result r)
-                           (aset ranks i
-                                 (fzfa--multi-rank r (or helm-pattern "") t))
-                           r)))))
-                   :match-dynamic t
-                   :nohighlight t
-                   :candidate-number-limit limit
-                   :cleanup stop
-                   :action action)))
+                 (apply #'helm-make-source name 'helm-source-sync
+                        :header-name
+                        (lambda (n)
+                          (format "%s [%s]%s" n (abbreviate-file-name dir)
+                                  (fzfa-helm--async-stats-suffix handle)))
+                        :candidates
+                        (lambda ()
+                          (unless stopped
+                            (let ((r (while-no-input
+                                       (fzf-native-async-candidates
+                                        handle helm-pattern limit))))
+                              (cond
+                               ((eq r t)
+                                (when retry-timer (cancel-timer retry-timer))
+                                (setq retry-timer
+                                      (run-with-idle-timer
+                                       fzfa-input-debounce nil
+                                       (lambda ()
+                                         (setq retry-timer nil)
+                                         (when helm-alive-p
+                                           (helm-force-update)))))
+                                ;; Don't update rank — cached
+                                ;; `last-result' is for an earlier query.
+                                last-result)
+                               (t
+                                (when retry-timer
+                                  (cancel-timer retry-timer)
+                                  (setq retry-timer nil))
+                                (setq last-result r)
+                                (aset ranks i
+                                      (fzfa--multi-rank r (or helm-pattern "") t))
+                                r)))))
+                        :match-dynamic t
+                        :nohighlight t
+                        :candidate-number-limit limit
+                        :cleanup stop
+                        :action action
+                        (when annotate
+                          (list :filtered-candidate-transformer
+                                (fzfa-helm--make-annotate-transformer
+                                 annotate))))))
               (items
                ;; Sync source inlined here (rather than via
                ;; `fzfa-helm-make-sync-source') so its `:candidates'
@@ -681,51 +747,55 @@ for fuzzy-multi-source UX."
                          (when retry-timer
                            (cancel-timer retry-timer)
                            (setq retry-timer nil)))))
-                 (helm-make-source name 'helm-source-sync
-                   :header-name
-                   (lambda (n)
-                     (format "%s%s" n (fzfa-helm--sync-stats-suffix
-                                       last-filtered last-total)))
-                   :candidates
-                   (lambda ()
-                     (let* ((all (if (functionp items)
-                                     (funcall items)
-                                   items))
-                            (q (or helm-pattern ""))
-                            (r (while-no-input
-                                 (if (string-empty-p q)
-                                     (if history
-                                         (fzfa--history-rank all history)
-                                       all)
-                                   (fzfa--bridge-defcustoms
-                                    #'fzf-native-score-all all q)))))
-                       (cond
-                        ((eq r t)
-                         (when retry-timer (cancel-timer retry-timer))
-                         (setq retry-timer
-                               (run-with-idle-timer
-                                fzfa-input-debounce nil
-                                (lambda ()
-                                  (setq retry-timer nil)
-                                  (when helm-alive-p
-                                    (helm-force-update)))))
-                         ;; Don't update rank — cache is for an
-                         ;; earlier query.
-                         last-result)
-                        (t
-                         (when retry-timer
-                           (cancel-timer retry-timer)
-                           (setq retry-timer nil))
-                         (setq last-total (length all)
-                               last-filtered (length r)
-                               last-result r)
-                         (aset ranks i (fzfa--multi-rank r q nil))
-                         r))))
-                   :match-dynamic t
-                   :nohighlight t
-                   :candidate-number-limit limit
-                   :cleanup sync-stop
-                   :action action)))
+                 (apply #'helm-make-source name 'helm-source-sync
+                        :header-name
+                        (lambda (n)
+                          (format "%s%s" n (fzfa-helm--sync-stats-suffix
+                                            last-filtered last-total)))
+                        :candidates
+                        (lambda ()
+                          (let* ((all (if (functionp items)
+                                          (funcall items)
+                                        items))
+                                 (q (or helm-pattern ""))
+                                 (r (while-no-input
+                                      (if (string-empty-p q)
+                                          (if history
+                                              (fzfa--history-rank all history)
+                                            all)
+                                        (fzfa--bridge-defcustoms
+                                         #'fzf-native-score-all all q)))))
+                            (cond
+                             ((eq r t)
+                              (when retry-timer (cancel-timer retry-timer))
+                              (setq retry-timer
+                                    (run-with-idle-timer
+                                     fzfa-input-debounce nil
+                                     (lambda ()
+                                       (setq retry-timer nil)
+                                       (when helm-alive-p
+                                         (helm-force-update)))))
+                              ;; Don't update rank — cache is for an
+                              ;; earlier query.
+                              last-result)
+                             (t
+                              (when retry-timer
+                                (cancel-timer retry-timer)
+                                (setq retry-timer nil))
+                              (setq last-total (length all)
+                                    last-filtered (length r)
+                                    last-result r)
+                              (aset ranks i (fzfa--multi-rank r q nil))
+                              r))))
+                        :match-dynamic t
+                        :nohighlight t
+                        :candidate-number-limit limit
+                        :cleanup sync-stop
+                        :action action
+                        (when annotate
+                          (list :filtered-candidate-transformer
+                                (fzfa-helm--make-annotate-transformer
+                                 annotate))))))
               (t
                (error "fzfa helm multi source has neither :command nor :items: %S"
                       src))))))
