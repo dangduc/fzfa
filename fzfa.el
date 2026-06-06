@@ -66,6 +66,9 @@
 (defvar ivy-completing-read-dynamic-collection)
 (declare-function ivy--set-candidates "ivy")
 (declare-function ivy--exhibit "ivy")
+(declare-function ivy--insert-prompt "ivy")
+(declare-function ivy-dispatching-call "ivy")
+(defvar ivy--actions-list)
 (defvar ivy-pre-prompt-function)
 (declare-function projectile-project-root "projectile")
 (declare-function project-root "project")
@@ -1467,7 +1470,15 @@ changing FILTER rescores in place via fzf-native.
                    (use-local-map map))
                  (setq compact-on t)
                  (funcall compact-apply)))
-           (completing-read prompt table nil nil init-text nil))
+           (let ((ivy-count-format
+                  (when (bound-and-true-p ivy-mode) ""))
+                 (ivy-pre-prompt-function
+                  (when (bound-and-true-p ivy-mode)
+                    (lambda ()
+                      (fzfa--format-stats (concat prompt dir-abbrev " ")
+                                          (fzfa--frontend-index)
+                                          last-filtered last-total)))))
+             (completing-read prompt table nil nil init-text nil)))
        (when poll-timer (cancel-timer poll-timer))
        (when retry-timer (cancel-timer retry-timer))
        (when restart-timer (cancel-timer restart-timer))
@@ -2105,7 +2116,17 @@ Per-source plist keys:
                     prompt)
                   (fzfa--frontend-index)
                   (cl-loop for x across filtered sum x)
-                  (cl-loop for x across totals sum x)))))))
+                  (cl-loop for x across totals sum x)))))
+            ;; Under ivy the overlay is invisible (ivy paints its own
+            ;; prompt area).  Force `ivy--insert-prompt' so the
+            ;; let-bound `ivy-pre-prompt-function' lambda runs with
+            ;; fresh state — `ivy--exhibit' alone skips the prompt
+            ;; redraw when the candidate body is unchanged.
+            (when (and (bound-and-true-p ivy-mode)
+                       (not menu-active)
+                       (active-minibuffer-window))
+              (with-selected-window (active-minibuffer-window)
+                (ivy--insert-prompt)))))
          ;; Ivy push closure: ivy doesn't re-call the collection on
          ;; timer ticks (push model), so async sources would stay
          ;; stuck on the initial pattern.  Mirrors the per-source
@@ -2181,7 +2202,42 @@ Per-source plist keys:
                                         slot)))
                                   sorted))))
                     (ivy--set-candidates cands)
-                    (ivy--exhibit)))))))
+                    (ivy--exhibit)
+                    ;; `ivy--exhibit' skips the prompt redraw when the
+                    ;; candidate body didn't change.  Force it so our
+                    ;; `ivy-pre-prompt-function' lambda runs again with
+                    ;; the freshest stats.
+                    (ivy--insert-prompt)))))))
+         ;; Ivy action list for narrow dispatch.  One entry per
+         ;; source's :narrow key (mutates `narrow-idx' and refreshes
+         ;; via `ivy-push-multi'), plus a widen entry on
+         ;; `fzfa-multi-narrow-key' so pressing the prefix key twice
+         ;; widens — matching the existing `<<' muscle memory.  Bound
+         ;; into `ivy--actions-list' across `completing-read' below;
+         ;; `ivy-dispatching-call' triggers the action menu via
+         ;; `fzfa-multi-narrow-key' in the keymap install.
+         (ivy-multi-actions
+          (when (bound-and-true-p ivy-mode)
+            (let (acts)
+              (dotimes (i n)
+                (when-let* ((src    (aref sources-v i))
+                            (narrow (plist-get src :narrow)))
+                  (let ((idx i)
+                        (name (or (plist-get src :name) "?")))
+                    (push (list narrow
+                                (lambda (_cand)
+                                  (setq narrow-idx idx)
+                                  (funcall ivy-push-multi))
+                                (format "narrow → %s" name))
+                          acts))))
+              (when fzfa-multi-narrow-key
+                (push (list fzfa-multi-narrow-key
+                            (lambda (_cand)
+                              (setq narrow-idx nil)
+                              (funcall ivy-push-multi))
+                            "widen")
+                      acts))
+              (nreverse acts))))
          (narrow-handler
           (lambda ()
             (interactive)
@@ -2235,7 +2291,14 @@ Per-source plist keys:
                       ;; Restore the normal overlay now that the menu
                       ;; is dismissed (the 't action's own refresh path
                       ;; only fires on candidate computations).
-                      (funcall refresh-overlay)))
+                      (funcall refresh-overlay)
+                      ;; Under ivy, force a prompt redraw so the
+                      ;; `ivy-pre-prompt-function' lambda runs again
+                      ;; with `menu-active' = nil and swaps the menu
+                      ;; hint back to the stats line.  Cheap if
+                      ;; `ivy-push-multi' already redrew.
+                      (when (bound-and-true-p ivy-mode)
+                        (ivy--exhibit))))
                 (setq menu-active nil)))))
          (router       (fzfa--multi-build-router sources-v cand->src))
          (fzfa--preview-session (and router (list router)))
@@ -2306,15 +2369,49 @@ Per-source plist keys:
                                 nil 'local)
                       ;; Install narrow-key binding as a per-instance
                       ;; child of the active completion keymap so we
-                      ;; don't mutate vertico/icomplete's shared map.
+                      ;; don't mutate vertico/icomplete/ivy's shared
+                      ;; map.  Under ivy, hand off to its native
+                      ;; action dispatch (`ivy-dispatching-call' +
+                      ;; per-source entries in `ivy--actions-list');
+                      ;; under other frontends, run the in-house
+                      ;; `narrow-handler' that does its own read-char
+                      ;; menu.
                       (when fzfa-multi-narrow-key
                         (let ((map (make-sparse-keymap)))
                           (set-keymap-parent map (current-local-map))
                           (define-key map (kbd fzfa-multi-narrow-key)
-                                      narrow-handler)
+                                      (if (bound-and-true-p ivy-mode)
+                                          #'ivy-dispatching-call
+                                        narrow-handler))
                           (use-local-map map))))
                   (let ((fzfa--multi-active-sources sources-v)
-                        (ivy-completing-read-dynamic-collection t))
+                        (ivy-completing-read-dynamic-collection t)
+                        (ivy-count-format
+                         (when (bound-and-true-p ivy-mode) ""))
+                        (ivy--actions-list
+                         (if (bound-and-true-p ivy-mode)
+                             (plist-put (cl-copy-list
+                                         (or ivy--actions-list '()))
+                                        t ivy-multi-actions)
+                           ivy--actions-list))
+                        (ivy-pre-prompt-function
+                         (when (bound-and-true-p ivy-mode)
+                           (lambda ()
+                             (fzfa--format-stats
+                              (if narrow-idx
+                                  (concat prompt
+                                          (propertize
+                                           (format "{%s} "
+                                                   (or (plist-get
+                                                        (aref sources-v
+                                                              narrow-idx)
+                                                        :name)
+                                                       "?"))
+                                           'face 'minibuffer-prompt))
+                                prompt)
+                              (fzfa--frontend-index)
+                              (cl-loop for x across filtered sum x)
+                              (cl-loop for x across totals sum x))))))
                     (completing-read
                      prompt
                      (lambda (str _pred action)
