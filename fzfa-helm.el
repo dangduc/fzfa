@@ -131,7 +131,7 @@ hasn't run yet).  Numbers comma-formatted via `fzfa--commas'."
 
 (defvar fzfa-preview-delay)
 
-(defun fzfa-helm--make-debounced-preview-fn ()
+(defun fzfa-helm--make-debounced-preview-fn (&optional session-cell)
   "Return a fresh `:persistent-action' closure that debounces preview dispatch.
 
 `helm' fires `:persistent-action' on every selection change when
@@ -147,7 +147,15 @@ debounce state) and:
   scrolling repeatedly resets the debounce — net effect: preview
   fires only after the user pauses for `fzfa-preview-delay'.
 - Bypasses the debounce when `fzfa-preview-delay' is 0 or less,
-  firing immediately (matches the vertico path's escape hatch)."
+  firing immediately (matches the vertico path's escape hatch).
+
+SESSION-CELL, when non-nil, is bound to `fzfa--preview-session'
+inside the dispatch — required for the multi handler where each
+source has its own session cell and the ambient
+`fzfa--preview-session' may point at a different cell (or be nil)
+when the idle timer fires.  When nil, dispatch uses the ambient
+binding (sync/async/2pass paths bind it themselves at the handler
+level for the whole helm session)."
   (let ((preview-timer nil)
         (preview-last 'unset))
     (lambda (cand)
@@ -155,15 +163,20 @@ debounce state) and:
         (when (timerp preview-timer)
           (cancel-timer preview-timer))
         (if (<= (or fzfa-preview-delay 0) 0)
-            (progn (setq preview-last cand)
-                   (fzfa--preview-call :preview cand))
+            (progn
+              (setq preview-last cand)
+              (let ((fzfa--preview-session
+                     (or session-cell fzfa--preview-session)))
+                (fzfa--preview-call :preview cand)))
           (setq preview-timer
                 (run-with-idle-timer
                  fzfa-preview-delay nil
                  (lambda ()
                    (setq preview-timer nil
                          preview-last cand)
-                   (fzfa--preview-call :preview cand)))))))))
+                   (let ((fzfa--preview-session
+                          (or session-cell fzfa--preview-session)))
+                     (fzfa--preview-call :preview cand))))))))))
 
 ;;; Display transformer — preserves text properties and optionally annotates
 
@@ -818,6 +831,22 @@ for fuzzy-multi-source UX."
          (ranks        (make-vector n-sources 0))
          (source-names (make-vector n-sources nil))
          (last-leader  nil)
+         ;; Per-source preview session cells — one per source.  A cell
+         ;; is `(HANDLER STATE-PLIST...)' when the source has a
+         ;; resolved preview handler (from its `:preview' or
+         ;; `:category'); nil otherwise.  `fzfa-preview-put' mutates the
+         ;; cdr to accumulate state from `:setup' onward, and the
+         ;; debouncer's idle-timer callback let-binds
+         ;; `fzfa--preview-session' to this cell so dispatches see the
+         ;; per-source state.  Built lazily inside the source loop.
+         (preview-cells (make-vector n-sources nil))
+         (any-preview nil)
+         ;; Tracks which source the winning action fired from — for
+         ;; broadcasting `:return' on cleanup: the winning source's
+         ;; cell receives CAND, every other cell receives nil
+         ;; ("aborted from its perspective"), mirroring
+         ;; `fzfa--multi-build-router' at fzfa.el:~1845.
+         (result-src-idx nil)
          ;; Per-source state collected during source construction.
          (handles nil)   ; reversed: list of fzf-native handles (async only)
          (stops nil)     ; reversed: list of 0-arg stop closures (async only)
@@ -841,15 +870,31 @@ for fuzzy-multi-source UX."
                   (history     (plist-get src :history))
                   (annotate    (plist-get src :annotate))
                   (orig-action (plist-get src :action))
+                  ;; Resolve this source's preview handler from its
+                  ;; own `:preview' override and `:category'.  When set,
+                  ;; store a fresh session cell into the outer
+                  ;; `preview-cells' vector so the setup/cleanup loops
+                  ;; outside the cl-loop see it.
+                  (preview-handler (fzfa--preview-handler
+                                    (plist-get src :preview)
+                                    (plist-get src :category)))
+                  (preview-cell (and preview-handler
+                                     (list preview-handler)))
                   (action
                    (lambda (cand)
                      (when (and history (symbolp history)
                                 (not (eq history t)))
                        (add-to-history history cand))
-                     (setq result
+                     ;; Record which source the winning action fired
+                     ;; from so cleanup can route `:return' correctly.
+                     (setq result-src-idx i
+                           result
                            (if orig-action
                                (funcall orig-action cand)
                              cand)))))
+             (when preview-cell
+               (aset preview-cells i preview-cell)
+               (setq any-preview t))
              (aset source-names i name)
              (cond
               (cmd
@@ -920,9 +965,15 @@ for fuzzy-multi-source UX."
                         :candidate-number-limit limit
                         :cleanup stop
                         :action action
-                        (list :filtered-candidate-transformer
-                              (fzfa-helm--make-display-transformer
-                               annotate)))))
+                        (append
+                         (list :filtered-candidate-transformer
+                               (fzfa-helm--make-display-transformer
+                                annotate))
+                         (when preview-cell
+                           (list :persistent-action
+                                 (fzfa-helm--make-debounced-preview-fn
+                                  preview-cell)
+                                 :follow 1))))))
               (items
                ;; Sync source inlined here (rather than via
                ;; `fzfa-helm-make-sync-source') so its `:candidates'
@@ -983,9 +1034,15 @@ for fuzzy-multi-source UX."
                         :candidate-number-limit limit
                         :cleanup sync-stop
                         :action action
-                        (list :filtered-candidate-transformer
-                              (fzfa-helm--make-display-transformer
-                               annotate)))))
+                        (append
+                         (list :filtered-candidate-transformer
+                               (fzfa-helm--make-display-transformer
+                                annotate))
+                         (when preview-cell
+                           (list :persistent-action
+                                 (fzfa-helm--make-debounced-preview-fn
+                                  preview-cell)
+                                 :follow 1))))))
               (t
                (error "fzfa helm multi source has neither :command nor :items: %S"
                       src))))))
@@ -1036,6 +1093,19 @@ for fuzzy-multi-source UX."
                                     fzfa-input-throttle))
                        (setq last-exhibit (float-time))
                        (helm-force-update)))))))))
+    ;; Per-source preview `:setup' broadcast.  Each cell captures the
+    ;; ORIGIN window/buffer/`default-directory' (the user's selected
+    ;; window before helm activated), then dispatches `:setup' under its
+    ;; own session binding so per-source state stashed via
+    ;; `fzfa-preview-put' lands in this cell's cdr.
+    (when any-preview
+      (dotimes (i n-sources)
+        (when-let* ((cell (aref preview-cells i)))
+          (let ((fzfa--preview-session cell))
+            (fzfa-preview-put :origin-window (selected-window))
+            (fzfa-preview-put :origin-buffer (window-buffer (selected-window)))
+            (fzfa-preview-put :default-directory default-directory)
+            (fzfa--preview-call :setup)))))
     (unwind-protect
         (progn
           (add-hook 'helm-after-update-hook jump-fn)
@@ -1046,7 +1116,19 @@ for fuzzy-multi-source UX."
       (when poll-timer (cancel-timer poll-timer))
       ;; Bulk-stop async producers; idempotent — :cleanup may have
       ;; already fired on normal helm exit.
-      (mapc #'funcall stops))
+      (mapc #'funcall stops)
+      ;; Per-source preview `:exit' + `:return' broadcast.  The winning
+      ;; source's cell receives RESULT; every other cell receives nil
+      ;; (interpreted as "aborted from this source's perspective").
+      ;; Mirrors `fzfa--multi-build-router' broadcast semantics.
+      (when any-preview
+        (dotimes (i n-sources)
+          (when-let* ((cell (aref preview-cells i)))
+            (let ((fzfa--preview-session cell))
+              (fzfa--preview-call :exit)
+              (fzfa--preview-return (if (eql i result-src-idx)
+                                        result
+                                      nil)))))))
     result))
 
 ;;; Setup — registers the four handler defvars after `helm' loads
