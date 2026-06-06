@@ -4,7 +4,7 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1") (helm "3.9"))
+;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: matching, completion, helm
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
@@ -12,16 +12,14 @@
 
 ;;; Commentary:
 
-;; Helm frontend for `fzfa'.  Auto-loaded by `fzfa' via
-;; `with-eval-after-load' on `helm', so users get helm support by
-;; doing nothing — install helm, enable `helm-mode', and the existing
-;; `fzfa-*' commands route through helm sources backed by fzf-native
-;; scoring.  No call needed in user config.
-;;
-;; When `helm-mode' is active, fzfa entry points dispatch to handlers
-;; registered in `fzfa-async-helm-handler', `fzfa-2pass-helm-handler',
-;; and `fzfa-multi-helm-handler' instead of running through
-;; `completing-read'.
+;; Helm frontend for `fzfa'.  Loaded automatically when `helm' is in
+;; `fzfa-extensions' and `fzfa-setup' has been called.  Loading this
+;; file does NOT activate helm dispatch on its own — that happens in
+;; `fzfa-helm-setup', which registers the four handler defvars in
+;; `fzfa.el' (`fzfa-async-helm-handler', `fzfa-sync-helm-handler',
+;; `fzfa-2pass-helm-handler', `fzfa-multi-helm-handler') and defers
+;; the registration via `with-eval-after-load' on `helm' so it kicks
+;; in only when helm is actually loaded.
 ;;
 ;; Public source constructors for building helm commands directly:
 ;;
@@ -48,8 +46,8 @@
 
 (require 'cl-lib)
 (require 'fzfa)
-(require 'helm)
-(require 'helm-source)
+(require 'helm nil t)
+(require 'helm-source nil t)
 
 (defcustom fzfa-helm-multi-source-candidate-limit 200
   "Per-source candidate cap inside `fzfa-helm--multi-read'.
@@ -593,12 +591,21 @@ when any source has new candidates."
       (mapc #'funcall stops))
     result))
 
-;;; Handler registration
+;;; Setup — registers the four handler defvars after `helm' loads
 
-(setq fzfa-async-helm-handler #'fzfa-helm--async-read)
-(setq fzfa-sync-helm-handler  #'fzfa-helm--sync-read)
-(setq fzfa-2pass-helm-handler #'fzfa-helm--2pass-read)
-(setq fzfa-multi-helm-handler #'fzfa-helm--multi-read)
+(defun fzfa-helm-setup ()
+  "Wire fzfa's helm dispatch into the current session.
+
+Invoked by `fzfa-setup' when `helm' is listed in `fzfa-extensions'.
+The actual `setq's are deferred via `with-eval-after-load' on
+`helm', so calling this when helm is not (yet) installed is a no-op
+that auto-activates if helm shows up later in the session.  Safe
+to call multiple times — `setq' is idempotent."
+  (with-eval-after-load 'helm
+    (setq fzfa-async-helm-handler #'fzfa-helm--async-read)
+    (setq fzfa-sync-helm-handler  #'fzfa-helm--sync-read)
+    (setq fzfa-2pass-helm-handler #'fzfa-helm--2pass-read)
+    (setq fzfa-multi-helm-handler #'fzfa-helm--multi-read)))
 
 (provide 'fzfa-helm)
 ;;; fzfa-helm.el ends here

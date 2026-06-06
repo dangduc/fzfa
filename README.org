@@ -726,16 +726,14 @@ index, filtered/total counts) is delivered via ~ivy-pre-prompt-function~,
 which ivy prepends to the prompt string on each redraw.
 ** helm
 
-Helm support lives in ~fzfa-helm.el~, auto-required during ~fzfa-setup~
-via ~(with-eval-after-load 'helm …)~ — install helm, enable
-~helm-mode~, and existing ~fzfa-*~ commands route through helm
-sources backed by ~fzf-native~ scoring.  No user configuration is
-needed; each fzfa helm handler let-binds ~helm-completion-style~ to
-~'emacs~ for the duration of its session so helm-mode defers
-matching to ~completion-styles~ (where fzfa's style is registered).
-The user's global ~helm-completion-style~ is left untouched.
+Helm support lives in ~fzfa-helm.el~, loaded as part of
+~fzfa-extensions~ (which includes ~helm~ by default).  Loading the
+file alone is a no-op; ~fzfa-helm-setup~ — called from ~fzfa-setup~ —
+defers handler registration via ~(with-eval-after-load 'helm …)~ so
+the four handler defvars get populated only when helm itself is
+actually loaded.
 
-When ~helm-mode~ is active, each fzfa entry point dispatches through
+When ~helm-mode~ is active, each ~fzfa~ entry point dispatches through
 a handler that bypasses ~completing-read~ entirely and runs
 ~(helm :sources …)~ directly:
 

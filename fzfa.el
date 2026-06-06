@@ -202,9 +202,9 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(ag chrome company emacs embark evil fd find flymake git grep hg hungry info
-       locate mail make music notmuch org pass project rg shell spotlight ugrep
-       vertico vc)
+  '(ag chrome company emacs embark evil fd find flymake git grep helm hg
+       hungry info locate mail make music notmuch org pass project rg shell
+       spotlight ugrep vertico vc)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
@@ -219,6 +219,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "Flymake diagnostics" flymake)
               (const :tag "Git" git)
               (const :tag "POSIX grep" grep)
+              (const :tag "Helm frontend" helm)
               (const :tag "Mercurial (hg)" hg)
               (const :tag "Hungry (buffer-derived dirs)" hungry)
               (const :tag "Info manuals" info)
@@ -2742,9 +2743,6 @@ public entry point.
                        (fzfa-theme    marginalia-annotate-theme    none)
                        (fzfa-imenu    marginalia-annotate-imenu    none)))
         (add-to-list 'marginalia-annotators entry)))
-
-    (with-eval-after-load 'helm
-      (require 'fzfa-helm))
 
     (when fzfa-extensions
       (dolist (ext fzfa-extensions)
