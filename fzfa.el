@@ -1714,6 +1714,7 @@ PATH and whose command symbol is bound: %s."
                :history history :require-match require-match
                :default default :preview preview)))
   (let* ((completion-styles '(fzfa))
+         (ivy-completing-read-dynamic-collection t) ;; Don't let `ivy' filter.
          (handler (fzfa--preview-handler preview category))
          (fzfa--preview-session (and handler (list handler)))
          (selection nil))
