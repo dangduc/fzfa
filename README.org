@@ -898,6 +898,7 @@ use ~fussy~ for non-~fzfa~ sources and ~fzfa~ otherwise. Example below.
     (setq helm-input-idle-delay 0.05)
     (setq helm-autoresize-max-height 30)
     (setq helm-autoresize-min-height 30)
+    (setq helm-truncate-lines t)
     (setq helm-split-window-inside-p t
           helm-ff-file-name-history-use-recentf t)
     (setq helm-move-to-line-cycle-in-source nil)
