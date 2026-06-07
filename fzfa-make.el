@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: convenience, make, ninja, build, matching
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -121,7 +119,8 @@ The first one whose returned directory contains a Makefile/build.ninja wins."
   :type '(repeat (choice
                   (const :tag "Default directory"   fzfa-make-current-directory)
                   (const :tag "Project root"        fzfa-make-project-directory)
-                  (const :tag "Dominating ancestor" fzfa-make-dominating-directory)
+                  (const :tag "Dominating ancestor"
+                         fzfa-make-dominating-directory)
                   (function :tag "Custom function")))
   :group 'fzfa-make)
 

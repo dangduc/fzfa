@@ -4,7 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Keywords: convenience, matching
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -31,12 +30,12 @@
 ;;   `fzfa-imenu'                    Jump to an imenu entry in this buffer
 ;;   `fzfa-imenu-all'                Jump to an imenu entry across buffers
 ;;   `fzfa-imenu-all-but-current'    Like `fzfa-imenu-all' but skip current
-;;   `fzfa-M-x'                      Run an extended command (like \\[execute-extended-command])
-;;   `fzfa-M-x-for-buffer'           Run an extended command applicable to the current mode
-;;   `fzfa-minor-mode-menu'          Toggle a minor mode with on/off annotation
-;;   `fzfa-mark'                     Jump to a position in this buffer's `mark-ring'
+;;   `fzfa-M-x'                      Run an extended command
+;;   `fzfa-M-x-for-buffer'           Run an extended command for current mode
+;;   `fzfa-minor-mode-menu'          Toggle a minor mode (on/off annotated)
+;;   `fzfa-mark'                     Jump to a position in this buffer's marks
 ;;   `fzfa-global-mark'              Jump to a position in `global-mark-ring'
-;;   `fzfa-register'                 Use a register (jump-to or insert based on type)
+;;   `fzfa-register'                 Use a register (jump-to or insert)
 ;;   `fzfa-outline'                  Jump to an outline heading in this buffer
 ;;   `fzfa-compile-error'            Jump to an error from a compilation buffer
 
@@ -456,7 +455,8 @@ When PREDICATE is non-nil, only include commands for which
     (sort commands #'string<)))
 
 (defun fzfa--run-command (name)
-  "Execute the command named NAME, recording it like \\[execute-extended-command]."
+  "Execute the command named NAME.
+Records it like \\[execute-extended-command]."
   (let ((cmd (intern name)))
     (setq this-command cmd
           real-this-command cmd)

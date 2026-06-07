@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: matching, completion, helm
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -82,18 +80,18 @@ Default is `fzfa-helm-multi-source-candidate-limit' × 10."
   "Whether to kill the helm session buffer on fzfa-helm exit.
 
 `helm' by default `bury's its session buffer on exit
-(`helm-cleanup' in `helm-core.el:~4348') rather than killing it, so
+\(`helm-cleanup' in `helm-core.el:~4348') rather than killing it, so
 that `helm-resume' can later restore the session.  Buried buffers
 linger in `buffer-list', though, and end up as candidates for any
-subsequent `fzfa-buffer'-backed picker (`fzfa-buffer',
+subsequent `fzfa-buffer'-backed picker \(`fzfa-buffer',
 `fzfa-find-any', etc.).  Previewing a stale fzfa-helm buffer there
 re-renders the prior picker's content in the origin window —
 disorienting mid-session.
 
 When this is non-nil (the default), each fzfa-helm handler
-(`fzfa-helm--async-read', `fzfa-helm--sync-read',
+\(`fzfa-helm--async-read', `fzfa-helm--sync-read',
 `fzfa-helm--2pass-read', `fzfa-helm--multi-read') explicitly kills
-its session buffer in unwind-protect cleanup — no leftovers in
+its session buffer in `unwind-protect' cleanup — no leftovers in
 `buffer-list', no stale candidates downstream.
 
 Set to nil to defer to helm's default bury behavior — useful if you
@@ -105,18 +103,18 @@ don't restore well across resume anyway."
 (defun fzfa-helm--maybe-kill-session-buffer (name)
   "Kill the helm session buffer NAME when `fzfa-helm-kill-buffer-on-exit'.
 No-op when the buffer doesn't exist or the defcustom is nil.  Each
-fzfa-helm handler calls this in its unwind-protect cleanup."
+fzfa-helm handler calls this in its `unwind-protect' cleanup."
   (when (and fzfa-helm-kill-buffer-on-exit (get-buffer name))
     (kill-buffer name)))
 
 (defvar helm--execute-persistent-action-timer)
 
 (defun fzfa-helm--cancel-stranded-follow-timer ()
-  "Cancel helm's global follow-mode idle timer if still scheduled.
+  "Cancel helm's global `follow-mode' idle timer if still scheduled.
 
 helm-core's `helm-follow-execute-persistent-action-maybe' schedules
 `helm-execute-persistent-action' via a global idle timer
-(`helm--execute-persistent-action-timer', helm-core.el ~8292) but
+\(`helm--execute-persistent-action-timer', helm-core.el ~8292) but
 helm-cleanup does not cancel it, and the callback does not check
 `helm-alive-p' before invoking the persistent action — which itself
 errors out via `with-helm-alive-p' when helm has exited.
@@ -303,11 +301,12 @@ candidate string alone doesn't carry enough context."
 (defun fzfa-helm--async-source-and-stop
     (name command directory action limit
           &optional annotate persistent-action)
-  "Return (SOURCE . STOP).  Eagerly starts the fzf-native producer and
-the polling timer.  SOURCE's `:cleanup' calls STOP; STOP is idempotent
-so callers can also invoke it externally for defense-in-depth (e.g.
-multi-source bulk cleanup when helm never gets a chance to call
-`:cleanup' itself).
+  "Return (SOURCE . STOP) for NAME / COMMAND.
+Eagerly start the fzf-native producer in DIRECTORY and the polling
+timer, capped at LIMIT candidates.  ACTION is the helm action.
+SOURCE's `:cleanup' calls STOP; STOP is idempotent so callers can also
+invoke it externally for defense-in-depth (e.g. multi-source bulk
+cleanup when helm never gets a chance to call `:cleanup' itself).
 
 ANNOTATE, when non-nil, is a (CAND) -> STRING function rendered as a
 per-row suffix via `fzfa-helm--make-display-transformer'.
@@ -506,7 +505,7 @@ which is skipped when we bypass it via `:inject' mode."
        :name name :items items :history history :action action
        :annotate annotate))
      (t
-      (error "fzfa source plist has neither :command nor :items: %S" plist)))))
+      (error "Fzfa source plist has neither :command nor :items: %S" plist)))))
 
 (cl-defun fzfa-helm-source-from-command (cmd &rest overrides)
   "Return a LIST of helm sources built from arg-less fzfa command CMD.
@@ -549,8 +548,9 @@ two-pass command (`:2pass t' in the extracted args)."
     (unless args
       (user-error "`%s' is not an extract-capable fzfa command" cmd))
     (when (plist-get args :2pass)
-      (user-error "`%s' is a two-pass fzfa command — not yet composable as a helm source"
-                  cmd))
+      (user-error
+       "`%s' is a two-pass fzfa command — not yet composable as a helm source"
+       cmd))
     (cond
      ;; Multi-source command — build one helm source per inner plist.
      ;; Each inner plist already carries an :action closure that
@@ -654,6 +654,8 @@ Returns the selected candidate string, or nil on cancel."
                                      affix group history require-match
                                      default preview)
   "Helm dispatch for `fzfa-sync-completing-read'.
+CANDIDATES, PROMPT, CATEGORY, ANNOTATE, AFFIX, GROUP, HISTORY,
+REQUIRE-MATCH, DEFAULT, and PREVIEW are forwarded from the caller.
 
 Bypasses `completing-read' (and therefore helm-mode's advice) so we
 can apply per-history candidate ordering — helm doesn't consult the
@@ -865,7 +867,8 @@ matching line), and fire `:exit' + `:return' on exit."
 (cl-defun fzfa-helm--multi-read (sources &key prompt)
   "Helm dispatch for `fzfa--multi-read'.
 
-SOURCES is the same list of plists as the completing-read path.
+SOURCES is the same list of plists as the `completing-read' path.
+PROMPT is the prompt string shown in the helm session.
 Each `fzfa' source maps to a `helm' source:
   :command  -> async (eager-start, no per-source polling timer)
   :items    -> sync (fzf-native-score-all on each `helm-pattern' change)
@@ -1030,7 +1033,8 @@ for fuzzy-multi-source UX."
                                   (setq retry-timer nil))
                                 (setq last-result r)
                                 (aset ranks i
-                                      (fzfa--multi-rank r (or helm-pattern "") t))
+                                      (fzfa--multi-rank
+                                       r (or helm-pattern "") t))
                                 r)))))
                         :match-dynamic t
                         :nohighlight t
@@ -1116,8 +1120,9 @@ for fuzzy-multi-source UX."
                                   preview-cell)
                                  :follow 1))))))
               (t
-               (error "fzfa helm multi source has neither :command nor :items: %S"
-                      src))))))
+               (error
+                "Fzfa helm multi source has neither :command nor :items: %S"
+                src))))))
          ;; Cursor-follows-leader hook.  Runs after every helm update
          ;; (pattern change or force-update).  When the source with the
          ;; highest top-fzf-score changes, jump there.  Stable: ties

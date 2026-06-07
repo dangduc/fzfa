@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: mail, matching, fzf
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -125,7 +123,8 @@ Each entry is a plist with `:id', `:date', `:from', and `:subject' keys.")
       (call-process
        "osascript" nil 0 nil "-e"
        (format
-        "tell application \"Mail\" to open (first message of inbox whose message id is %S)"
+        (concat "tell application \"Mail\" to open"
+                " (first message of inbox whose message id is %S)")
         (plist-get item :id))))))
 
 ;;;###autoload

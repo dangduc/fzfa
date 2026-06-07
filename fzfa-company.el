@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: company, completion, convenience
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -149,8 +147,9 @@ original point is restored as well."
                     (ignore-errors
                       (company-call-backend 'location cand)))))))
     (unless loc (user-error "No location available for `%s'" cand))
-    (let ((target-buf (cond ((bufferp (car loc)) (car loc))
-                            ((stringp (car loc)) (find-file-noselect (car loc)))))
+    (let ((target-buf (cond
+                       ((bufferp (car loc)) (car loc))
+                       ((stringp (car loc)) (find-file-noselect (car loc)))))
           (target (cdr loc)))
       (unless target-buf (user-error "Cannot resolve location for `%s'" cand))
       (pop-to-buffer target-buf)

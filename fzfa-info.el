@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: convenience, info, help, matching
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -37,7 +35,8 @@
 (require 'info)
 (require 'cl-lib)
 
-(declare-function info-lookup-symbol "info-look" (symbol &optional mode same-window))
+(declare-function info-lookup-symbol "info-look"
+                  (symbol &optional mode same-window))
 
 (defcustom fzfa-info-manuals
   '("emacs" "elisp" "org" "cl" "eieio")

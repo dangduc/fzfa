@@ -1,20 +1,17 @@
-;;; fzfa-project.el --- project.el integration for `fzfa' -*- lexical-binding: t; -*-
+;;; fzfa-project.el --- Project.el integration for `fzfa' -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 James Nguyen
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: convenience, files, matching
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
-;; project.el integration for fzfa.  Mirrors the project-scoped commands
-;; commonly found in `counsel-projectile', `helm-projectile', and
-;; `consult-project-buffer' / `project' built-ins.
+;; project.el integration for fzfa: project-scoped file, directory,
+;; buffer, recentf, and project-switch commands.
 ;;
 ;; Loaded automatically when `project' is in `fzfa-extensions' and
 ;; `fzfa-setup' has been called.  No setup function is registered —
@@ -61,9 +58,7 @@
 (defun fzfa-project-find-file ()
   "Find a file in the current project.
 Candidate set comes from `project-files', so membership respects
-`project-vc-*' and `project-find-functions'.  Modeled on the built-in
-`project-find-file', `counsel-projectile-find-file', and
-`helm-projectile-find-file'."
+`project-vc-*' and `project-find-functions'."
   (interactive)
   (let* ((pr (fzfa-project--current))
          (root (expand-file-name (project-root pr)))
@@ -71,8 +66,9 @@ Candidate set comes from `project-files', so membership respects
     (unless files
       (user-error "No files in current project"))
     (when-let* ((sel (fzfa-sync-completing-read
-                      :candidates (mapcar (lambda (f) (file-relative-name f root))
-                                          files)
+                      :candidates (mapcar
+                                   (lambda (f) (file-relative-name f root))
+                                   files)
                       :prompt (format "project file [%s]: "
                                       (fzfa-project--label root))
                       :category 'fzfa-file)))
@@ -80,10 +76,9 @@ Candidate set comes from `project-files', so membership respects
 
 ;;;###autoload
 (defun fzfa-project-find-dir ()
-  "Open a directory contained in the current project, in dired.
+  "Open a directory contained in the current project, in Dired.
 Candidates are the unique parent directories of `project-files', plus
-the project root itself.  Modeled on the built-in `project-find-dir',
-`counsel-projectile-find-dir', and `helm-projectile-find-dir'."
+the project root itself."
   (interactive)
   (let* ((pr (fzfa-project--current))
          (root (expand-file-name (project-root pr)))
@@ -104,10 +99,7 @@ the project root itself.  Modeled on the built-in `project-find-dir',
 
 ;;;###autoload
 (defun fzfa-project-buffer ()
-  "Switch to a buffer of the current project.
-Modeled on the built-in `project-switch-to-buffer', `consult-project-buffer',
-`counsel-projectile-switch-to-buffer', and
-`helm-projectile-switch-to-buffer'."
+  "Switch to a buffer of the current project."
   (interactive)
   (let* ((pr (fzfa-project--current))
          (root (expand-file-name (project-root pr)))
@@ -129,8 +121,7 @@ Modeled on the built-in `project-switch-to-buffer', `consult-project-buffer',
 (defun fzfa-project-recentf ()
   "Open a recently visited file under the current project.
 Filters `recentf-list' to entries whose expanded path is under the
-current project's root.  Modeled on `counsel-projectile-recentf' and
-`helm-projectile-recentf'."
+current project's root."
   (interactive)
   (require 'recentf)
   (recentf-mode 1)
@@ -153,9 +144,7 @@ current project's root.  Modeled on `counsel-projectile-recentf' and
 (defun fzfa-project-switch-project ()
   "Switch to a known project root via fzf.
 After selection, dispatches through `project-switch-project' so the
-user's `project-switch-commands' menu kicks in.  Modeled on the
-built-in `project-switch-project', `counsel-projectile-switch-project',
-and `helm-projectile-switch-project'."
+user's `project-switch-commands' menu kicks in."
   (interactive)
   (let ((roots (project-known-project-roots)))
     (unless roots

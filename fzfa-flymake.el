@@ -4,14 +4,13 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Keywords: convenience, matching
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
-;; fzfa interface to Flymake diagnostics, modeled on `consult-flymake'.
+;; fzfa interface to Flymake diagnostics.
 ;;
 ;; Loaded automatically when `flymake' is in `fzfa-extensions' and
 ;; `fzfa-setup' has been called.

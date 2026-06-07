@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: convenience, files, matching
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -36,7 +34,8 @@ Stdout lines become file candidates."
   "Find a file system-wide using locate.
 The command is configurable via `fzfa-locate-command'."
   (interactive)
-  (when-let* ((result (fzfa-async-completing-read :command fzfa-locate-command)))
+  (when-let* ((result (fzfa-async-completing-read
+                       :command fzfa-locate-command)))
     (fzfa-with-visit (find-file result))))
 
 (when (memq 'fzfa-locate-2p fzfa-2p-functions)

@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: convenience, matching
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -151,10 +149,10 @@ variable `buffer-file-name'."
 ;;; Exporters.
 
 (defun fzfa-embark-export-location (cands)
-  "Embark exporter for `fzfa-location' candidates.
+  "Embark exporter for `fzfa-location' candidates CANDS.
 Emit SOURCE:LINE:CAND lines in a fresh `grep-mode' buffer so RET jumps
 to the hit and `wgrep' can edit hits in place.  SOURCE comes from each
-CAND's `fzfa-location' text property; file paths navigate, buffer-only
+element's `fzfa-location' text property; file paths navigate, buffer-only
 sources (swiper on a non-file buffer) render but don't click through."
   (require 'grep)
   (let ((buf (generate-new-buffer "*Embark Export Location*")))
@@ -296,8 +294,7 @@ Idempotent — safe to call more than once."
     ;; closure has inserted the target into the action's minibuffer and
     ;; queued `exit-minibuffer' on `post-command-hook'; this hook
     ;; removes that queued exit so the user can actually see and edit
-    ;; the pre-filled filter).  Mirrors embark-consult's split at
-    ;; embark-consult.el:407-413.
+    ;; the pre-filled filter).
     (dolist (m (list fzfa-embark-search-map
                      fzfa-embark-sync-search-map
                      fzfa-embark-async-search-map))

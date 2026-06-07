@@ -4,15 +4,13 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: pass, password, convenience
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
-;; fzfa interface to `password-store' (pass), modeled on `ivy-pass'.
+;; fzfa interface to `password-store' (pass).
 ;;
 ;; Loaded automatically when `pass' is in `fzfa-extensions' (the
 ;; default) and `fzfa-setup' has been called.  Requires the
@@ -43,7 +41,8 @@
 (declare-function password-store-edit      "password-store" (entry))
 (declare-function password-store-rename    "password-store" (entry new-entry))
 (declare-function password-store-remove    "password-store" (entry))
-(declare-function password-store-generate  "password-store" (entry &optional password-length))
+(declare-function password-store-generate "password-store"
+                  (entry &optional password-length))
 (declare-function password-store-url       "password-store" (entry))
 
 (defun fzfa-pass--read (prompt)

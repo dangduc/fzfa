@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: convenience, files, matching, vc
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -136,12 +134,12 @@ Dispatches to the backend's `modified-in-head' source in
 
 ;;; Multi-source VCS
 
-(defcustom fzfa-vcs-any-commands
+(defcustom fzfa-vc-any-commands
   '((fzfa-vc-modified-locally  :narrow m)
     (fzfa-vc-added-files       :narrow a)
     (fzfa-vc-staged-for-commit :narrow s)
     (fzfa-vc-modified-in-head  :narrow h))
-  "Commands shown by `fzfa-vcs-any'.
+  "Commands shown by `fzfa-vc-any'.
 Each entry is either a bare command symbol or a list
 \(COMMAND :narrow KEY) overriding the auto-derived narrow key.
 The defaults dispatch via `vc-responsible-backend' so the active
@@ -150,10 +148,10 @@ VCS backend is picked per project."
   :group 'fzfa)
 
 ;;;###autoload
-(defun fzfa-vcs-any ()
-  "Multi-source fuzzy completion over `fzfa-vcs-any-commands'."
+(defun fzfa-vc-any ()
+  "Multi-source fuzzy completion over `fzfa-vc-any-commands'."
   (interactive)
-  (fzfa-multi-read fzfa-vcs-any-commands :prompt "vcs?: "))
+  (fzfa-multi-read fzfa-vc-any-commands :prompt "vcs?: "))
 
 (provide 'fzfa-vc)
 ;;; fzfa-vc.el ends here

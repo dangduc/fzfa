@@ -510,7 +510,7 @@ when the inner sources arrive without `:narrow'."
   (let ((fzfa-preview-functions '((cat :preview ignore)))
         (fzfa-preview-delay 0.3))
     (should (null (fzfa--preview-handler nil 'unknown))))
-  ;; nil delay disables preview globally — registry + explicit override both ignored.
+  ;; nil delay disables preview globally — registry + override both ignored.
   (let ((fzfa-preview-functions '((cat :preview ignore)))
         (fzfa-preview-delay nil))
     (should (null (fzfa--preview-handler nil 'cat)))
@@ -785,7 +785,8 @@ referenced by the resolve tests as no-op functions so they are
     ;; Predicate matches but executable missing -> skipped.
     (should (eq 'fzfa-find
                 (fzfa--smart-resolve
-                 '((fzfa-fd   :executable "no-such-exe" :predicate (lambda () t))
+                 '((fzfa-fd   :executable "no-such-exe"
+                              :predicate (lambda () t))
                    (fzfa-find :executable "find")))))))
 
 (ert-deftest fzfa-smart-resolve-bare-clause-is-unconditional ()

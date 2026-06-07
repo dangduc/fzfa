@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: multimedia, matching, fzf
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -52,7 +50,8 @@
    var gn = t.genre();
    var out = [];
    for (var i = 0; i < ids.length; i++) {
-     out.push(ids[i] + '\\t' + ar[i] + '\\t' + al[i] + '\\t' + nm[i] + '\\t' + gn[i]);
+     out.push(ids[i] + '\\t' + ar[i] + '\\t' +
+              al[i] + '\\t' + nm[i] + '\\t' + gn[i]);
    }
    out.join('\\n');"
   "JXA snippet returning tab-separated id/artist/album/name/genre lines.")
@@ -142,7 +141,8 @@ GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
   (let* ((sorted (if group-key
                      (cl-sort (copy-sequence tracks) #'string<
                               :key (lambda (p)
-                                     (downcase (or (plist-get p group-key) ""))))
+                                     (downcase
+                                      (or (plist-get p group-key) ""))))
                    tracks))
          (map (make-hash-table :test #'equal))
          (cands
@@ -194,7 +194,8 @@ GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
     (call-process
      "osascript" nil 0 nil "-e"
      (format
-      "tell application \"Music\" to play (some track whose persistent ID is %S)"
+      (concat "tell application \"Music\" to play"
+              " (some track whose persistent ID is %S)")
       (plist-get item :id)))))
 
 ;;;###autoload
@@ -224,7 +225,10 @@ GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
   (call-process
    "osascript" nil 0 nil "-e"
    (format
-    "tell application \"Music\"\nset shuffle enabled to %s\nplay (first playlist whose persistent ID is %S)\nend tell"
+    (concat "tell application \"Music\"\n"
+            "set shuffle enabled to %s\n"
+            "play (first playlist whose persistent ID is %S)\n"
+            "end tell")
     (if shuffle "true" "false")
     (plist-get item :id))))
 

@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: convenience, files, matching
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -57,7 +55,8 @@ Selecting a match opens the file and jumps to the line."
   (let* ((raw-dirs (cl-loop for buf in (buffer-list)
                             for file = (buffer-file-name buf)
                             when file
-                            collect (file-name-directory (expand-file-name file))))
+                            collect (file-name-directory
+                                     (expand-file-name file))))
          (dirs (fzfa-hungry--deduplicate-dirs raw-dirs)))
     (unless dirs
       (user-error "No file-visiting buffers found"))
@@ -90,7 +89,8 @@ by a shallower parent, then streams fd (or find) output through fzf."
   (let* ((raw-dirs (cl-loop for buf in (buffer-list)
                             for file = (buffer-file-name buf)
                             when file
-                            collect (file-name-directory (expand-file-name file))))
+                            collect (file-name-directory
+                                     (expand-file-name file))))
          (dirs (fzfa-hungry--deduplicate-dirs raw-dirs)))
     (unless dirs
       (user-error "No file-visiting buffers found"))

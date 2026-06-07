@@ -323,7 +323,7 @@ fzfa signals a `user-error' under `helm-mode'.")
 
 (defun fzfa--frontend-index ()
   "Return the active completion UI's selection index (0-based), or nil.
-Returns nil for frontends that do not expose a selection index (e.g. icomplete)."
+Returns nil for frontends without a selection index (e.g. icomplete)."
   (cond
    ((bound-and-true-p vertico-mode) (max 0 vertico--index))
    ((bound-and-true-p ivy-mode) (and (boundp 'ivy--index) (max 0 ivy--index)))
@@ -457,7 +457,7 @@ to the registry\"):
   a plist    — use as-is.
 Returns nil unconditionally when `fzfa-preview-delay' is nil (the global
 escape hatch — users disable preview by setting the delay rather than by
-wiring `nil' into individual calls)."
+wiring nil into individual calls)."
   (when fzfa-preview-delay
     (cond
      ((functionp preview) (list :preview preview))
@@ -492,7 +492,7 @@ no slot in the handler or when there is no active session."
 Call from inside a `minibuffer-with-setup-hook' lambda.  Reads the
 handler from `fzfa--preview-session', captures origin window/buffer
 and `default-directory' into the session state, dispatches :setup, and
-registers the debounced post-command-hook + minibuffer-exit-hook.
+registers the debounced `post-command-hook' + `minibuffer-exit-hook'.
 
 DELAY defaults to `fzfa-preview-delay'.  When positive, scheduling
 uses `run-with-idle-timer' so fast typing or arrow-key bursts suppress
@@ -1056,7 +1056,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
            (handler (fzfa--preview-handler preview category))
            (fzfa--preview-session (and handler (list handler)))
            (selection nil)
-           (handle (fzf-native-async-start command (expand-file-name directory)))
+           (handle (fzf-native-async-start
+                    command (expand-file-name directory)))
            (dir (abbreviate-file-name directory))
            (last-gen -1)
            (last-result nil)
@@ -1109,7 +1110,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
              (lambda ()
                (when handle
                  (let ((gen (fzf-native-async-generation handle)))
-                   (when (and gen (not (= gen last-gen)) (not (input-pending-p)))
+                   (when (and gen (not (= gen last-gen))
+                              (not (input-pending-p)))
                      (when (>= (- (float-time) last-exhibit-scheduled)
                                fzfa-input-throttle)
                        (setq last-gen gen)
@@ -1144,38 +1146,44 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                       prompt
                       (lambda (str _pred action)
                         (pcase action
-                          ('metadata (fzfa--completion-metadata category :group group))
-                          ;; Treat the whole input as one field; prevents space-splitting.
+                          ('metadata
+                           (fzfa--completion-metadata category :group group))
+                          ;; Treat input as one field; prevents space-splitting.
                           (`(boundaries . ,_) (cons 0 0))
-                          ('t (let* ((query (fzfa--current-query str))
-                                     (r (while-no-input
-                                          (fzf-native-async-candidates handle query limit))))
-                                (if (eq r t)
-                                    ;; Scoring was interrupted by pending input.
-                                    ;; Debounce a retry so the display self-heals once
-                                    ;; the user pauses typing.
-                                    (progn
-                                      (when retry-timer (cancel-timer retry-timer))
-                                      (setq retry-timer
-                                            (run-with-idle-timer
-                                             fzfa-input-debounce nil
-                                             (lambda ()
-                                               (setq retry-timer nil)
-                                               (fzfa--frontend-push ivy-push)))))
-                                  (when-let* ((stats (fzf-native-async-stats handle)))
-                                    (setq last-filtered (car stats)
-                                          last-total    (cdr stats)))
-                                  (unless (bound-and-true-p ivy-mode)
-                                    (when-let* ((win (active-minibuffer-window)))
-                                      (with-selected-window win
-                                        (unless stats-overlay
-                                          (setq stats-overlay
-                                                (make-overlay (point-min) (minibuffer-prompt-end))))
-                                        (funcall refresh-overlay))))
-                                  (when (fzfa--async-final-p r handle query)
-                                    (setq last-query query
-                                          last-result r)))
-                                (when (equal query last-query) last-result)))
+                          ('t
+                           (let* ((query (fzfa--current-query str))
+                                  (r (while-no-input
+                                       (fzf-native-async-candidates
+                                        handle query limit))))
+                             (if (eq r t)
+                                 ;; Scoring was interrupted by pending input.
+                                 ;; Debounce a retry so the display self-heals
+                                 ;; once the user pauses typing.
+                                 (progn
+                                   (when retry-timer (cancel-timer retry-timer))
+                                   (setq retry-timer
+                                         (run-with-idle-timer
+                                          fzfa-input-debounce nil
+                                          (lambda ()
+                                            (setq retry-timer nil)
+                                            (fzfa--frontend-push ivy-push)))))
+                               (when-let* ((stats (fzf-native-async-stats
+                                                   handle)))
+                                 (setq last-filtered (car stats)
+                                       last-total    (cdr stats)))
+                               (unless (bound-and-true-p ivy-mode)
+                                 (when-let* ((win (active-minibuffer-window)))
+                                   (with-selected-window win
+                                     (unless stats-overlay
+                                       (setq stats-overlay
+                                             (make-overlay
+                                              (point-min)
+                                              (minibuffer-prompt-end))))
+                                     (funcall refresh-overlay))))
+                               (when (fzfa--async-final-p r handle query)
+                                 (setq last-query query
+                                       last-result r)))
+                             (when (equal query last-query) last-result)))
                           (_ t)))))))
          (cancel-timer timer)
          (when retry-timer (cancel-timer retry-timer))
@@ -1194,7 +1202,7 @@ See `fzfa-2pass-split-styles-alist' for available styles."
   :group 'fzfa)
 
 (defcustom fzfa-shell-command-debounce 0.2
-  "Seconds of typing silence before a shell-command start fires.
+  "Seconds of typing silence before a `shell-command' start fires.
 Each keystroke that changes the command portion of the minibuffer
 reschedules a fresh restart timer; the producer process is not
 spawned until the user pauses for this long, so a burst of
@@ -1203,7 +1211,7 @@ keystrokes ends with exactly one restart on the final cmd value."
   :group 'fzfa)
 
 (defcustom fzfa-shell-command-throttle 0.5
-  "Minimum seconds between shell-command restarts in 2 pass route."
+  "Minimum seconds between `shell-command' restarts in 2 pass route."
   :type 'float
   :group 'fzfa)
 
@@ -1354,16 +1362,20 @@ changing FILTER rescores in place via fzf-native.
                     :initial-input initial-input
                     :split-style split-style)
            directory resolve-paths))
-      (user-error "fzfa-2pass-completing-read does not yet support helm-mode")))
+      (user-error
+       "`fzfa-2pass-completing-read' does not yet support helm-mode")))
   (let* ((completion-styles '(fzfa))
          (prompt (or prompt "fzfa-2pass: "))
          (dir (expand-file-name directory))
          (dir-abbrev (abbreviate-file-name directory))
          (style-sym (or split-style fzfa-2pass-split-style 'perl))
          (style (or (alist-get style-sym fzfa-2pass-split-styles-alist)
-                    (user-error "Unknown fzfa-2pass split style: %s" style-sym)))
+                    (user-error
+                     "Unknown fzfa-2pass split style: %s" style-sym)))
          (initial-char (plist-get style :initial))
-         (init-text (if (consp initial-input) (car initial-input) initial-input))
+         (init-text (if (consp initial-input)
+                        (car initial-input)
+                      initial-input))
          (init-point (and (consp initial-input) (cdr initial-input)))
          (splitter (plist-get style :function))
          (limit (fzfa--candidate-limit))
@@ -1957,7 +1969,8 @@ SOURCES-V is the vector of source plists; HASH maps CAND to source index."
          (and idx (aref sources-v idx)))))
 
 (defun fzfa--multi-source-idx (cand hash)
-  "Return the source index for CAND, or nil."
+  "Return the source index for CAND, or nil.
+HASH maps CAND to source index."
   (and (stringp cand) (> (length cand) 0)
        (or (get-text-property 0 'fzfa-src-idx cand)
            (gethash cand hash))))
@@ -2588,8 +2601,10 @@ Per-source plist keys:
                                     (lambda (c)
                                       (let* ((src (fzfa--multi-source-of
                                                    c sources-v cand->src))
-                                             (g (and src (plist-get src :group))))
-                                        (or (and g (funcall g (fzfa--tofu-hide c) t))
+                                             (g (and src
+                                                     (plist-get src :group))))
+                                        (or (and g (funcall
+                                                    g (fzfa--tofu-hide c) t))
                                             c)))
                                     cands))
                                   (maxw (apply #'max 0
@@ -2599,8 +2614,11 @@ Per-source plist keys:
                               (lambda (cand display)
                                 (let* ((src (fzfa--multi-source-of
                                              cand sources-v cand->src))
-                                       (ann (and src (plist-get src :annotate)))
-                                       (s   (and ann (funcall ann (fzfa--tofu-hide cand))))
+                                       (ann (and src
+                                                 (plist-get src :annotate)))
+                                       (s   (and ann (funcall
+                                                      ann
+                                                      (fzfa--tofu-hide cand))))
                                        (pad (- (1+ maxw)
                                                (string-width display))))
                                   (list cand ""
@@ -2653,7 +2671,7 @@ Per-source plist keys:
                                (t
                                 ;; Async returns fresh strings each call;
                                 ;; re-tag them so group/action lookup works.
-                                ;; out may be nil (zero matches) — still valid.
+                                ;; out may be nil (zero matches) — still ok.
                                 (when h
                                   (setq out
                                         (mapcar

@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: matching, fzf, evil
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -31,8 +29,10 @@
 (require 'fzfa)
 (require 'cl-lib)
 
-(declare-function evil-get-marker             "evil-common" (char &optional raw))
-(declare-function evil-goto-mark              "evil-commands" (char &optional noerror))
+(declare-function evil-get-marker "evil-common"
+                  (char &optional raw))
+(declare-function evil-goto-mark "evil-commands"
+                  (char &optional noerror))
 (declare-function evil-register-list          "evil-common")
 (declare-function evil-paste-from-register    "evil-commands" (register))
 (declare-function evil-execute-macro          "evil-macros" (count macro))
@@ -78,7 +78,7 @@ unloaded global mark.  Returns nil when VAL is unrecognized."
       (format "%s:%s" (car val) (cdr val))))))
 
 (defun fzfa-evil--mark-entries ()
-  "Return alist of (CHAR-STR . LOCATION) for currently set evil marks."
+  "Return alist of (CHAR-STR . LOCATION) for evil marks that are set."
   (let (out)
     (cl-flet ((collect
                 (char)
@@ -92,7 +92,7 @@ unloaded global mark.  Returns nil when VAL is unrecognized."
 
 ;;;###autoload
 (defun fzfa-evil-marks ()
-  "Jump to an evil mark, fuzzy-selected from currently set marks.
+  "Jump to an evil mark, fuzzy-selected from the set of evil marks.
 The candidate string includes the mark's location and line content
 so fzf scores against the preview too — type a snippet of the line
 to filter."
@@ -280,7 +280,8 @@ the fzf scorer can match against the preview text."
   (unless evil-ex-search-history
     (user-error "Evil search history is empty"))
   (when-let* ((sel (fzfa-sync-completing-read
-                    :candidates (delete-dups (copy-sequence evil-ex-search-history))
+                    :candidates (delete-dups
+                                 (copy-sequence evil-ex-search-history))
                     :prompt "/"
                     :category 'fzfa-evil-search-history)))
     (fzfa-evil--run-search sel)))
@@ -296,7 +297,8 @@ the evil search."
   (let* ((ex (mapcar (lambda (s) (concat ":" s))
                      (delete-dups (copy-sequence (or evil-ex-history '())))))
          (sr (mapcar (lambda (s) (concat "/" s))
-                     (delete-dups (copy-sequence (or evil-ex-search-history '())))))
+                     (delete-dups
+                      (copy-sequence (or evil-ex-search-history '())))))
          (cands (append ex sr))
          (group (lambda (cand transform)
                   (if transform

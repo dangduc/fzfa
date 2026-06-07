@@ -4,16 +4,13 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: mail, notmuch, matching, fzf
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
-;; fzfa interface to notmuch, modeled on `helm-notmuch',
-;; `counsel-notmuch', and `consult-notmuch'.
+;; fzfa interface to notmuch.
 ;;
 ;; Loaded automatically when `notmuch' is in `fzfa-extensions' and
 ;; `fzfa-setup' has been called.  Requires the `notmuch' Emacs

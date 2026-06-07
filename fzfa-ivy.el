@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: matching, completion, ivy
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -51,7 +49,7 @@
 (declare-function ivy--set-candidates "ivy")
 (declare-function ivy--exhibit "ivy")
 
-(defface fzfa-multi-source-label
+(defface fzfa-ivy-multi-source-label
   '((t :inherit font-lock-comment-face))
   "Face for source labels prepended to multi-source ivy candidates."
   :group 'fzfa)
@@ -70,7 +68,7 @@ calls pass through unchanged."
         (let* ((idx (- last fzfa--tofu-base))
                (name (plist-get (aref fzfa--multi-active-sources idx) :name)))
           (concat (propertize (format "[%s] " (or name "?"))
-                              'face 'fzfa-multi-source-label)
+                              'face 'fzfa-ivy-multi-source-label)
                   cand))
       cand)))
 

@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1") (vertico "2.9"))
-;; Keywords: matching, completion, vertico
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -86,7 +84,8 @@
 (declare-function vertico--metadata-get "vertico" (prop))
 (declare-function vertico--window-width "vertico" ())
 (declare-function vertico--hilit "vertico" (cand))
-(declare-function vertico--format-candidate "vertico" (cand prefix suffix index start))
+(declare-function vertico--format-candidate "vertico"
+                  (cand prefix suffix index start))
 (declare-function vertico--goto "vertico" (index))
 (declare-function vertico-next "vertico" (&optional n))
 (declare-function vertico-previous "vertico" (&optional n))
@@ -129,9 +128,9 @@ layout is three bands of (3 3 1) columns."
 When the active completion produces more groups than this, the
 layout paginates: only a window containing at most PAGE-SIZE
 sources is visible at any time.  The window scrolls
-automatically as the selection moves between bands — M-j past
-the last visible band's bottom row brings the next band into
-view; M-k past the top scrolls back.
+automatically as the selection moves between bands — moving
+past the last visible band's bottom row brings the next band
+into view; moving past the top scrolls back.
 
 Counted as `(ceil PAGE-SIZE / fzfa-vertico-columns-max)' bands.
 With the default of 6 and `fzfa-vertico-columns-max' = 3 you see
@@ -302,7 +301,7 @@ group is produced."
   (and vertico-group-format (vertico--metadata-get 'group-function)))
 
 (defun fzfa-vertico--src-idx-of (part)
-  "Return the `fzfa-src-idx' of PART's first candidate, or `most-positive-fixnum'.
+  "Return PART's first candidate `fzfa-src-idx', or `most-positive-fixnum'.
 Used as the sort key for the `source-idx' ordering mode."
   (let ((c (cadr part)))
     (or (and (stringp c)
@@ -311,7 +310,7 @@ Used as the sort key for the `source-idx' ordering mode."
         most-positive-fixnum)))
 
 (defun fzfa-vertico--empty-query-p ()
-  "Return non-nil when the active minibuffer holds no user query.
+  "Return non-nil when the active minibuffer has no user query.
 Used by the `scored' column-sort mode to lock declared order
 while sources stream in — without a query there is no rank to
 follow, and async arrival order would otherwise shuffle columns."
@@ -526,7 +525,7 @@ Falls back to `vertico-previous' when the layout is single-column."
 ;;; Rendering
 
 (defun fzfa-vertico--path-like-p (s)
-  "Heuristic: non-nil when S looks like a file path / grep-style result.
+  "Heuristic: non-nil when S resembles a file path / grep-style result.
 Used by the `auto' value of `fzfa-vertico-columns-truncate' to
 pick right-anchored truncation for path-bearing candidates."
   (or (string-match-p "/" s)
@@ -539,7 +538,7 @@ Used to detect when right-truncation would drop a matched span
 off the leading edge, so the ellipsis can carry the hint forward.")
 
 (defun fzfa-vertico--has-match-face-p (s)
-  "Return non-nil when S contains any `fzfa-vertico--match-faces' span.
+  "Return non-nil when S has any `fzfa-vertico--match-faces' span.
 Walks face text properties with `next-single-property-change'
 so the scan stays cheap even on long candidates."
   (let ((i 0) (len (length s)) hit)
@@ -638,7 +637,7 @@ foreground."
                :underline ,(if color `(:color ,color :style line) t))))
 
 (defun fzfa-vertico--scroll-offset (data-cap cur-row n-items)
-  "Per-source scroll offset that keeps CUR-ROW visible.
+  "Return per-source scroll offset to keep CUR-ROW visible.
 DATA-CAP is the visible row count for the band; N-ITEMS is the
 total length of the source's candidate list.  When CUR-ROW is
 nil (the source does not contain the selection) returns 0 — only
@@ -655,6 +654,7 @@ past its last item."
 (with-eval-after-load 'vertico
 (cl-defmethod vertico--arrange-candidates
   (&context (fzfa-vertico-columns-mode (eql t)))
+  "Arrange candidates in per-source columns when columns-mode is active."
   (let* ((gf (fzfa-vertico--group-function))
          (parts (and gf (fzfa-vertico--partition gf))))
     (if (or (null parts) (<= (length parts) 1))
@@ -783,7 +783,7 @@ who use other completion UIs.  Otherwise, when
   1. Each symbol in `fzfa-vertico-multiform-categories' is added to
      `vertico-multiform-categories' as
      (CATEGORY fzfa-vertico-columns-mode), so the columns layout
-     auto-activates inside those categories' completing-read sessions.
+     auto-activates inside those categories' `completing-read' sessions.
   2. `vertico-multiform-mode' is turned on if not already, so the
      categories list is honored."
   (when (and fzfa-vertico-columns-auto

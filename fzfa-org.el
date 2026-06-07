@@ -4,8 +4,6 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.1
-;; Package-Requires: ((emacs "29.1"))
-;; Keywords: convenience, org, outlines, matching
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -215,8 +213,7 @@ captured marker."
 ;;;###autoload
 (defun fzfa-org-agenda ()
   "Jump to a heading across `org-agenda-files' using fzf.
-Files not currently visited are loaded by `org-map-entries' as
-needed.  Modeled on `consult-org-agenda', `helm-org-agenda-files-headings'."
+Files not currently visited are loaded by `org-map-entries' as needed."
   (interactive)
   (require 'org)
   (fzfa-org--ensure-agenda-files)
@@ -232,11 +229,11 @@ excluding DONE-class keywords."
   (interactive)
   (require 'org)
   (fzfa-org--ensure-agenda-files)
-  (fzfa-org--read (fzfa-org--collect 'agenda nil
-                                     (lambda ()
-                                       (let ((s (org-get-todo-state)))
-                                         (and s
-                                              (not (member s org-done-keywords))))))
+  (fzfa-org--read (fzfa-org--collect
+                   'agenda nil
+                   (lambda ()
+                     (let ((s (org-get-todo-state)))
+                       (and s (not (member s org-done-keywords))))))
                   "org-todo: "))
 
 ;;;###autoload

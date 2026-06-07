@@ -93,11 +93,7 @@ and are scored.
 
 * Installation
 
-Dependencies:
-
-~fzf-native~
-
-Main Repo:
+Required dependency: [[https://github.com/dangduc/fzf-native][fzf-native]] (provides the C scoring module).
 
 #+begin_src emacs-lisp :tangle yes
   (use-package fzf-native
@@ -147,9 +143,9 @@ experience using ~fzf~ as the core filtering/scoring algorithm.
 
 * Commands
 
-All commands open the selected candidate in Emacs.
-
-The list here is on best efforts, might be inaccurate.
+All commands open the selected candidate in Emacs.  The tables
+below cross-reference fzfa commands with their closest equivalents
+in other completion packages, on a best-effort basis.
 
 ** File finders
 
@@ -408,20 +404,20 @@ explicitly).
 
 | Symbol      | Library          | Soft dependency                                  | Commands                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 |-------------+------------------+--------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| ~chrome~    | ~fzfa-chrome~    | none (bookmarks); macOS dependencies (passwords) | bookmarks: ~fzfa-chrome-bookmarks~ (default), ~-edit~, ~-copy-url~, ~-refresh~ — open Chromium-family bookmarks via ~browse-url~; modeled on ~helm-chrome~ / ~counsel-chrome-bm~.  passwords (macOS only): ~fzfa-chrome-pass-copy~ (default), ~-copy-username~, ~-url~, ~-refresh~ — decrypts entries from Chrome's Login Data SQLite DB using the keychain entry ~Chrome Safe Storage~                                                                                                                                                                                                                                                                                                                                                                                 |
-| ~company~   | ~fzfa-company~   | ~company~                                        | ~fzfa-company~ — fuzzy-filter current ~company-mode~ candidates and finish; modeled on ~helm-company~ / ~counsel-company~ / ~consult-company~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ~embark~    | ~fzfa-embark~    | ~embark~                                         | Sub-keymap on ~embark-general-map~ under the ~Z~ prefix (mnemonic: f*Z*fa) puts every fzfa command behind a single key chord reachable from any embark target — mirrors ~embark-consult~'s ~C~ prefix.  Direct (non-prefixed) target-aware bindings on ~embark-region-map~ / ~-identifier-map~ (~R~ rg, ~G~ grep, ~A~ ag, ~U~ ugrep, ~S~ swiper — target seeds the fzf filter), ~embark-file-map~ (~G~ grep this file, ~R~ rg in file's dir), ~embark-buffer-map~ (~I~ imenu, ~S~ swiper in target buffer), ~embark-flymake-map~ (~F~ flymake, ~P~ flymake-project), ~embark-email-map~ (~N~ notmuch, ~T~ notmuch-tree on the address).  Also wires ~Z~ on ~embark-become-match-map~ for sync source-swap.                                                              |
+| ~chrome~    | ~fzfa-chrome~    | none (bookmarks); macOS dependencies (passwords) | bookmarks: ~fzfa-chrome-bookmarks~ (default), ~-edit~, ~-copy-url~, ~-refresh~ — open Chromium-family bookmarks via ~browse-url~.  passwords (macOS only): ~fzfa-chrome-pass-copy~ (default), ~-copy-username~, ~-url~, ~-refresh~ — decrypts entries from Chrome's Login Data SQLite DB using the keychain entry ~Chrome Safe Storage~                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ~company~   | ~fzfa-company~   | ~company~                                        | ~fzfa-company~ — fuzzy-filter current ~company-mode~ candidates and finish                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ~embark~    | ~fzfa-embark~    | ~embark~                                         | Sub-keymap on ~embark-general-map~ under the ~Z~ prefix (mnemonic: f*Z*fa) puts every fzfa command behind a single key chord reachable from any embark target.  Direct (non-prefixed) target-aware bindings on ~embark-region-map~ / ~-identifier-map~ (~R~ rg, ~G~ grep, ~A~ ag, ~U~ ugrep, ~S~ swiper — target seeds the fzf filter), ~embark-file-map~ (~G~ grep this file, ~R~ rg in file's dir), ~embark-buffer-map~ (~I~ imenu, ~S~ swiper in target buffer), ~embark-flymake-map~ (~F~ flymake, ~P~ flymake-project), ~embark-email-map~ (~N~ notmuch, ~T~ notmuch-tree on the address).  Also wires ~Z~ on ~embark-become-match-map~ for sync source-swap.                                                                                                       |
 | ~evil~      | ~fzfa-evil~      | ~evil~                                           | ~fzfa-evil-marks~ (jump to a buffer-local or global mark, candidate includes ~BUFFER:LINE: <content>~ so fzf scores against the line preview), ~fzfa-evil-registers~ (paste text registers / execute macro-vector registers), ~fzfa-evil-jumps~ (window jump list — ~C-o~/~C-i~ history — with line preview when the buffer is loaded), ~fzfa-evil-ex-history~ (re-run an entry from ~evil-ex-history~ via ~evil-ex-execute~), ~fzfa-evil-search-history~ (re-run a pattern from ~evil-ex-search-history~ and update ~evil-ex-search-pattern~ so ~n~/~N~ continue working), ~fzfa-evil-command-window~ (unified ex + search history picker grouped by source), ~fzfa-evil-any~ (multi-source picker over the other commands, configurable via ~fzfa-evil-any-commands~) |
-| ~flymake~   | ~fzfa-flymake~   | none (built-in)                                  | ~fzfa-flymake~ (current buffer), ~fzfa-flymake-project~ (all buffers in the current project) — modeled on ~consult-flymake~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ~info~      | ~fzfa-info~      | none (built-in)                                  | ~fzfa-info-emacs~, ~fzfa-info-elisp~, ~fzfa-info-org~, ~fzfa-info-cl~, ~fzfa-info-eieio~, ~fzfa-info-magit~ — pick an index entry from a specific Info manual; ~fzfa-info~ is the multi-source picker over ~fzfa-info-commands~; ~fzfa-info-at-point~ delegates to `info-lookup-symbol' for the symbol at point; modeled on ~helm-info~ / ~counsel-info-lookup-symbol~ / ~consult-info~                                                                                                                                                                                                                                                                                                                                                                                 |
-| ~mail~      | ~fzfa-mail~      | macOS ~Mail.app~                                 | ~fzfa-mail~, ~fzfa-mail-refresh~ — browse and open inbox messages; comparable in spirit to ~helm-mu~ / ~consult-mu~ (for ~mu4e~)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| ~make~      | ~fzfa-make~      | ~make~ / ~ninja~ (CLI)                           | ~fzfa-make~ (locate ~Makefile~/~build.ninja~ and call make) — modeled on ~helm-make~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ~music~     | ~fzfa-music~     | macOS ~Music.app~                                | ~fzfa-music~, ~-by-artist~, ~-by-genre~, ~-playlist~, ~-playlist-shuffle~, ~-refresh~ — modeled on ~helm-itunes~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| ~notmuch~   | ~fzfa-notmuch~   | ~notmuch~ (CLI + Emacs package)                  | ~fzfa-notmuch~, ~fzfa-notmuch-tree~ — run a notmuch query and fuzzy-pick a thread to open; modeled on ~helm-notmuch~ / ~counsel-notmuch~ / ~consult-notmuch~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ~org~       | ~fzfa-org~       | none (built-in)                                  | ~fzfa-org-heading~ (current buffer), ~fzfa-org-heading-all~ (all live org buffers), ~fzfa-org-agenda~ (all `org-agenda-files'), ~fzfa-org-todo~ (TODO-state headings in agenda files, excludes DONE-class), ~fzfa-org-tags-view~ (pick a tag then a tagged entry), ~fzfa-org-insert-link~ (pick an entry, insert an org-link at point), ~fzfa-org-any~ (multi-source over `fzfa-org-any-commands').  Candidates render ~SOURCE:LINE:STARS [TODO] HEADING :tags:~; selection reveals folded entries.  Modeled on ~consult-org-heading~ / ~consult-org-agenda~ / ~counsel-org-goto~ / ~counsel-org-link~ / ~helm-org-in-buffer-headings~ / ~helm-org-tags~                                                                                                                |
-| ~pass~      | ~fzfa-pass~      | ~password-store~                                 | ~fzfa-pass~ (copy), ~fzfa-pass-edit~, ~-rename~, ~-delete~, ~-add~, ~-generate~, ~-url~ — modeled on ~helm-pass~ / ~ivy-pass~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ~project~   | ~fzfa-project~   | none (built-in)                                  | ~fzfa-project-find-file~, ~fzfa-project-find-dir~, ~fzfa-project-buffer~, ~fzfa-project-recentf~, ~fzfa-project-switch-project~ — candidate sets driven by ~project-files~ / ~project-buffers~ / ~project-known-project-roots~; modeled on the ~project.el~ built-ins, ~consult-project-buffer~, ~counsel-projectile-*~, and ~helm-projectile-*~                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| ~spotlight~ | ~fzfa-spotlight~ | macOS ~mdfind~                                   | ~fzfa-spotlight~, ~fzfa-spotlight-apps~, ~fzfa-spotlight-audio~ — application launcher loosely comparable to ~counsel-linux-app~ on Linux                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ~flymake~   | ~fzfa-flymake~   | none (built-in)                                  | ~fzfa-flymake~ (current buffer), ~fzfa-flymake-project~ (all buffers in the current project)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ~info~      | ~fzfa-info~      | none (built-in)                                  | ~fzfa-info-emacs~, ~fzfa-info-elisp~, ~fzfa-info-org~, ~fzfa-info-cl~, ~fzfa-info-eieio~, ~fzfa-info-magit~ — pick an index entry from a specific Info manual; ~fzfa-info~ is the multi-source picker over ~fzfa-info-commands~; ~fzfa-info-at-point~ delegates to `info-lookup-symbol' for the symbol at point                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ~mail~      | ~fzfa-mail~      | macOS ~Mail.app~                                 | ~fzfa-mail~, ~fzfa-mail-refresh~ — browse and open inbox messages                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ~make~      | ~fzfa-make~      | ~make~ / ~ninja~ (CLI)                           | ~fzfa-make~ (locate ~Makefile~/~build.ninja~ and call make)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ~music~     | ~fzfa-music~     | macOS ~Music.app~                                | ~fzfa-music~, ~-by-artist~, ~-by-genre~, ~-playlist~, ~-playlist-shuffle~, ~-refresh~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ~notmuch~   | ~fzfa-notmuch~   | ~notmuch~ (CLI + Emacs package)                  | ~fzfa-notmuch~, ~fzfa-notmuch-tree~ — run a notmuch query and fuzzy-pick a thread to open                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ~org~       | ~fzfa-org~       | none (built-in)                                  | ~fzfa-org-heading~ (current buffer), ~fzfa-org-heading-all~ (all live org buffers), ~fzfa-org-agenda~ (all `org-agenda-files'), ~fzfa-org-todo~ (TODO-state headings in agenda files, excludes DONE-class), ~fzfa-org-tags-view~ (pick a tag then a tagged entry), ~fzfa-org-insert-link~ (pick an entry, insert an org-link at point), ~fzfa-org-any~ (multi-source over `fzfa-org-any-commands').  Candidates render ~SOURCE:LINE:STARS [TODO] HEADING :tags:~; selection reveals folded entries.                                                                                                                                                                                                                                                                       |
+| ~pass~      | ~fzfa-pass~      | ~password-store~                                 | ~fzfa-pass~ (copy), ~fzfa-pass-edit~, ~-rename~, ~-delete~, ~-add~, ~-generate~, ~-url~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ~project~   | ~fzfa-project~   | none (built-in)                                  | ~fzfa-project-find-file~, ~fzfa-project-find-dir~, ~fzfa-project-buffer~, ~fzfa-project-recentf~, ~fzfa-project-switch-project~ — candidate sets driven by ~project-files~ / ~project-buffers~ / ~project-known-project-roots~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ~spotlight~ | ~fzfa-spotlight~ | macOS ~mdfind~                                   | ~fzfa-spotlight~, ~fzfa-spotlight-apps~, ~fzfa-spotlight-audio~ — application launcher                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ~vc~        | ~fzfa-vc~        | none (built-in)                                  | ~fzfa-vc-modified-files~ — multi-source picker over the current repository's modified / added / staged / HEAD files.  Detects the backend with ~vc-responsible-backend~ (cheap — walks parents) and dispatches to per-backend commands shipped by sibling extensions: ~fzfa-git-modified-locally~, ~fzfa-git-added-files~, ~fzfa-git-staged-for-commit~, ~fzfa-git-modified-in-head~ (in ~git~ extension) and ~fzfa-hg-modified-locally~, ~fzfa-hg-added-files~, ~fzfa-hg-modified-in-head~ (in ~hg~ extension).  Per-backend commands are also callable directly without going through the dispatcher.  Extend to other backends via ~fzfa-vc-modified-files-sources~                                                                                                  |
 
 Default value of ~fzfa-extensions~ is ~(ag chrome company emacs embark evil fd find flymake git grep hg hungry info locate mail make music notmuch org pass project rg shell spotlight ugrep vc)~.
@@ -771,7 +767,7 @@ flat merged list by default.  ~fzfa-ivy.el~ registers a display
 transformer under ivy's ~t~ fallback caller that prepends
 ~[source-name] ~ to each candidate carrying a fzfa tofu suffix.
 
-The face for the label is ~fzfa-multi-source-label~ (inherits
+The face for the label is ~fzfa-ivy-multi-source-label~ (inherits
 ~font-lock-comment-face~ by default).
 
 *** Multi source narrowing — ivy actions
@@ -899,7 +895,7 @@ Example below:
                   ;; Multi-source fzfa command — expands into one
                   ;; helm source per inner vc command (modified-locally,
                   ;; added-files, staged-for-commit, modified-in-head).
-                  (fzfa-helm-source-from-command 'fzfa-vcs-any))
+                  (fzfa-helm-source-from-command 'fzfa-vc-any))
           :buffer "*helm mini+fzfa*"))
 #+end_src
 
@@ -965,13 +961,15 @@ use ~fussy~ for non-~fzfa~ sources and ~fzfa~ otherwise. Example below.
                   ;; Multi-source fzfa command — expands into one
                   ;; helm source per inner vc command (modified-locally,
                   ;; added-files, staged-for-commit, modified-in-head).
-                  (fzfa-helm-source-from-command 'fzfa-vcs-any))
+                  (fzfa-helm-source-from-command 'fzfa-vc-any))
           :buffer "*helm mini+fzfa*"))
 #+end_src
 ** transient
-A [[https://github.com/jojojames/matcha/blob/master/matcha-fzfa.el][matcha transient]] is
- defined for invoking all ~fzfa~ commands from a
-single keybinding via [[https://github.com/jojojames/matcha][matcha]].
+
+A [[https://github.com/jojojames/matcha/blob/master/matcha-fzfa.el][matcha transient]]
+is defined for invoking all ~fzfa~ commands from a single keybinding
+via [[https://github.com/jojojames/matcha][matcha]].
+
 * Customization
 
 | Variable                       |                  Default | Description                                                                   |
@@ -1243,21 +1241,26 @@ Opens the selected PDF with `open'."
 #+end_src
 
 * Comparison
-|                                     | fzfa                       | affe               | helm              | counsel       | consult           | fzf.el     |
-|-------------------------------------+----------------------------+--------------------+-------------------+---------------+-------------------+------------|
-| Frontends supported                 | vertico/icomplete/helm/ivy | vertico/icomplete? | helm only         | ivy only      | vertico/icomplete | own UI     |
-| Smart fuzzy scoring                 | ✓ (C)                      | ×                  | ×                 | ×             | ×                 | ✓ (binary) |
-| Multi-component query               | ✓ (fzfa)                   | ✓ (orderless)      | ✓ (substring AND) | ✓ (regex AND) | ✓ (via orderless) | ✓ (fzf)    |
-| Producer runs once                  | ✓                          | ✓                  | ×                 | ×             | ×                 | ✓          |
-| Async multi-source                  | ✓                          | ×                  | ✓                 | ×             | sync only         | ×          |
-| Scales to large repos/sources       | ✓✓                         | ✓                  | ×                 | ×             | ×                 | ✓✓         |
-| Integrates with =completion-styles= | ✓*                         | ✓                  | ✓*                | ×             | ✓                 | ×          |
-| Language                            | Elisp + C                  | Elisp              | Elisp             | Elisp         | Elisp             | Elisp + Go |
+|                                     | fzfa                       | affe               | helm                    | counsel       | consult           | fzf.el     |
+|-------------------------------------+----------------------------+--------------------+-------------------------+---------------+-------------------+------------|
+| Frontends supported                 | vertico/icomplete/helm/ivy | vertico/icomplete? | helm only               | ivy only      | vertico/icomplete | own UI     |
+| Smart fuzzy scoring                 | ✓ (fzf-native)             | ✓ (emacs31 flex)   | ✓ (emacs31 flex or flx) | flx           | (emacs31 flex)    | ✓ (binary) |
+| Multi-component query               | ✓ (fzfa)                   | ✓ (orderless)      | ✓ (substring AND)       | ✓ (regex AND) | ✓ (orderless)     | ✓ (fzf)    |
+| Producer runs once                  | ✓                          | ✓                  | ×                       | ×             | ×*                | ✓          |
+| Async multi-source                  | ✓                          | ×                  | ✓                       | ×             | sync only         | ×          |
+| Scales to large repos/sources       | ✓                          | ×                  | ×                       | ×             | ×                 | ✓          |
+| Integrates with =completion-styles= | ✓*                         | ✓                  | ✓*                      | ×             | ✓                 | ×          |
+| Language                            | Elisp + C                  | Elisp              | Elisp                   | Elisp         | Elisp             | Elisp + Go |
 
 - There may be some fuzzy matching packages that try to interop with ~helm~ or ~counsel~ though it's hard to say how performant they are.
-- From a quick eye test, ~fzfa~ was the most performant around handling large datasets/sources with ~fzf.el~ and ~affe~ behind.
+  e.g. ~helm-fuz~ which brings ~fuz~ to ~helm~ or ~flx~ which is one of the original fuzzy matching packages for Emacs.
+- ~flx~ is smart fuzzy matching, but slow and doesn't scale to large codebases at all.
+- ~affe~, ~helm~, and ~consult~ can take advantage of ~completion-styles~ and leverage Emacs 31's C flex implemention using Gotoh's algorithm.
+  From my short testing, the C implementation doesn't scale very well to large codebases, being single-threaded.
+- ~fzfa~ and ~fzf.el~ were the only packages capable of handling millions (10+~) of candidates without degraded performance.
+  Caveat: Try the packages yourself to come to your own conclusion.
 - Multicomponent queries exist with these packages with varying functionality. For example, using multicomponent matching is possible
-  with ~orderless~, but adding ~flex~ filtering to the matching will slow Emacs to a crawl.
+  with ~orderless~, but adding ~flex~ filtering to the matching will slow Emacs to a crawl. If you use ~emacs31 flex~ instead, you lose the multi component matching.
 - ~fzfa~ integrates with ~completion-styles~ though ~fzfa~ does it by taking over the variable (ignoring the other values in the list).
 - ~helm~ integrates with ~completion-styles~ through a separate defcustom that doesn't apply to every source.
 
@@ -1282,6 +1285,7 @@ consecutive runs, and position (leading chars matter more).  Typing
   regex), there are a few external packages that tries to hook smart
   fuzzy matching in ~helm~ but they have the listed downsides mentioned
   above.
+- =hotfuzz= is another mention, written in C and pluggable to ~completion-styles~.
 
 ~fzfa~ runs fzf scoring in C via
 [[https://github.com/dangduc/fzf-native][fzf-native]] with the same
@@ -1378,10 +1382,10 @@ using ~helm~'s UI.
 
 ** Prior discussions
 
-[[https://github.com/abo-abo/swiper/pull/1151][swiper: add counsel-fzf]]
-[[https://github.com/abo-abo/swiper/issues/848][swiper: fzf integration]]
-[[https://github.com/minad/consult/issues/587][consult: fzf integration]]
-[[https://github.com/minad/consult/discussions/1312][consult: async fzf]]
+- [[https://github.com/abo-abo/swiper/pull/1151][swiper: add counsel-fzf]]
+- [[https://github.com/abo-abo/swiper/issues/848][swiper: fzf integration]]
+- [[https://github.com/minad/consult/issues/587][consult: fzf integration]]
+- [[https://github.com/minad/consult/discussions/1312][consult: async fzf]]
 
 * Architecture
 
@@ -1398,9 +1402,11 @@ The C scoring module under ~fzfa~ is documented separately in
 For ~fussy~, the broader fuzzy completion-style framework that
 ~fzfa~ deliberately bypasses, see
 [[https://github.com/jojojames/fussy/blob/HEAD/architecture.org][fussy's architecture overview]].
+
 * Acknowledgements
-[[https://github.com/abo-abo/swiper][counsel]]
-[[https://github.com/emacs-helm/helm][helm]]
-[[https://github.com/minad/consult][consult]]
-[[https://github.com/minad/affe][affe]]
-[[https://github.com/bling/fzf.el][fzf.el]]
+
+- [[https://github.com/abo-abo/swiper][counsel]]
+- [[https://github.com/emacs-helm/helm][helm]]
+- [[https://github.com/minad/consult][consult]]
+- [[https://github.com/minad/affe][affe]]
+- [[https://github.com/bling/fzf.el][fzf.el]]
