@@ -68,6 +68,8 @@
 (declare-function ivy--exhibit "ivy")
 (declare-function ivy--insert-prompt "ivy")
 (declare-function ivy-dispatching-call "ivy")
+(declare-function ivy-state-dynamic-collection "ivy")
+(defvar ivy-last)
 (defvar ivy--actions-list)
 (defvar ivy-pre-prompt-function)
 (declare-function projectile-project-root "projectile")
@@ -1069,9 +1071,14 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
            ;; `ivy--all-candidates' directly. Used instead of
            ;; `fzfa--frontend-exhibit' for ivy because
            ;; ivy does not re-call the collection lambda on timer ticks.
+           ;; Skip when ivy has dropped to static collection (post
+           ;; `ivy-restrict-to-matches'): pushing would overwrite the
+           ;; restricted set ivy just locked in.
            (ivy-push
             (lambda ()
-              (when (and handle (active-minibuffer-window))
+              (when (and handle (active-minibuffer-window)
+                         (or (not (bound-and-true-p ivy-last))
+                             (ivy-state-dynamic-collection ivy-last)))
                 (when-let* ((query (and (boundp 'ivy-text) ivy-text)))
                   (let ((cands (while-no-input
                                  (fzf-native-async-candidates
@@ -1487,6 +1494,8 @@ changing FILTER rescores in place via fzf-native.
     (setq ivy-push-2pass
           (lambda ()
             (when-let* ((win   (active-minibuffer-window))
+                        ((or (not (bound-and-true-p ivy-last))
+                             (ivy-state-dynamic-collection ivy-last)))
                         (query (and (boundp 'ivy-text) ivy-text)))
               (with-selected-window win
                 (let* ((split  (funcall splitter query style))
@@ -2248,6 +2257,8 @@ Per-source plist keys:
          (ivy-push-multi
           (lambda ()
             (when-let* ((win   (active-minibuffer-window))
+                        ((or (not (bound-and-true-p ivy-last))
+                             (ivy-state-dynamic-collection ivy-last)))
                         (query (and (boundp 'ivy-text) ivy-text)))
               ;; Run the ivy ops with the minibuffer buffer current —
               ;; the closure can fire from `run-with-idle-timer'

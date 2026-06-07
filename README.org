@@ -785,6 +785,18 @@ its native UI (no contention with the prompt area), the chosen
 action mutates ~narrow-idx~, and ~ivy-call~ semantics keep you in
 the picker rather than exiting.
 
+*** Restrict to matches (=S-SPC=)
+
+*Post-restrict typing semantics*: after =S-SPC=, ~ivy~ flips
+=ivy-state-dynamic-collection= to nil and switches the session to a
+static list — ~fzfa~ is no longer in the loop.
+
+Further typing is filtered by =ivy-re-builders-alist= (substring /
+regex by default).  If you want the same fuzzy matching algorithm
+to continue against the restricted set, install ~fussy~ and call
+~fussy-ivy-setup~ — fussy's matcher overrides ivy's regex filter
+and keeps the fuzzy-match feel after =S-SPC=.  Setup example below.
+
 *** Full setup example
 
 To get a consistent sorting/filtering experience in ~ivy~, use ~fussy~

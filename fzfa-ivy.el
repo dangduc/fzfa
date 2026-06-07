@@ -42,9 +42,11 @@
 
 (defvar ivy-text)
 (defvar ivy--all-candidates)
+(defvar ivy--old-cands)
 (defvar ivy-re-builders-alist)
 (defvar ivy-last)
 (declare-function ivy-state-caller "ivy")
+(declare-function ivy-state-dynamic-collection "ivy")
 (declare-function ivy-configure "ivy")
 (declare-function ivy--set-candidates "ivy")
 (declare-function ivy--exhibit "ivy")
@@ -72,6 +74,20 @@ calls pass through unchanged."
                   cand))
       cand)))
 
+(defun fzfa-ivy--restrict-to-matches-backfill (&rest _)
+  "Backfill `ivy--old-cands' from `ivy--all-candidates' in dynamic sessions.
+ivy's dynamic-collection update path maintains `ivy--all-candidates' but
+not `ivy--old-cands'; `ivy-restrict-to-matches' reads the latter and
+pins everything to it (ivy.el:5199-5201).  Without this backfill, S-SPC
+in a dynamic session restricts to a stale `ivy--old-cands' — empty for
+fresh async sessions (→ 0 candidates), the initial full list for sync (→
+no-op)."
+  (when (and (bound-and-true-p ivy-last)
+             (ivy-state-dynamic-collection ivy-last)
+             ivy--all-candidates
+             (not (equal ivy--old-cands ivy--all-candidates)))
+    (setq ivy--old-cands ivy--all-candidates)))
+
 (defun fzfa-ivy-setup ()
   "Wire fzfa's ivy integration into the current session."
   (with-eval-after-load 'ivy
@@ -81,7 +97,9 @@ calls pass through unchanged."
     ;; transformer self-gates on `fzfa--multi-active-sources' so
     ;; non-fzfa-multi sessions pass through unchanged.
     (ivy-configure t
-      :display-transformer-fn #'fzfa-ivy--multi-display-transformer)))
+      :display-transformer-fn #'fzfa-ivy--multi-display-transformer)
+    (advice-add 'ivy-restrict-to-matches :before
+                #'fzfa-ivy--restrict-to-matches-backfill)))
 
 (provide 'fzfa-ivy)
 ;;; fzfa-ivy.el ends here
