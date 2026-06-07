@@ -1814,6 +1814,11 @@ PATH and whose command symbol is bound: %s."
          (ivy-completing-read-dynamic-collection t) ;; Don't let `ivy' filter.
          (handler (fzfa--preview-handler preview category))
          (fzfa--preview-session (and handler (list handler)))
+         ;; Ivy ignores `display-sort-function' in completion metadata,
+         ;; so apply the history sort ourselves on the empty-query
+         ;; branch.  Vertico/icomplete reach this via the metadata, so
+         ;; gating on `ivy-mode' avoids a double sort there.
+         (ivy-history-sort-p (and history (bound-and-true-p ivy-mode)))
          (selection nil))
     (unwind-protect
         (minibuffer-with-setup-hook
@@ -1830,10 +1835,13 @@ PATH and whose command symbol is bound: %s."
                      (`(boundaries . ,_) (cons 0 0))
                      ('lambda t)
                      ('t (let ((query (fzfa--current-query str)))
-                           (if (string-empty-p query)
-                               candidates
+                           (cond
+                            ((not (string-empty-p query))
                              (fzfa--bridge-defcustoms
-                              #'fzf-native-score-all candidates query))))))
+                              #'fzf-native-score-all candidates query))
+                            (ivy-history-sort-p
+                             (fzfa--history-rank candidates history))
+                            (t candidates))))))
                  nil require-match nil history default)))
       (when handler (fzfa--preview-return selection)))
     selection))
