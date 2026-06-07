@@ -542,6 +542,28 @@ session `let'-binding still encloses this call, so handlers see their
 stashed state and the captured `default-directory'."
   (fzfa--preview-call :return cand))
 
+;;; Visit / preview hooks
+
+(defcustom fzfa-after-visit-hook
+  '(recenter pulse-momentary-highlight-one-line)
+  "Hook run after a fzfa command visits its selection.
+Each command's action lambda wraps its body in `fzfa-with-visit', which
+fires this hook once the visit completes (point is at the destination)."
+  :type 'hook :group 'fzfa)
+
+(defcustom fzfa-after-preview-hook
+  '(recenter pulse-momentary-highlight-one-line)
+  "Hook run after `fzfa-preview-show' displays a candidate.
+Fires on every preview tick (point is at the previewed location in the
+origin window)."
+  :type 'hook :group 'fzfa)
+
+(defmacro fzfa-with-visit (&rest body)
+  "Run BODY as a visit action; fire `fzfa-after-visit-hook' on completion."
+  (declare (indent 0) (debug t))
+  `(prog1 (progn ,@body)
+     (run-hooks 'fzfa-after-visit-hook)))
+
 ;;; Built-in preview handlers
 
 (defun fzfa-preview-show (buffer &optional pos)
@@ -568,7 +590,11 @@ the preview here and the eventual selection action, avoiding the half-broken
         (save-restriction
           (widen)
           (goto-char (if (markerp pos) (marker-position pos) pos)))))
-    (display-buffer buffer '(display-buffer-same-window))))
+    (let ((win (display-buffer buffer '(display-buffer-same-window))))
+      (when (window-live-p win)
+        (with-selected-window win
+          (run-hooks 'fzfa-after-preview-hook)))
+      win)))
 
 (defun fzfa--grep-preview (cand)
   "Open the FILE from a FILE:LINE:CONTENT grep CAND at LINE for preview.
@@ -2870,9 +2896,10 @@ a buffer name."
 Used both by the grep commands' selected-candidate handling and by the
 embark default action for the `fzfa-grep' category."
   (when (string-match fzfa--grep-line-regexp cand)
-    (fzfa--goto-source
-     (match-string 1 cand)
-     (string-to-number (match-string 2 cand)))))
+    (fzfa-with-visit
+      (fzfa--goto-source
+       (match-string 1 cand)
+       (string-to-number (match-string 2 cand))))))
 
 (defvar-keymap fzfa-grep-map
   :doc "Embark keymap for `fzfa-grep' candidates.
@@ -2909,7 +2936,8 @@ Used as the embark default action for the `fzfa-location' category and
 as the post-selection handler for swiper-style commands."
   (when-let* ((loc (and (stringp cand) (> (length cand) 0)
                         (get-text-property 0 'fzfa-location cand))))
-    (fzfa--goto-source (car loc) (cdr loc))))
+    (fzfa-with-visit
+      (fzfa--goto-source (car loc) (cdr loc)))))
 
 (defvar-keymap fzfa-location-map
   :doc "Embark keymap for `fzfa-location' candidates.

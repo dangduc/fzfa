@@ -76,7 +76,7 @@ Candidate set comes from `project-files', so membership respects
                       :prompt (format "project file [%s]: "
                                       (fzfa-project--label root))
                       :category 'fzfa-file)))
-      (find-file (expand-file-name sel root)))))
+      (fzfa-with-visit (find-file (expand-file-name sel root))))))
 
 ;;;###autoload
 (defun fzfa-project-find-dir ()
@@ -123,7 +123,7 @@ Modeled on the built-in `project-switch-to-buffer', `consult-project-buffer',
                       :prompt (format "project buffer [%s]: "
                                       (fzfa-project--label root))
                       :category 'fzfa-buffer)))
-      (switch-to-buffer sel))))
+      (fzfa-with-visit (switch-to-buffer sel)))))
 
 ;;;###autoload
 (defun fzfa-project-recentf ()
@@ -147,7 +147,7 @@ current project's root.  Modeled on `counsel-projectile-recentf' and
                       :prompt (format "project recentf [%s]: "
                                       (fzfa-project--label root))
                       :category 'fzfa-file)))
-      (find-file (expand-file-name sel root)))))
+      (fzfa-with-visit (find-file (expand-file-name sel root))))))
 
 ;;;###autoload
 (defun fzfa-project-switch-project ()

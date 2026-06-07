@@ -128,7 +128,7 @@ to filter."
                              ((integerp val)
                               (fzfa-preview-show (current-buffer) val)))))))
                   (char (gethash sel map)))
-        (evil-goto-mark (aref char 0))))))
+        (fzfa-with-visit (evil-goto-mark (aref char 0)))))))
 
 (defun fzfa-evil--register-preview (val)
   "Return a one-line preview string for register value VAL."
@@ -244,11 +244,12 @@ the fzf scorer can match against the preview text."
       (let ((buf (plist-get plist :buffer))
             (file (plist-get plist :file))
             (pos (plist-get plist :pos)))
-        (cond
-         ((buffer-live-p buf) (switch-to-buffer buf))
-         ((and file (file-exists-p file)) (find-file file))
-         (t (user-error "Jump target unavailable")))
-        (goto-char pos)))))
+        (fzfa-with-visit
+          (cond
+           ((buffer-live-p buf) (switch-to-buffer buf))
+           ((and file (file-exists-p file)) (find-file file))
+           (t (user-error "Jump target unavailable")))
+          (goto-char pos))))))
 
 ;;;###autoload
 (defun fzfa-evil-ex-history ()

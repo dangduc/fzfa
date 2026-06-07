@@ -37,7 +37,7 @@ Stdout lines become file candidates."
 The command is configurable via `fzfa-locate-command'."
   (interactive)
   (when-let* ((result (fzfa-async-completing-read :command fzfa-locate-command)))
-    (find-file result)))
+    (fzfa-with-visit (find-file result))))
 
 (when (memq 'fzfa-locate-2p fzfa-2p-functions)
   (fzfa-2p-define 'fzfa-locate))

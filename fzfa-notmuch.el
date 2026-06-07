@@ -116,7 +116,7 @@ Free-form input is accepted.  Defaults to `fzfa-notmuch-default-query'."
                     query (format "notmuch[%s]: " query)))
               (tid (fzfa-notmuch--thread-id sel)))
     (require 'notmuch-show)
-    (notmuch-show tid)))
+    (fzfa-with-visit (notmuch-show tid))))
 
 ;;;###autoload
 (defun fzfa-notmuch-tree (query)
@@ -126,7 +126,7 @@ Free-form input is accepted.  Defaults to `fzfa-notmuch-default-query'."
                     query (format "notmuch-tree[%s]: " query)))
               (tid (fzfa-notmuch--thread-id sel)))
     (require 'notmuch-tree)
-    (notmuch-tree tid)))
+    (fzfa-with-visit (notmuch-tree tid))))
 
 ;;;###autoload
 (defun fzfa-notmuch-show-thread (cand)
@@ -134,7 +134,7 @@ Free-form input is accepted.  Defaults to `fzfa-notmuch-default-query'."
   (interactive "sThread: ")
   (when-let* ((tid (fzfa-notmuch--thread-id cand)))
     (require 'notmuch-show)
-    (notmuch-show tid)))
+    (fzfa-with-visit (notmuch-show tid))))
 
 ;;;###autoload
 (defun fzfa-notmuch-tree-thread (cand)
@@ -142,7 +142,7 @@ Free-form input is accepted.  Defaults to `fzfa-notmuch-default-query'."
   (interactive "sThread: ")
   (when-let* ((tid (fzfa-notmuch--thread-id cand)))
     (require 'notmuch-tree)
-    (notmuch-tree tid)))
+    (fzfa-with-visit (notmuch-tree tid))))
 
 (defvar-keymap fzfa-notmuch-map
   :doc "Embark keymap for `fzfa-notmuch' candidates.

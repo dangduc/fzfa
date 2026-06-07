@@ -56,7 +56,7 @@ directory; otherwise it is placed in the kill ring."
                          :skip-executable-check t)))
       (let ((path (expand-file-name result dir)))
         (if (file-exists-p path)
-            (find-file path)
+            (fzfa-with-visit (find-file path))
           (kill-new result)
           (message "%s" result))))))
 

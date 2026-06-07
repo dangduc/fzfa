@@ -148,10 +148,10 @@ SCOPE accepts the same values as `fzfa-org--collect'."
   (push-mark nil t)
   (let ((buf (marker-buffer marker)))
     (when (buffer-live-p buf)
-      (switch-to-buffer buf)
-      (goto-char marker)
-      (fzfa-org--reveal)
-      (recenter))))
+      (fzfa-with-visit
+        (switch-to-buffer buf)
+        (goto-char marker)
+        (fzfa-org--reveal)))))
 
 (defun fzfa-org--read (entries prompt &optional action)
   "Present ENTRIES via fzf with PROMPT; ACTION on the chosen marker.

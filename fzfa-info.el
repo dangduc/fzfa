@@ -127,7 +127,7 @@ the Info viewer opens at \"(MANUAL)NODE\"."
                        :prompt prompt
                        :category 'fzfa-info))
                 (node (gethash r lookup)))
-      (Info-goto-node (format "(%s)%s" manual node)))))
+      (fzfa-with-visit (Info-goto-node (format "(%s)%s" manual node))))))
 
 ;;;###autoload
 (defun fzfa-info-emacs ()

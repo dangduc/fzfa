@@ -130,10 +130,11 @@ PROMPT is the minibuffer prompt string."
                 ((markerp marker))
                 (buffer (marker-buffer marker))
                 ((buffer-live-p buffer)))
-      (unless (eq buffer (current-buffer))
-        (switch-to-buffer buffer))
-      (push-mark nil t)
-      (goto-char (marker-position marker)))))
+      (fzfa-with-visit
+        (unless (eq buffer (current-buffer))
+          (switch-to-buffer buffer))
+        (push-mark nil t)
+        (goto-char (marker-position marker))))))
 
 ;;;###autoload
 (defun fzfa-flymake ()

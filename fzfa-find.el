@@ -37,7 +37,7 @@ Run from `default-directory'; stdout lines become file candidates."
 The command is configurable via `fzfa-find-command'."
   (interactive)
   (when-let* ((result (fzfa-async-completing-read :command fzfa-find-command)))
-    (find-file result)))
+    (fzfa-with-visit (find-file result))))
 
 (when (memq 'fzfa-find-2p fzfa-2p-functions)
   (fzfa-2p-define 'fzfa-find))

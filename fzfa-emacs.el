@@ -64,7 +64,7 @@
   (when-let* ((result (fzfa-sync-completing-read :candidates recentf-list
                                                 :prompt "recent: "
                                                 :category 'fzfa-file)))
-    (find-file result)))
+    (fzfa-with-visit (find-file result))))
 
 ;;;###autoload
 (defun fzfa-buffer ()
@@ -77,7 +77,7 @@
     (when-let* ((result (fzfa-sync-completing-read
                          :candidates names :prompt "buffer: "
                          :category 'fzfa-buffer)))
-      (switch-to-buffer result))))
+      (fzfa-with-visit (switch-to-buffer result)))))
 
 ;;;###autoload
 (defun fzfa-yank-pop ()
@@ -177,7 +177,7 @@ yanked text with the selection (mirroring `yank-pop' / `consult-yank-pop')."
                                              (expand-file-name file))))
                              (funcall opener buf)))
                          (funcall opener)))))))
-      (bookmark-jump result))))
+      (fzfa-with-visit (bookmark-jump result)))))
 
 (defun fzfa--theme-switch (sym)
   "Disable currently enabled themes (except SYM) and enable SYM, if any.
@@ -240,7 +240,7 @@ when the command was invoked.  Selecting \"default\" disables all themes."
                            (user-error "No SSH hosts in ~/.ssh/config")))
                 (host (fzfa-sync-completing-read
                        :candidates hosts :prompt "ssh: ")))
-      (find-file (concat "/ssh:" host ":")))))
+      (fzfa-with-visit (find-file (concat "/ssh:" host ":"))))))
 
 ;;;###autoload
 (defun fzfa-swiper ()
@@ -414,10 +414,11 @@ Display differences:
                 ((< idx (length buf-vec)))
                 (buffer (aref buf-vec idx))
                 ((buffer-live-p buffer)))
-      (unless (eq buffer (current-buffer))
-        (switch-to-buffer buffer))
-      (push-mark nil t)
-      (imenu (cdr hit)))))
+      (fzfa-with-visit
+        (unless (eq buffer (current-buffer))
+          (switch-to-buffer buffer))
+        (push-mark nil t)
+        (imenu (cdr hit))))))
 
 ;;;###autoload
 (defun fzfa-imenu ()
@@ -602,9 +603,10 @@ Falls back to `insert-register' when `jump-to-register' signals."
                        :prompt "register: "
                        :category 'fzfa-misc))
                 (name (gethash r lookup)))
-      (condition-case _
-          (jump-to-register name)
-        (error (insert-register name))))))
+      (fzfa-with-visit
+        (condition-case _
+            (jump-to-register name)
+          (error (insert-register name)))))))
 
 ;;;###autoload
 (defun fzfa-outline ()
@@ -699,9 +701,10 @@ as `compile' itself can navigate them."
                                         (buffer-name buffer))
                         :category 'fzfa-misc))
                   (pos (gethash r lookup)))
-        (pop-to-buffer buffer)
-        (goto-char pos)
-        (compile-goto-error)))))
+        (fzfa-with-visit
+          (pop-to-buffer buffer)
+          (goto-char pos)
+          (compile-goto-error))))))
 
 (provide 'fzfa-emacs)
 
