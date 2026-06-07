@@ -2676,6 +2676,13 @@ Per-source plist keys:
                                         (funcall g (fzfa--tofu-hide cand) nil))
                                    (plist-get src :name) ""))))
                          :affix
+                         ;; Pin annotations to window-relative column
+                         ;; maxw+1 via a `(space :align-to ...)' display
+                         ;; spec.  Vertico just concatenates suffixes
+                         ;; verbatim (no padding of its own) so it needs
+                         ;; the spec; icomplete's own slice-relative
+                         ;; padding stacks badly with literal spaces, so
+                         ;; the spec wins there too.
                          (lambda (cands)
                            (let* ((displays
                                    (mapcar
@@ -2692,20 +2699,21 @@ Per-source plist keys:
                                                (mapcar #'string-width
                                                        displays))))
                              (cl-mapcar
-                              (lambda (cand display)
+                              (lambda (cand _display)
                                 (let* ((src (fzfa--multi-source-of
                                              cand sources-v cand->src))
                                        (ann (and src
                                                  (plist-get src :annotate)))
                                        (s   (and ann (funcall
                                                       ann
-                                                      (fzfa--tofu-hide cand))))
-                                       (pad (- (1+ maxw)
-                                               (string-width display))))
+                                                      (fzfa--tofu-hide cand)))))
                                   (list cand ""
                                         (if s
                                             (concat
-                                             (make-string (max 1 pad) ?\s)
+                                             (propertize
+                                              " " 'display
+                                              `(space :align-to
+                                                      (+ left ,(1+ maxw))))
                                              s)
                                           ""))))
                               cands displays)))))
