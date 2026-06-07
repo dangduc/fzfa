@@ -97,8 +97,11 @@ has no effect (the check is macro-expanded at load time, like #ifdef).")
 
 (defmacro fzfa--log (fmt &rest args)
   "Emit a debug message FMT with ARGS if `fzfa-debug' is non-nil at load.
-Expands to nothing when disabled — zero runtime cost."
-  (when (bound-and-true-p fzfa-debug) `(message ,fmt ,@args)))
+Expands to nothing when disabled — zero runtime cost.  Logs to *Messages*
+only; `inhibit-message' suppresses the echo-area write, which would
+otherwise stomp the active minibuffer/mini-window display."
+  (when (bound-and-true-p fzfa-debug)
+    `(let ((inhibit-message t)) (message ,fmt ,@args))))
 
 ;;; Customization
 
