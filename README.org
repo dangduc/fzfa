@@ -652,10 +652,10 @@ each input change.
 | Frontend      | Status    | Notes                                                                              |
 |---------------+-----------+------------------------------------------------------------------------------------|
 | ~vertico~     | Supported | Recommended.  Generation-based refresh via ~vertico--exhibit~.                     |
-| ~icomplete~   | Supported | Refreshes via ~icomplete-exhibit~.                                                 |
 | ~fido~        | Supported | Built on ~icomplete~; works without extra configuration.                           |
 | ~ivy/counsel~ | Supported | Push model via ~ivy--set-candidates~. See below.                                   |
 | ~helm~        | Supported | Dedicated handler path with stats / live preview / annotations / narrow-by-source. |
+| ~icomplete~   | Supported | Refreshes via ~icomplete-exhibit~.                                                 |
 
 Caveat: I mostly use ~vertico~ these days so wasn't exhaustive with using the
 other completion systems.
@@ -964,6 +964,36 @@ use ~fussy~ for non-~fzfa~ sources and ~fzfa~ otherwise. Example below.
                   (fzfa-helm-source-from-command 'fzfa-vc-any))
           :buffer "*helm mini+fzfa*"))
 #+end_src
+** icomplete-vertical
+~icomplete-vertical~ has a few defaults that may not work very well with ~fzfa~.
+
+I use this config when using ~fzfa~ with ~icomplete-vertical~.
+
+#+begin_src emacs-lisp :tangle yes
+(use-package icomplete-vertical-mode
+  :ensure nil
+  :bind (:map icomplete-minibuffer-map
+              ("RET" . icomplete-fido-ret)
+              ("C-j" . icomplete-fido-exit)
+              ("DEL" . icomplete-fido-backward-updir))
+  :init
+  (add-hook 'icomplete-minibuffer-setup-hook
+            (lambda () (setq-local truncate-lines t)))
+  (setq icomplete-hide-common-prefix nil)
+  (setq icomplete-tidy-shadowed-file-names t)
+  (setq icomplete-show-matches-on-no-input t)
+  (setq icomplete-compute-delay 0)
+  (setq icomplete-max-delay-chars 0)
+  (setq max-mini-window-height 10)
+  (setq resize-mini-windows t)
+  (setq completion-auto-help nil)
+  (setq icomplete-scroll t) ;; Don't wrap the results.
+  (setq enable-recursive-minibuffers t)
+  (setq completions-group t) ;; Show group headings.
+  (minibuffer-depth-indicate-mode 1)
+  (icomplete-vertical-mode))
+#+end_src
+
 ** transient
 
 A [[https://github.com/jojojames/matcha/blob/master/matcha-fzfa.el][matcha transient]]

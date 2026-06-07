@@ -57,6 +57,7 @@
 (declare-function bookmark-all-names "bookmark")
 (declare-function bookmark-maybe-load-default-file "bookmark")
 (declare-function icomplete-exhibit "icomplete")
+(defvar icomplete-overlay)
 (declare-function imenu--make-index-alist "imenu")
 (declare-function imenu--subalist-p "imenu")
 (defvar ivy-text)
@@ -334,6 +335,7 @@ Returns nil for frontends without a selection index (e.g. icomplete)."
 
 (defun fzfa--frontend-candidate ()
   "Return the currently highlighted candidate string in the active UI, or nil.
+
 Used to implement live preview (e.g. `fzfa-theme')."
   (cond
    ((bound-and-true-p vertico-mode)
@@ -345,6 +347,48 @@ Used to implement live preview (e.g. `fzfa-theme')."
    ((bound-and-true-p icomplete-mode)
     (car (completion-all-sorted-completions)))))
 
+(defun fzfa--icomplete-fit-mini-window ()
+  "Grow the mini-window to fit `icomplete-overlay's `after-string'.
+
+Mini-window auto-resize during redisplay treats the empty-input case
+\(zero-length overlay) as needing 1 line, ignoring the multi-line
+`after-string', so the initial display under icomplete-vertical never
+grows for our completions.  Cap at `max-mini-window-height'.  Pair
+with `resize-mini-windows' set buffer-locally to `grow-only' (in
+`fzfa--minibuffer-format-reset') so subsequent redisplays can't shrink
+the pane back."
+  (when-let* ((win (and (bound-and-true-p icomplete-mode)
+                        (active-minibuffer-window)))
+              ((eq win (selected-window)))
+              (after (and (bound-and-true-p icomplete-overlay)
+                          (overlay-get icomplete-overlay 'after-string)))
+              ((stringp after))
+              (lines (1+ (cl-count ?\n after)))
+              (max-lines
+               (cond ((floatp max-mini-window-height)
+                      (max 1 (floor (* max-mini-window-height
+                                       (frame-height)))))
+                     ((integerp max-mini-window-height) max-mini-window-height)
+                     (t 25)))
+              (target (min lines max-lines))
+              ((> target (window-text-height win))))
+    (ignore-errors
+      (set-window-text-height win target))))
+
+(defun fzfa--icomplete-exhibit ()
+  "Refresh icomplete's candidate display after an async generation bump.
+
+Flushes the sorted-completions cache (icomplete reads it via the
+buffer-local `completion-all-sorted-completions'), runs the standard
+`icomplete-exhibit' to repopulate the overlay's `after-string', and
+fits the mini-window."
+  (completion--flush-all-sorted-completions)
+  ;; Belt-and-suspenders flush: the function above can short-circuit
+  ;; based on region args, leaving the cache populated.
+  (setq completion-all-sorted-completions nil)
+  (icomplete-exhibit)
+  (fzfa--icomplete-fit-mini-window))
+
 (defun fzfa--frontend-exhibit ()
   "Trigger a display refresh in the active completion UI.
 Handles vertico and icomplete.  `ivy' is handled separately."
@@ -355,7 +399,7 @@ Handles vertico and icomplete.  `ivy' is handled separately."
         (setq vertico--input t)
         (vertico--exhibit))
        ((bound-and-true-p icomplete-mode)
-        (icomplete-exhibit))))))
+        (fzfa--icomplete-exhibit))))))
 
 (defun fzfa--frontend-push (ivy-push-fn)
   "Refresh the active completion display.
@@ -724,15 +768,49 @@ reuses it instead of re-loading from disk."
 
 (defun fzfa--minibuffer-format-reset ()
   "Disable frontend count formats in the active minibuffer.
-Called from a `minibuffer-with-setup-hook' lambda so that vertico's
+
+Called from a `minibuffer-with-setup-hook' lambda so that `vertico''s
 `vertico-count-format' and icomplete's `icomplete-matches-format' don't
 overwrite fzfa's own stats overlay / pre-prompt text.  Ivy is handled
 separately via `ivy-count-format' bound at the call site.  No-ops when
-the target package isn't loaded."
+the target package isn't loaded.
+
+Under icomplete, also pin `resize-mini-windows' to `grow-only'.  The
+auto-resize logic that fires on every redisplay treats the empty-input
+state as needing only 1 line — ignoring `after-string' on the
+zero-length `icomplete-overlay' — so a timer-driven refresh would grow
+the mini-window only for it to collapse on the next redisplay tick."
   (when (boundp 'vertico-count-format)
     (setq-local vertico-count-format nil))
   (when (boundp 'icomplete-matches-format)
-    (setq-local icomplete-matches-format nil)))
+    (setq-local icomplete-matches-format nil))
+  (when (bound-and-true-p icomplete-mode)
+    ;; Empty-input state hits the zero-length-overlay resize blind spot:
+    ;; the overlay's multi-line `after-string' isn't counted, so any
+    ;; redisplay collapses the pane to 1 line.  Toggle the resize policy
+    ;; based on input state — `grow-only' (plus an explicit fit) when
+    ;; empty so the pane stays visible, user's original value otherwise
+    ;; so narrowing can shrink naturally.  Covers initial entry and
+    ;; backspace-to-empty alike.
+    (let ((orig resize-mini-windows))
+      (setq-local resize-mini-windows 'grow-only)
+      (add-hook 'after-change-functions
+                (lambda (&rest _)
+                  (if (= (minibuffer-prompt-end) (point-max))
+                      (progn
+                        (setq-local resize-mini-windows 'grow-only)
+                        ;; `after-change-functions' fires during the
+                        ;; edit, BEFORE icomplete's post-command-hook
+                        ;; rebuilds the overlay.  Fitting now would
+                        ;; read stale content.  Defer so the fit sees
+                        ;; the freshly-rendered candidate list.
+                        (run-at-time
+                         0 nil #'fzfa--icomplete-fit-mini-window))
+                    (setq-local resize-mini-windows orig)))
+                nil t))
+    ;; One-shot fit after icomplete's initial `post-command-hook'-driven
+    ;; exhibit populates the overlay.
+    (run-at-time 0 nil #'fzfa--icomplete-fit-mini-window)))
 
 (defun fzfa--commas (n)
   "Format integer N with comma thousand-separators.
