@@ -676,7 +676,16 @@ no args to reap the rest."
         ;; unlike `get-file-buffer', which is a literal string match.
         (let ((path (expand-file-name arg)))
           (or (find-buffer-visiting path)
-              (let ((buf (find-file-noselect path 'nowarn)))
+              ;; Suppress prompts that `find-file-noselect' can trigger
+              ;; via local-variables / find-file-hook — under `ivy-mode'
+              ;; those route through `ivy-read' and signal "Command
+              ;; attempted to use minibuffer while in minibuffer".
+              (let* ((enable-local-variables :safe)
+                     (enable-local-eval nil)
+                     (enable-dir-local-variables nil)
+                     (non-essential t)
+                     (inhibit-message t)
+                     (buf (find-file-noselect path 'nowarn)))
                 (push buf ephemerals)
                 buf))))))))
 
