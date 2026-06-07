@@ -53,8 +53,10 @@
 (defvar embark-become-file+buffer-map)
 (defvar embark-pre-action-hooks)
 (defvar embark-target-injection-hooks)
+(defvar embark-exporters-alist)
 (declare-function embark--unmark-target "embark")
 (declare-function embark--allow-edit "embark")
+(declare-function grep-mode "grep")
 
 ;; The wrappers and keymaps reference commands defined in sibling
 ;; fzfa extension files.  Those files autoload their commands, so the
@@ -145,6 +147,26 @@ variable `buffer-file-name'."
   "Run `fzfa-notmuch-tree' for messages from or to EMAIL."
   (interactive "sEmail: ")
   (fzfa-notmuch-tree (format "from:%s OR to:%s" email email)))
+
+;;; Exporters.
+
+(defun fzfa-embark-export-location (cands)
+  "Embark exporter for `fzfa-location' candidates.
+Emit SOURCE:LINE:CAND lines in a fresh `grep-mode' buffer so RET jumps
+to the hit and `wgrep' can edit hits in place.  SOURCE comes from each
+CAND's `fzfa-location' text property; file paths navigate, buffer-only
+sources (swiper on a non-file buffer) render but don't click through."
+  (require 'grep)
+  (let ((buf (generate-new-buffer "*Embark Export Location*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (dolist (c cands)
+          (when-let* ((loc (and (stringp c) (> (length c) 0)
+                                (get-text-property 0 'fzfa-location c))))
+            (insert (format "%s:%d:%s\n" (car loc) (cdr loc) c)))))
+      (goto-char (point-min))
+      (grep-mode))
+    (pop-to-buffer buf)))
 
 ;;; Sub-keymaps.
 
@@ -255,6 +277,12 @@ Idempotent — safe to call more than once."
 
     (keymap-set embark-email-map      "N" #'fzfa-embark-notmuch)
     (keymap-set embark-email-map      "T" #'fzfa-embark-notmuch-tree)
+
+    ;; Exporter for `fzfa-location' so `embark-export' produces a
+    ;; grep-mode buffer (wgrep-compatible) instead of falling through
+    ;; to `embark-collect's plain list.
+    (setf (alist-get 'fzfa-location embark-exporters-alist)
+          #'fzfa-embark-export-location)
 
     ;; Hooks on every command reachable from the `Z' prefix — including
     ;; those inherited from the sync and async sub-maps.  `map-keymap'
