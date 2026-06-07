@@ -33,6 +33,7 @@
 ;;   `fzfa-imenu-all-but-current'    Like `fzfa-imenu-all' but skip current
 ;;   `fzfa-M-x'                      Run an extended command (like \\[execute-extended-command])
 ;;   `fzfa-M-x-for-buffer'           Run an extended command applicable to the current mode
+;;   `fzfa-minor-mode-menu'          Toggle a minor mode with on/off annotation
 ;;   `fzfa-mark'                     Jump to a position in this buffer's `mark-ring'
 ;;   `fzfa-global-mark'              Jump to a position in `global-mark-ring'
 ;;   `fzfa-register'                 Use a register (jump-to or insert based on type)
@@ -489,6 +490,46 @@ mirroring `execute-extended-command-for-buffer'."
                          :category 'command
                          :history 'extended-command-history)))
       (fzfa--run-command result))))
+
+;;;###autoload
+(defun fzfa-minor-mode-menu ()
+  "Toggle a minor mode via fzf.
+Candidates are every command-bound symbol in `minor-mode-list'.
+Enabled modes sort to the top with an `[on]' prefix; disabled modes
+follow with `[off]'.  Selecting calls the mode function via
+`call-interactively' — toggling it for buffer-local modes, flipping
+the global state for global modes."
+  (interactive)
+  (cl-labels ((active-p (m) (and (boundp m) (symbol-value m))))
+    (let* ((modes (cl-remove-if-not
+                   (lambda (m) (and (boundp m) (commandp m)))
+                   minor-mode-list))
+           (sorted (sort (copy-sequence modes)
+                         (lambda (a b)
+                           (let ((av (active-p a)) (bv (active-p b)))
+                             (cond ((and av (not bv)) t)
+                                   ((and bv (not av)) nil)
+                                   (t (string< (symbol-name a)
+                                               (symbol-name b))))))))
+           (cands (mapcar #'symbol-name sorted))
+           (affix
+            (lambda (cs)
+              (mapcar (lambda (c)
+                        (let* ((sym (intern-soft c))
+                               (on  (and sym (active-p sym))))
+                          (list c
+                                (propertize (if on "[on]  " "[off] ")
+                                            'face (if on 'success 'shadow))
+                                "")))
+                      cs))))
+      (unless cands
+        (user-error "No minor modes available"))
+      (when-let* ((sel (fzfa-sync-completing-read
+                        :candidates cands
+                        :prompt "minor mode: "
+                        :category 'fzfa-minor-mode
+                        :affix affix)))
+        (call-interactively (intern sel))))))
 
 (defun fzfa--mark-candidates (markers)
   "Build `fzfa-location' candidates from MARKERS.

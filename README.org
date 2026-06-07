@@ -178,6 +178,7 @@ See *Extensions* below.)
 | ~fzfa-bookmark~               | ~counsel-bookmark~                              | ~consult-bookmark~                  | ~helm-filtered-bookmarks~          |
 | ~fzfa-M-x~                    | ~counsel-M-x~                                   | —                                   | ~helm-M-x~                         |
 | ~fzfa-M-x-for-buffer~         | —                                               | ~consult-mode-command~              | —                                  |
+| ~fzfa-minor-mode-menu~        | ~counsel-minor~                                 | ~consult-minor-mode-menu~           | —                                  |
 | ~fzfa-yank-pop~               | ~counsel-yank-pop~                              | ~consult-yank-pop~                  | ~helm-show-kill-ring~              |
 | ~fzfa-theme~                  | ~counsel-load-theme~                            | ~consult-theme~                     | ~helm-themes~                      |
 | ~fzfa-tramp~                  | ~counsel-tramp~                                 | ~consult-tramp~                     | ~helm-tramp~                       |
