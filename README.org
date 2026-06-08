@@ -1000,6 +1000,18 @@ A [[https://github.com/jojojames/matcha/blob/master/matcha-fzfa.el][matcha trans
 is defined for invoking all ~fzfa~ commands from a single keybinding
 via [[https://github.com/jojojames/matcha][matcha]].
 
+** Persistent action
+Persistent actions (~helm~) and ~ivy-call~ semantics are integrated.
+e.g. Executing an action on the candidate without exiting ~completing-read~.
+
+The binding depends on your completion frontend.  ~fzfa~ just plugs into
+whatever your frontend already uses for this concept:
+
+| Frontend            | Key     | Mechanism                                 |
+|---------------------+---------+-------------------------------------------|
+| ivy / counsel       | ~C-M-m~ | ~ivy-call~ (ivy default)                  |
+| helm                | ~C-j~   | ~helm-execute-persistent-action~          |
+| vertico / icomplete | ~C-M-m~ | ~fzfa-apply-key~ (configurable defcustom) |
 * Customization
 
 | Variable                       |                  Default | Description                                                                   |
@@ -1230,7 +1242,7 @@ The prompt overlay shows live status during a search:
 - ~FILTERED~ — candidates passing the current fzf query
 - ~TOTAL~ — total candidates collected from the shell command so far
 
-* Custom commands
+* Writing your own command
 
 ~fzfa~ is designed to be extensible.  New commands are thin wrappers
 around ~fzfa-async-completing-read~, which accepts keyword arguments:

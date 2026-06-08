@@ -336,13 +336,13 @@ Returns nil for frontends without a selection index (e.g. icomplete)."
 (defun fzfa--frontend-candidate ()
   "Return the currently highlighted candidate string in the active UI, or nil.
 
-Used to implement live preview (e.g. `fzfa-theme').  Switches into the
-minibuffer buffer for the lookup — frontend state
-\(`vertico--candidates', `ivy--all-candidates', icomplete's
-`completion-all-sorted-completions') is all buffer-local there, and
-this function is invoked from idle timers whose `current-buffer' at
-fire time may be any window the user has shifted to (e.g. a help
-buffer after \\[describe-key])."
+Used for live preview (e.g. `fzfa-theme') and persistent-action
+\(`fzfa-apply-current')."
+  ;; Ensure we're in the minibuffer because the user could've pressed away
+  ;; by the time this function is called.
+  ;; e.g. M-x `fzfa-find-any'
+  ;; C-h k <key>
+  ;; Focus switches to help window -> timer fires -> this function is called.
   (when-let* ((win (active-minibuffer-window)))
     (with-current-buffer (window-buffer win)
       (cond
@@ -451,6 +451,195 @@ origin window)."
   (declare (indent 0) (debug t))
   `(prog1 (progn ,@body)
      (run-hooks 'fzfa-after-visit-hook)))
+
+;;; Apply (persistent-action)
+
+(defcustom fzfa-apply-key "C-M-m"
+  "Key string bound to `fzfa-apply-current' in `fzfa' minibuffer sessions.
+
+This only applies to non-`ivy', non-`helm' sessions.
+
+`ivy' uses `ivy-call' and `helm' uses `helm-execute-persistent-action'.
+
+Matches `ivy''s default `ivy-call' binding."
+  :type '(choice (const :tag "Disabled" nil) string)
+  :group 'fzfa)
+
+(defcustom fzfa-apply-functions
+  `((fzfa-file   . ,(lambda (cand) (fzfa-with-visit (find-file cand))))
+    (fzfa-buffer . ,(lambda (cand) (fzfa-with-visit (switch-to-buffer cand)))))
+  "Default `:apply' function per completion category.
+
+Used by `fzfa--resolve-apply' when a session/source doesn't declare an
+explicit `:apply' lambda — saves callers from repeating the obvious
+(find-file for fzfa-file, etc.).  Each value is a function taking a
+single CANDIDATE string.  Set a value to nil to disable the fallback
+for that category."
+  :type '(alist :key-type symbol :value-type function)
+  :group 'fzfa)
+
+(defvar fzfa--session-apply nil
+  "Apply function for the active single-source session.
+
+Lambda taking a single CANDIDATE; invoked by `fzfa-apply-current'
+without exiting the session.  `let'-bound by
+`fzfa-async-completing-read' / `fzfa-sync-completing-read' /
+`fzfa-2pass-completing-read' from the constructor's `:apply' keyword
+\(falling back to `fzfa-apply-functions' by category).  Multi sessions
+look up `:apply' per-source via `fzfa--resolve-apply' instead.")
+
+(defvar fzfa--session-resolve-paths nil
+  "Whether to expand path candidates for the active single-source session.
+
+Mirrors the constructor's `:resolve-paths' argument; `let'-bound by
+`fzfa-async-completing-read' / `fzfa-2pass-completing-read'.  Passed
+to `fzfa--maybe-expand' in `fzfa-apply-current'; the directory comes
+from the minibuffer's `default-directory' which the setup hook
+already binds to the constructor's `:directory'.  Multi sessions read
+`:resolve-paths' (and `:directory') per-source instead.")
+
+(defun fzfa--resolve-apply (cand)
+  "Resolve the apply function for CAND in the active fzfa session.
+Returns the function or nil when no apply is available.
+
+Multi: route via `fzfa--multi-source-of', prefer the source's `:apply'
+slot, fall back to `:action' (helm semantics) then to the
+category default from `fzfa-apply-functions'.
+
+Single: return `fzfa--session-apply' (already pre-resolved against
+`fzfa-apply-functions' at constructor time)."
+  (cond
+   ((bound-and-true-p fzfa--multi-active-sources)
+    (when-let* ((src (fzfa--multi-source-of
+                      cand fzfa--multi-active-sources nil)))
+      (or (plist-get src :apply)
+          (plist-get src :action)
+          (alist-get (plist-get src :category) fzfa-apply-functions))))
+   (t fzfa--session-apply)))
+
+(defun fzfa--resolve-candidate (cand)
+  "Return CAND with path resolution applied per session/source rules.
+
+Mirrors the commit-path `fzfa--maybe-expand' call so the apply lambda
+sees the same string the post-`completing-read' dispatch would.
+
+Multi: source plist's `:directory' + `:resolve-paths'.
+Single:  the minibuffer's `default-directory' (set by the constructor's
+setup hook) + `fzfa--session-resolve-paths'."
+  (let* ((clean (fzfa--tofu-hide cand))
+         (src (and (bound-and-true-p fzfa--multi-active-sources)
+                   (fzfa--multi-source-of
+                    cand fzfa--multi-active-sources nil)))
+         (dir (if src
+                  (plist-get src :directory)
+                default-directory))
+         (resolve (if src
+                      (plist-get src :resolve-paths)
+                    fzfa--session-resolve-paths)))
+    (fzfa--maybe-expand clean dir resolve)))
+
+(defvar fzfa--preview-session)
+
+(defun fzfa--promote-from-preview (cand buffer)
+  "Drop BUFFER from CAND's source preview opener kill-list, if any.
+
+Preview opens files via `fzfa--temporary-files', which tracks the
+buffers it created and kills them on `:return'.  When an apply visit
+reuses one of those buffers (via `find-buffer-visiting'), this call
+removes it from the kill-list so it survives session cleanup.
+
+Multi sessions store the per-source cells on the router handler
+itself via `:multi-cells'; route through the cell matching CAND's
+source idx.  Single sessions read the opener directly from the outer
+session.  No-op for sessions without a preview opener (multi sources
+without preview, buffer category, etc.)."
+  (let* ((handler (car-safe fzfa--preview-session))
+         (cell (when-let* ((cells (and handler
+                                       (plist-get handler :multi-cells)))
+                           (table (fzfa-preview-get :multi-cand->src))
+                           (idx (fzfa--multi-source-idx cand table)))
+                 (aref cells idx))))
+    (if cell
+        (let ((fzfa--preview-session cell))
+          (when-let* ((opener (fzfa-preview-get :opener)))
+            (funcall opener buffer)))
+      (when-let* ((opener (fzfa-preview-get :opener)))
+        (funcall opener buffer)))))
+
+(defun fzfa--pin-window-buffer (window buffer)
+  "Ensure WINDOW stays on BUFFER once the active minibuffer session exits.
+
+Preview uses `display-buffer-same-window' to render candidates in
+WINDOW; the minibuffer unwind path consults `quit-restore' and related
+display-buffer bookkeeping to revert the window after exit.  Apply
+\(`fzfa-apply-current') calls this helper so the user's deliberate
+C-z visit survives that reversion.
+
+Implementation: `minibuffer-exit-hook' fires BEFORE the unwind's
+window restoration, so a synchronous `set-window-buffer' inside the
+hook gets clobbered afterward.  Defer the re-assert via `run-at-time
+0 nil' from within the exit hook so the set fires at the next event
+loop tick, after the unwind has fully drained.
+
+On commit (RET), the calling command's post-`completing-read' body
+runs before our deferred re-assert, but it places the candidate's
+buffer in WINDOW anyway, so the re-assert is a harmless no-op when
+the two agree.  On abort (C-g) the body doesn't run and the re-assert
+sticks."
+  (when-let* ((mb (active-minibuffer-window))
+              ((window-live-p window))
+              ((buffer-live-p buffer)))
+    (with-current-buffer (window-buffer mb)
+      (add-hook 'minibuffer-exit-hook
+                (lambda ()
+                  (run-at-time
+                   0 nil
+                   (lambda ()
+                     (when (and (window-live-p window)
+                                (buffer-live-p buffer))
+                       (set-window-buffer window buffer)))))
+                t t))))
+
+(defun fzfa-apply-current ()
+  "Invoke the current candidate's `:apply' function without exiting.
+
+Looks up the apply via `fzfa--resolve-apply', resolves the candidate
+to an absolute path (when the session was created with
+`:resolve-paths' non-nil) via `fzfa--maybe-expand', then runs the
+apply lambda inside the origin window so file/buffer visits land there
+and the picker keeps focus.
+
+Two post-apply concerns, each delegated to its own helper:
+- `fzfa--promote-from-preview' saves a reused preview buffer from the
+  session's ephemeral cleanup.
+- `fzfa--pin-window-buffer' makes the visit survive the minibuffer
+  unwind path's implicit window-state restoration.
+
+Silently no-ops when no `:apply' is defined for the source/session."
+  (interactive)
+  (when-let* ((cand (fzfa--frontend-candidate))
+              (apply (fzfa--resolve-apply cand))
+              (resolved (fzfa--resolve-candidate cand))
+              (origin (or (minibuffer-selected-window) (selected-window))))
+    (condition-case err
+        (with-selected-window origin
+          (funcall apply resolved)
+          (fzfa--promote-from-preview cand (current-buffer))
+          (fzfa--pin-window-buffer origin (current-buffer)))
+      (error (message "fzfa-apply: %s" (error-message-string err))))))
+
+(defun fzfa--minibuffer-install-apply-key ()
+  "Bind `fzfa-apply-key' to `fzfa-apply-current' in the active minibuffer.
+Installed via a per-instance child of `current-local-map' so we don't
+mutate the frontend's shared keymap.  No-op under `ivy-mode' (ivy uses
+`fzfa-ivy.el's `:around' advice on `ivy-call' instead) or when
+`fzfa-apply-key' is nil."
+  (when (and fzfa-apply-key
+             (not (bound-and-true-p ivy-mode)))
+    (let ((map (make-sparse-keymap)))
+      (set-keymap-parent map (current-local-map))
+      (define-key map (kbd fzfa-apply-key) #'fzfa-apply-current)
+      (use-local-map map))))
 
 ;;; Live preview
 ;;
@@ -792,6 +981,7 @@ the mini-window only for it to collapse on the next redisplay tick."
     (setq-local vertico-count-format nil))
   (when (boundp 'icomplete-matches-format)
     (setq-local icomplete-matches-format nil))
+  (fzfa--minibuffer-install-apply-key)
   (when (bound-and-true-p icomplete-mode)
     ;; Empty-input state hits the zero-length-overlay resize blind spot:
     ;; the overlay's multi-line `after-string' isn't counted, so any
@@ -1080,7 +1270,8 @@ Priority: `fzfa-directory' >
                                       group
                                       (resolve-paths t)
                                       skip-executable-check
-                                      preview)
+                                      preview
+                                      apply)
   "Run shell COMMAND with asynchronous `completing-read'.
 
 :PROMPT                 Minibuffer prompt.  Derived from the first token of
@@ -1105,6 +1296,16 @@ Priority: `fzfa-directory' >
 :PREVIEW                Per-call live-preview handler that bypasses the
                         `fzfa-preview-functions' registry lookup for
                         CATEGORY.  See `fzfa-sync-completing-read'.
+:APPLY                  Lambda (CAND) -> any. Action to run without existing
+                        `completing-read' session.
+                        Can be invoked from `vertico' / `icomplete' / etc by:
+                          `fzfa-apply-key'
+                        Or from `ivy' by:
+                          `ivy-call'
+                        Or from `helm' by:
+                          `helm-execute-persistent-action'
+                        When omitted, falls back to the category
+                          default in `fzfa-apply-functions'.
 
 The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
   DIR      — abbreviated working directory
@@ -1139,11 +1340,14 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
          (funcall fzfa-async-helm-handler
                   :prompt prompt :command command :directory directory
                   :skip-executable-check skip-executable-check
-                  :category category :preview preview)
+                  :category category :preview preview :apply apply)
          directory resolve-paths)))
     (let* ((completion-styles '(fzfa))
            (handler (fzfa--preview-handler preview category))
            (fzfa--preview-session (and handler (list handler)))
+           (fzfa--session-apply
+            (or apply (alist-get category fzfa-apply-functions)))
+           (fzfa--session-resolve-paths resolve-paths)
            (selection nil)
            (handle (fzf-native-async-start
                     command (expand-file-name directory)))
@@ -1405,7 +1609,8 @@ only spans are left alone."
           group
           initial-input
           (resolve-paths nil)
-          (split-style nil))
+          (split-style nil)
+          apply)
   "Two-pass (consult-style) async `completing-read'.
 
 Input is split into a shell-CMD part and an fzf-FILTER part via
@@ -1425,7 +1630,9 @@ changing FILTER rescores in place via fzf-native.
 :RESOLVE-PATHS  When non-nil, the returned candidate is passed through
                 `expand-file-name' against :DIRECTORY.  Off by default
                 since the shell command's output is often free-form.
-:SPLIT-STYLE    Override `fzfa-2pass-split-style' for this call."
+:SPLIT-STYLE    Override `fzfa-2pass-split-style' for this call.
+:APPLY          Lambda (CAND) -> any.
+                See `fzfa-async-completing-read' for semantics."
   (fzfa--ensure-setup)
   (cond
    ((eq fzfa--multi-mode :extract)
@@ -1449,7 +1656,8 @@ changing FILTER rescores in place via fzf-native.
                     :prompt prompt :directory directory
                     :category category :group group
                     :initial-input initial-input
-                    :split-style split-style)
+                    :split-style split-style
+                    :apply apply)
            directory resolve-paths))
       (user-error
        "`fzfa-2pass-completing-read' does not yet support helm-mode")))
@@ -1457,6 +1665,9 @@ changing FILTER rescores in place via fzf-native.
          (prompt (or prompt "fzfa-2pass: "))
          (dir (expand-file-name directory))
          (dir-abbrev (abbreviate-file-name directory))
+         (fzfa--session-apply
+          (or apply (alist-get category fzfa-apply-functions)))
+         (fzfa--session-resolve-paths resolve-paths)
          (style-sym (or split-style fzfa-2pass-split-style 'perl))
          (style (or (alist-get style-sym fzfa-2pass-split-styles-alist)
                     (user-error
@@ -1901,7 +2112,8 @@ PATH and whose command symbol is bound: %s."
                                      history
                                      (require-match t)
                                      default
-                                     preview)
+                                     preview
+                                     apply)
   "Run `completing-read' over CANDIDATES using fzf-native for scoring.
 
 :CANDIDATES List of strings to score with `fzf-native-score-all'.
@@ -1935,7 +2147,9 @@ PATH and whose command symbol is bound: %s."
             handler, or a full handler plist with `:setup',
             `:preview', `:exit', `:return' slots.  Nil (the default)
             falls back to the registry.  Set `fzfa-preview-delay' to nil
-            to disable previews."
+            to disable previews.
+:APPLY      Lambda (CAND) -> any.
+            See `fzfa-async-completing-read' for semantics."
   (fzfa--ensure-setup)
   (cond
    ((eq fzfa--multi-mode :extract)
@@ -1954,11 +2168,13 @@ PATH and whose command symbol is bound: %s."
                :candidates candidates :prompt prompt :category category
                :annotate annotate :affix affix :group group
                :history history :require-match require-match
-               :default default :preview preview)))
+               :default default :preview preview :apply apply)))
   (let* ((completion-styles '(fzfa))
          (ivy-completing-read-dynamic-collection t) ;; Don't let `ivy' filter.
          (handler (fzfa--preview-handler preview category))
          (fzfa--preview-session (and handler (list handler)))
+         (fzfa--session-apply
+          (or apply (alist-get category fzfa-apply-functions)))
          ;; Ivy ignores `display-sort-function' in completion metadata,
          ;; so apply the history sort ourselves on the empty-query
          ;; branch.  Vertico/icomplete reach this via the metadata, so
@@ -2066,9 +2282,15 @@ HASH maps CAND to source index."
 
 (defun fzfa--multi-build-router (sources-v cand->src)
   "Build a synthetic preview handler that dispatches per source.
+
 SOURCES-V is the vector of source plists; CAND->SRC is the
 candidate→source-idx hash table.  Returns nil when no source has a
-registered handler (preview wiring then no-ops).
+registered handler (preview wiring then no-ops); otherwise returns a
+plist with `:setup' / `:preview' / `:exit' / `:return' slots plus a
+`:multi-cells' slot exposing the per-source session cell vector —
+callers stash this in the outer preview session so per-candidate
+dispatch outside the router (e.g. `fzfa--promote-from-preview' on a
+C-z apply) can reach the right source's `:opener'.
 
 For each source, a fresh handler plist is resolved via
 `fzfa--preview-handler' using the source's own `:preview' override
@@ -2131,7 +2353,9 @@ Lifecycle:
          :return
          (lambda (cand)
            (let ((i (and cand (fzfa--multi-source-idx cand cand->src))))
-             (broadcast :return cand i))))))))
+             (broadcast :return cand i)))
+         ;; Expose cells so callers can route per-source from outside.
+         :multi-cells cells)))))
 
 (defun fzfa--multi-rank (results query async-p)
   "Top fzf score for RESULTS under QUERY.
@@ -2536,8 +2760,14 @@ Per-source plist keys:
                       (when (bound-and-true-p ivy-mode)
                         (ivy--exhibit))))
                 (setq menu-active nil)))))
-         (router       (fzfa--multi-build-router sources-v cand->src))
-         (fzfa--preview-session (and router (list router)))
+         (router      (fzfa--multi-build-router sources-v cand->src))
+         (fzfa--preview-session
+          (and router
+               ;; Stash the candidate→source-idx table so
+               ;; `fzfa--promote-from-preview' can route to the right
+               ;; source's `:opener' on C-z apply.  Cells are exposed
+               ;; via `:multi-cells' on ROUTER itself.
+               (list router :multi-cand->src cand->src)))
          retry-timer timer result)
     (dotimes (i n)
       (let* ((src   (aref sources-v i))

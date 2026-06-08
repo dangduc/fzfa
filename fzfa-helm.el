@@ -100,6 +100,21 @@ don't restore well across resume anyway."
   :type 'boolean
   :group 'fzfa)
 
+(defcustom fzfa-helm-apply-follow t
+  "Whether helm should auto-fire `:apply' on every selection move.
+When non-nil (the default), bridged fzfa sources that declare an
+`:apply' lambda set `:follow 1' on their helm source — the apply
+function runs on every selection change (preview-style) AND on
+`helm-execute-persistent-action'.  Matches helm's native
+`:persistent-action' idiom.
+
+Set to nil to disable auto-fire — `:apply' then runs only on
+explicit C-z.  Useful for sources whose `:apply' has side effects
+\(buffer kill, command execute) that shouldn't fire on every
+arrow-key press."
+  :type 'boolean
+  :group 'fzfa)
+
 (defun fzfa-helm--maybe-kill-session-buffer (name)
   "Kill the helm session buffer NAME when `fzfa-helm-kill-buffer-on-exit'.
 No-op when the buffer doesn't exist or the defcustom is nil.  Each
@@ -300,7 +315,7 @@ candidate string alone doesn't carry enough context."
 
 (defun fzfa-helm--async-source-and-stop
     (name command directory action limit
-          &optional annotate persistent-action)
+          &optional annotate persistent-action apply)
   "Return (SOURCE . STOP) for NAME / COMMAND.
 Eagerly start the fzf-native producer in DIRECTORY and the polling
 timer, capped at LIMIT candidates.  ACTION is the helm action.
@@ -311,10 +326,15 @@ cleanup when helm never gets a chance to call `:cleanup' itself).
 ANNOTATE, when non-nil, is a (CAND) -> STRING function rendered as a
 per-row suffix via `fzfa-helm--make-display-transformer'.
 
-PERSISTENT-ACTION, when non-nil, is a (CAND) -> ANY function wired
-to helm's `:persistent-action' slot, plus `:follow 1' so helm
-auto-fires it on every selection change.  Used by handlers to wire
-fzfa's `:preview' dispatch — live preview-as-you-scroll under helm.
+PERSISTENT-ACTION, when non-nil, is a (CAND) -> ANY function wired to
+helm's `:persistent-action' slot with `:follow 1' — used to wire
+fzfa's `:preview' dispatch (live preview-as-you-scroll under `helm').
+Overridden by APPLY when both are set.
+
+APPLY, when non-nil, is a (CAND) -> ANY function bound to `helm''s
+`:persistent-action' slot, taking precedence over PERSISTENT-ACTION.
+`:follow' tracks `fzfa-helm-apply-follow' — auto-fire on every
+selection move (default) or on `helm-execute-persistent-action'.
 
 Internal — used by both `fzfa-helm-make-async-source' (single-source)
 and `fzfa-helm--multi-read' (batch with bulk-stop)."
@@ -360,12 +380,16 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
             (append
              (list :filtered-candidate-transformer
                    (fzfa-helm--make-display-transformer annotate))
-             (when persistent-action
-               (list :persistent-action persistent-action :follow 1))))
+             (cond
+              (apply
+               (append (list :persistent-action apply)
+                       (when fzfa-helm-apply-follow '(:follow 1))))
+              (persistent-action
+               (list :persistent-action persistent-action :follow 1)))))
      stop)))
 
 (cl-defun fzfa-helm-make-async-source
-    (&key name command directory action annotate persistent-action
+    (&key name command directory action annotate persistent-action apply
           (candidate-number-limit fzfa-helm-candidate-limit))
   "Return a helm source that streams candidates from shell COMMAND.
 
@@ -379,16 +403,21 @@ per-row suffix (faced as `completions-annotations', column-aligned
 within the rendered batch).  Affects display only; fzf scoring and
 action dispatch operate on the raw candidate.
 
+PERSISTENT-ACTION wires preview-as-you-scroll under `helm'; APPLY wires
+`fzfa''s `:apply' and takes precedence.  See
+`fzfa-helm--async-source-and-stop' for the precedence and `:follow'
+rules.
+
 The producer process and polling timer start eagerly at construction
 time, BEFORE helm activates — matches the original (pre-extraction)
 timing.  The source's `:cleanup' stops it."
   (car (fzfa-helm--async-source-and-stop
         name command directory action
         (or candidate-number-limit 10000)
-        annotate persistent-action)))
+        annotate persistent-action apply)))
 
 (cl-defun fzfa-helm-make-sync-source
-    (&key name items action history annotate persistent-action
+    (&key name items action history annotate persistent-action apply
           (candidate-number-limit fzfa-helm-candidate-limit))
   "Return a helm source that scores ITEMS with `fzf-native'.
 
@@ -401,6 +430,11 @@ ANNOTATE, when non-nil, is a (CAND) -> STRING function rendered as a
 per-row suffix (faced as `completions-annotations', column-aligned
 within the rendered batch).  Affects display only; fzf scoring and
 action dispatch operate on the raw candidate.
+
+PERSISTENT-ACTION wires preview-as-you-scroll under helm; APPLY wires
+fzfa's `:apply' (persistent-action proper) and takes precedence.
+`:follow' tracks `fzfa-helm-apply-follow' when APPLY is in use, else
+defaults to 1 for PERSISTENT-ACTION.
 
 HISTORY is an optional history variable symbol.  When set and
 `helm-pattern' is empty, ITEMS are reordered via `fzfa--history-rank'
@@ -467,8 +501,12 @@ Each `helm-pattern' change re-scores the full ITEMS list via
            (append
             (list :filtered-candidate-transformer
                   (fzfa-helm--make-display-transformer annotate))
-            (when persistent-action
-              (list :persistent-action persistent-action :follow 1))))))
+            (cond
+             (apply
+              (append (list :persistent-action apply)
+                      (when fzfa-helm-apply-follow '(:follow 1))))
+             (persistent-action
+              (list :persistent-action persistent-action :follow 1)))))))
 
 ;;; Composition helper — fzfa command -> helm source(s)
 
@@ -489,7 +527,10 @@ which is skipped when we bypass it via `:inject' mode."
          (directory   (or (plist-get plist :directory) default-directory))
          (history     (plist-get plist :history))
          (annotate    (plist-get plist :annotate))
+         (category    (plist-get plist :category))
          (orig-action (plist-get plist :action))
+         (apply       (or (plist-get plist :apply)
+                          (alist-get category fzfa-apply-functions)))
          (action
           (lambda (cand)
             (when (and history (symbolp history) (not (eq history t)))
@@ -499,11 +540,11 @@ which is skipped when we bypass it via `:inject' mode."
      (cmd
       (fzfa-helm-make-async-source
        :name name :command cmd :directory directory :action action
-       :annotate annotate))
+       :annotate annotate :apply apply))
      (items
       (fzfa-helm-make-sync-source
        :name name :items items :history history :action action
-       :annotate annotate))
+       :annotate annotate :apply apply))
      (t
       (error "Fzfa source plist has neither :command nor :items: %S" plist)))))
 
@@ -586,7 +627,7 @@ two-pass command (`:2pass t' in the extracted args)."
 
 (cl-defun fzfa-helm--async-read (&key prompt command directory
                                       skip-executable-check
-                                      category preview)
+                                      category preview apply)
   "Helm dispatch for `fzfa-async-completing-read'.
 
 PROMPT, COMMAND, DIRECTORY, SKIP-EXECUTABLE-CHECK as per the caller.
@@ -626,13 +667,15 @@ Returns the selected candidate string, or nil on cancel."
          ;; the vertico path's `fzfa-preview-delay'-based throttling so
          ;; fast scrolling doesn't fire expensive preview handlers per
          ;; row.
+         (apply-fn (or apply (alist-get category fzfa-apply-functions)))
          (source (fzfa-helm-make-async-source
                   :name (or prompt "fzfa")
                   :command command
                   :directory dir
                   :action (lambda (cand) (setq result cand))
                   :persistent-action
-                  (and handler (fzfa-helm--make-debounced-preview-fn)))))
+                  (and handler (fzfa-helm--make-debounced-preview-fn))
+                  :apply apply-fn)))
     (when handler
       (fzfa-preview-put :origin-window (selected-window))
       (fzfa-preview-put :origin-buffer (window-buffer (selected-window)))
@@ -652,7 +695,7 @@ Returns the selected candidate string, or nil on cancel."
 
 (cl-defun fzfa-helm--sync-read (&key candidates prompt category annotate
                                      affix group history require-match
-                                     default preview)
+                                     default preview apply)
   "Helm dispatch for `fzfa-sync-completing-read'.
 CANDIDATES, PROMPT, CATEGORY, ANNOTATE, AFFIX, GROUP, HISTORY,
 REQUIRE-MATCH, DEFAULT, and PREVIEW are forwarded from the caller.
@@ -680,6 +723,7 @@ metadata."
          (result nil)
          (handler (fzfa--preview-handler preview category))
          (fzfa--preview-session (and handler (list handler)))
+         (apply-fn (or apply (alist-get category fzfa-apply-functions)))
          (action
           (lambda (cand)
             (when (and history (symbolp history) (not (eq history t)))
@@ -698,7 +742,8 @@ metadata."
                         :action action
                         :persistent-action
                         (and handler
-                             (fzfa-helm--make-debounced-preview-fn)))
+                             (fzfa-helm--make-debounced-preview-fn))
+                        :apply apply-fn)
               :prompt (or prompt "fzf > ")
               :default default
               :buffer "*helm fzfa sync*")
@@ -718,7 +763,7 @@ metadata."
 (declare-function fzfa--defer-async-stop "fzfa")
 
 (cl-defun fzfa-helm--2pass-read (&key prompt directory category group
-                                      initial-input split-style)
+                                      initial-input split-style apply)
   "Helm dispatch for `fzfa-2pass-completing-read'.
 
 PROMPT, DIRECTORY, INITIAL-INPUT, SPLIT-STYLE as per the caller.
@@ -754,6 +799,7 @@ matching line), and fire `:exit' + `:return' on exit."
          (helm-completion-style 'emacs)
          (handler (fzfa--preview-handler nil category))
          (fzfa--preview-session (and handler (list handler)))
+         (apply-fn (or apply (alist-get category fzfa-apply-functions)))
          restart-timer poll-timer
          (do-restart
           (lambda (cmd)
@@ -848,10 +894,14 @@ matching line), and fire `:exit' + `:return' on exit."
                   (append
                    (list :filtered-candidate-transformer
                          (fzfa-helm--make-display-transformer nil))
-                   (when handler
+                   (cond
+                    (apply-fn
+                     (append (list :persistent-action apply-fn)
+                             (when fzfa-helm-apply-follow '(:follow 1))))
+                    (handler
                      (list :persistent-action
                            (fzfa-helm--make-debounced-preview-fn)
-                           :follow 1))))
+                           :follow 1)))))
            :buffer "*helm fzfa 2pass*"
            :input init-text))
       (funcall cleanup)

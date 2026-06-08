@@ -44,10 +44,12 @@
 (defvar ivy-re-builders-alist)
 (defvar ivy-last)
 (declare-function ivy-state-caller "ivy")
+(declare-function ivy-state-current "ivy")
 (declare-function ivy-state-dynamic-collection "ivy")
 (declare-function ivy-configure "ivy")
 (declare-function ivy--set-candidates "ivy")
 (declare-function ivy--exhibit "ivy")
+(declare-function ivy-call "ivy")
 
 (defface fzfa-ivy-multi-source-label
   '((t :inherit font-lock-comment-face))
@@ -56,6 +58,7 @@
 
 (defun fzfa-ivy--multi-display-transformer (cand)
   "Prepend `[source-name]' to CAND when it carries a fzfa tofu suffix.
+
 Self-gates on `fzfa--multi-active-sources' (bound only inside a
 `fzfa--multi-read' session) so non-fzfa `ivy-completing-read'
 calls pass through unchanged."
@@ -72,11 +75,34 @@ calls pass through unchanged."
                   cand))
       cand)))
 
+(defun fzfa-ivy--session-p ()
+  "Non-nil when the active ivy session belongs to a `fzfa'.
+
+Single-source: `fzfa--session-apply' is let-bound by every `fzfa'
+constructor.
+
+Multi-source: `fzfa--multi-active-sources' is let-bound by
+`fzfa--multi-read'."
+  (or (bound-and-true-p fzfa--session-apply)
+      (bound-and-true-p fzfa--multi-active-sources)))
+
+(defun fzfa-ivy--call-advice (orig &rest args)
+  "`:around' advice on `ivy-call' for `fzfa' sessions.
+
+In `fzfa' sessions, replace `ivy''s identity action with our `:apply'
+dispatch — the source plist's (or constructor's) `:apply' is invoked
+on the current candidate without exiting.  All other sessions pass
+through unchanged."
+  (if (fzfa-ivy--session-p)
+      (fzfa-apply-current)
+    (apply orig args)))
+
 (defun fzfa-ivy--restrict-to-matches-backfill (&rest _)
   "Backfill `ivy--old-cands' from `ivy--all-candidates' in dynamic sessions.
-ivy's dynamic-collection update path maintains `ivy--all-candidates' but
+
+`ivy''s dynamic-collection update path maintains `ivy--all-candidates' but
 not `ivy--old-cands'; `ivy-restrict-to-matches' reads the latter and
-pins everything to it (ivy.el:5199-5201).  Without this backfill, S-SPC
+pins everything to it.  Without this backfill, S-SPC
 in a dynamic session restricts to a stale `ivy--old-cands' — empty for
 fresh async sessions (→ 0 candidates), the initial full list for sync (→
 no-op)."
@@ -97,7 +123,8 @@ no-op)."
     (ivy-configure t
       :display-transformer-fn #'fzfa-ivy--multi-display-transformer)
     (advice-add 'ivy-restrict-to-matches :before
-                #'fzfa-ivy--restrict-to-matches-backfill)))
+                #'fzfa-ivy--restrict-to-matches-backfill)
+    (advice-add 'ivy-call :around #'fzfa-ivy--call-advice)))
 
 (provide 'fzfa-ivy)
 ;;; fzfa-ivy.el ends here
