@@ -1,4 +1,4 @@
-.PHONY: compile test clean
+.PHONY: compile autoloads test clean
 
 EMACS ?= emacs
 # fzf-native is not on MELPA; default to a sibling checkout.  Override
@@ -6,10 +6,22 @@ EMACS ?= emacs
 #   make test FZF_NATIVE_DIR=/path/to/fzf-native
 FZF_NATIVE_DIR ?= ../fzf-native
 
-compile:
+PACKAGE := fzfa
+AUTOLOADS := $(PACKAGE)-autoloads.el
+
+# Every .el we ship except tests, the package descriptor, and the
+# generated autoloads file itself.
+SRC := $(filter-out $(AUTOLOADS) $(PACKAGE)-pkg.el $(PACKAGE)-test.el, \
+                    $(wildcard *.el))
+
+compile: autoloads
 	$(EMACS) -Q --batch \
 	  -L . -L $(FZF_NATIVE_DIR) \
-	  -f batch-byte-compile fzfa.el
+	  -f batch-byte-compile $(SRC)
+
+autoloads:
+	$(EMACS) -Q --batch \
+	  --eval "(loaddefs-generate default-directory \"$(AUTOLOADS)\")"
 
 # Loads the fzf-native dynamic module before running tests.  Existing
 # tests are pure-Elisp helpers and would pass without it, but loading
@@ -25,4 +37,4 @@ test:
 	  -f ert-run-tests-batch-and-exit
 
 clean:
-	rm -f *.elc
+	rm -f *.elc $(AUTOLOADS)
