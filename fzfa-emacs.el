@@ -204,6 +204,8 @@ when the command was invoked.  Selecting \"default\" disables all themes."
                      (mapcar #'symbol-name (custom-available-themes)))
    :prompt "theme: "
    :category 'fzfa-theme
+   :apply (lambda (cand)
+            (fzfa--theme-switch (fzfa--theme-symbol cand)))
    :preview `(:setup
               ,(lambda ()
                  (fzfa-preview-put :saved
