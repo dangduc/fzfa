@@ -964,7 +964,7 @@ use ~fussy~ for non-~fzfa~ sources and ~fzfa~ otherwise. Example below.
                   (fzfa-helm-source-from-command 'fzfa-vc-any))
           :buffer "*helm mini+fzfa*"))
 #+end_src
-** icomplete-vertical
+** icomplete-vertical / fido
 ~icomplete-vertical~ has a few defaults that may not work very well with ~fzfa~.
 
 I use this config when using ~fzfa~ with ~icomplete-vertical~.
@@ -992,6 +992,37 @@ I use this config when using ~fzfa~ with ~icomplete-vertical~.
   (setq completions-group t) ;; Show group headings.
   (minibuffer-depth-indicate-mode 1)
   (icomplete-vertical-mode))
+#+end_src
+
+~fido~
+
+#+begin_src emacs-lisp :tangle yes
+(use-package icomplete
+  :ensure nil
+  :bind (:map icomplete-minibuffer-map
+              ("RET" . icomplete-fido-ret)
+              ("C-j" . icomplete-fido-exit)
+              ("DEL" . icomplete-fido-backward-updir))
+  :init
+  (defun fussy-fido-setup ()
+    "Use `fussy' with `fido-mode'."
+    (setq-local completion-styles '(fussy basic)))
+  (advice-add 'icomplete--fido-mode-setup :after 'fussy-fido-setup)
+  (add-hook 'icomplete-minibuffer-setup-hook
+            (lambda () (setq-local truncate-lines t)))
+  (setq icomplete-hide-common-prefix nil)
+  (setq icomplete-tidy-shadowed-file-names t)
+  (setq icomplete-show-matches-on-no-input t)
+  (setq icomplete-compute-delay 0)
+  (setq icomplete-max-delay-chars 0)
+  (setq max-mini-window-height 10)
+  (setq resize-mini-windows t)
+  (setq completion-auto-help nil)
+  (setq icomplete-scroll t) ;; Don't wrap the results.
+  (setq enable-recursive-minibuffers t)
+  (setq completions-group t) ;; Show group headings.
+  (minibuffer-depth-indicate-mode 1)
+  (fido-vertical-mode))
 #+end_src
 
 ** transient
