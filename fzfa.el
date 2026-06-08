@@ -430,6 +430,28 @@ under non-ivy frontends."
     (with-selected-window (active-minibuffer-window)
       (ivy--insert-prompt))))
 
+;;; Visit / preview hooks
+
+(defcustom fzfa-after-visit-hook
+  '(recenter pulse-momentary-highlight-one-line)
+  "Hook run after a fzfa command visits its selection.
+Each command's action lambda wraps its body in `fzfa-with-visit', which
+fires this hook once the visit completes (point is at the destination)."
+  :type 'hook :group 'fzfa)
+
+(defcustom fzfa-after-preview-hook
+  '(recenter pulse-momentary-highlight-one-line)
+  "Hook run after `fzfa-preview-show' displays a candidate.
+Fires on every preview tick (point is at the previewed location in the
+origin window)."
+  :type 'hook :group 'fzfa)
+
+(defmacro fzfa-with-visit (&rest body)
+  "Run BODY as a visit action; fire `fzfa-after-visit-hook' on completion."
+  (declare (indent 0) (debug t))
+  `(prog1 (progn ,@body)
+     (run-hooks 'fzfa-after-visit-hook)))
+
 ;;; Live preview
 ;;
 ;; Categories declare per-action handlers in `fzfa-preview-functions'.
@@ -598,28 +620,6 @@ Called from the constructors after `completing-read' unwinds.  The
 session `let'-binding still encloses this call, so handlers see their
 stashed state and the captured `default-directory'."
   (fzfa--preview-call :return cand))
-
-;;; Visit / preview hooks
-
-(defcustom fzfa-after-visit-hook
-  '(recenter pulse-momentary-highlight-one-line)
-  "Hook run after a fzfa command visits its selection.
-Each command's action lambda wraps its body in `fzfa-with-visit', which
-fires this hook once the visit completes (point is at the destination)."
-  :type 'hook :group 'fzfa)
-
-(defcustom fzfa-after-preview-hook
-  '(recenter pulse-momentary-highlight-one-line)
-  "Hook run after `fzfa-preview-show' displays a candidate.
-Fires on every preview tick (point is at the previewed location in the
-origin window)."
-  :type 'hook :group 'fzfa)
-
-(defmacro fzfa-with-visit (&rest body)
-  "Run BODY as a visit action; fire `fzfa-after-visit-hook' on completion."
-  (declare (indent 0) (debug t))
-  `(prog1 (progn ,@body)
-     (run-hooks 'fzfa-after-visit-hook)))
 
 ;;; Built-in preview handlers
 
