@@ -4,7 +4,7 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1") (fzf-native "1.2"))
+;; Package-Requires: ((emacs "29.1") (fzf-native "1.4"))
 ;; Keywords: matching, completion, fzf, fuzzy, fussy
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
@@ -48,6 +48,7 @@
 (defvar embark-default-action-overrides)
 (defvar embark-general-map)
 (defvar fzf-native-case-mode)
+(defvar fzf-native-fuzzy)
 (defvar fzf-native-async-highlight)
 (defvar fzf-native-max-line-length)
 (defvar fzf-native-async-cache-size)
@@ -191,6 +192,22 @@ respect  Always case-sensitive."
   :type '(choice (const :tag "Smart case (default)" smart)
                  (const :tag "Ignore case"          ignore)
                  (const :tag "Respect case"         respect))
+  :group 'fzfa)
+
+(defcustom fzfa-fuzzy t
+  "Whether to fuzzy match with `fzf-native'.
+
+If t, use fuzzy matching, if nil, use exact/substring matching.
+
+If t, prefixing a term with ' switches that term to exact matching.
+
+If nil, prefixing a term with ' switches that term to fuzzy matching.
+
+Read at the start of every scoring call.
+
+Propagated to `fzf-native-fuzzy' via `:around' advice on the
+`fzf-native' async entry points."
+  :type 'boolean
   :group 'fzfa)
 
 (defcustom fzfa-cache-size 40
@@ -3336,7 +3353,8 @@ render."
   (let ((fzf-native-async-highlight  fzfa-highlight)
         (fzf-native-max-line-length  fzfa-max-line-length)
         (fzf-native-async-cache-size fzfa-cache-size)
-        (fzf-native-case-mode        fzfa-case-mode))
+        (fzf-native-case-mode        fzfa-case-mode)
+        (fzf-native-fuzzy            fzfa-fuzzy))
     (apply orig-fn args)))
 
 (defun fzfa--ensure-setup ()

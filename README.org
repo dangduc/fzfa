@@ -1060,6 +1060,7 @@ whatever your frontend already uses for this concept:
 | ~fzfa-max-line-length~         |                      256 | Per-line character limit; nil/+N/-N (see note below).                         |
 | ~fzfa-cache-size~              |                       40 | Per-session LRU cache entries (see note below).                               |
 | ~fzfa-case-mode~               |                  ~smart~ | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.                             |
+| ~fzfa-fuzzy~                   |                      ~t~ | Fuzzy match (~t~) or exact/substring match (~nil~).                           |
 | ~fzfa-multi-narrow-key~        |                      ~<~ | Prefix key for narrowing in multi-source sessions; nil disables.              |
 | ~fzfa-extensions~              | (see *Extensions* below) | Extensions to ~require~ during setup.                                         |
 
@@ -1230,6 +1231,24 @@ Read on every scoring call; changes take effect immediately.
   (setq fzfa-case-mode 'smart)    ; default
   (setq fzfa-case-mode 'ignore)
   (setq fzfa-case-mode 'respect)
+#+end_src
+
+~fzfa-fuzzy~ controls whether queries are matched fuzzily or as
+exact substrings.  Read at the start of every scoring
+call; ~let~-bind it dynamically to flip the matcher per-call.
+
+| Value | Behavior                                                                          |
+|-------+-----------------------------------------------------------------------------------|
+| ~t~   | Fuzzy matching (default).  Prefix a term with ~'~ to force exact match.           |
+| ~nil~ | Exact/substring matching.  Prefix a term with ~'~ to force fuzzy match.           |
+
+Operator filters (~!~, ~^~, ~$~, ~|~, space-separated AND terms) work
+identically regardless of this setting — ~fzfa-fuzzy~ only changes the
+default matcher used for bare terms.
+
+#+begin_src emacs-lisp :tangle yes
+  (setq fzfa-fuzzy t)   ; default
+  (setq fzfa-fuzzy nil) ; exact/substring matching
 #+end_src
 
 ~fzfa-directory~ is a ~let~-bindable override that takes priority over
