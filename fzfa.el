@@ -58,8 +58,6 @@
 (declare-function bookmark-maybe-load-default-file "bookmark")
 (declare-function icomplete-exhibit "icomplete")
 (defvar icomplete-overlay)
-(declare-function imenu--make-index-alist "imenu")
-(declare-function imenu--subalist-p "imenu")
 (defvar ivy-text)
 (defvar ivy--index)
 (defvar ivy--all-candidates)
@@ -213,7 +211,7 @@ Read at session start; changing it does not affect running sessions."
 
 (defcustom fzfa-extensions
   '(ag chrome company emacs embark evil fd find flymake git grep helm hg
-       hungry info ivy locate mail make music notmuch org pass project rg
+       hungry imenu info ivy locate mail make music notmuch org pass project rg
        shell spotlight ugrep vertico vc)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
@@ -232,6 +230,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "Helm frontend" helm)
               (const :tag "Mercurial (hg)" hg)
               (const :tag "Hungry (buffer-derived dirs)" hungry)
+              (const :tag "Imenu (buffer index)" imenu)
               (const :tag "Info manuals" info)
               (const :tag "Ivy frontend" ivy)
               (const :tag "locate" locate)
