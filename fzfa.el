@@ -440,6 +440,11 @@ Each command's action lambda wraps its body in `fzfa-with-visit', which
 fires this hook once the visit completes (point is at the destination)."
   :type 'hook :group 'fzfa)
 
+(defcustom fzfa-after-apply-hook
+  '(recenter pulse-momentary-highlight-one-line)
+  "Hook run after `fzfa-apply-current' displays a candidate."
+  :type 'hook :group 'fzfa)
+
 (defcustom fzfa-after-preview-hook
   '(recenter pulse-momentary-highlight-one-line)
   "Hook run after `fzfa-preview-show' displays a candidate.
@@ -467,8 +472,8 @@ Matches `ivy''s default `ivy-call' binding."
   :group 'fzfa)
 
 (defcustom fzfa-apply-functions
-  `((fzfa-file   . ,(lambda (cand) (fzfa-with-visit (find-file cand))))
-    (fzfa-buffer . ,(lambda (cand) (fzfa-with-visit (switch-to-buffer cand)))))
+  `((fzfa-file   . #'find-file)
+    (fzfa-buffer . #'switch-to-buffer))
   "Default `:apply' function per completion category.
 
 Used by `fzfa--resolve-apply' when a session/source doesn't declare an
@@ -625,7 +630,8 @@ Silently no-ops when no `:apply' is defined for the source/session."
         (with-selected-window origin
           (funcall apply resolved)
           (fzfa--promote-from-preview cand (current-buffer))
-          (fzfa--pin-window-buffer origin (current-buffer)))
+          (fzfa--pin-window-buffer origin (current-buffer))
+          (run-hooks 'fzfa-after-apply-hook))
       (error (message "fzfa-apply: %s" (error-message-string err))))))
 
 (defun fzfa--minibuffer-install-apply-key ()
