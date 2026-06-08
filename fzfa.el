@@ -795,6 +795,7 @@ rather than reset; the callback re-reads the current candidate at fire
 time so reuse never previews a stale selection.  DELAY of 0 previews
 immediately on every selection change."
   (let* ((delay (or delay fzfa-preview-delay 0))
+         (mb (current-buffer))
          (run (lambda ()
                 (when-let* ((cand (fzfa--frontend-candidate)))
                   (unless (equal cand fzfa--preview-last)
@@ -810,16 +811,24 @@ immediately on every selection change."
      'post-command-hook
      (if (<= delay 0)
          run
+       ;; The idle-timer callback fires with whatever buffer is current
+       ;; at fire time, not necessarily this minibuffer.  All state we
+       ;; touch (`fzfa--preview-timer', `fzfa--preview-last') is
+       ;; buffer-local here, so route the callback through MB or we
+       ;; silently corrupt the wrong buffer's locals and leave a stale
+       ;; timer object behind that blocks every subsequent preview.
        (lambda ()
          (unless (timerp fzfa--preview-timer)
            (setq fzfa--preview-timer
                  (run-with-idle-timer
                   delay nil
                   (lambda ()
-                    (when (timerp fzfa--preview-timer)
-                      (cancel-timer fzfa--preview-timer))
-                    (setq fzfa--preview-timer nil)
-                    (funcall run)))))))
+                    (when (buffer-live-p mb)
+                      (with-current-buffer mb
+                        (when (timerp fzfa--preview-timer)
+                          (cancel-timer fzfa--preview-timer))
+                        (setq fzfa--preview-timer nil)
+                        (funcall run)))))))))
      nil t)
     (add-hook
      'minibuffer-exit-hook
