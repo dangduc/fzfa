@@ -472,8 +472,11 @@ Matches `ivy''s default `ivy-call' binding."
   :group 'fzfa)
 
 (defcustom fzfa-apply-functions
-  `((fzfa-file   . #'find-file)
-    (fzfa-buffer . #'switch-to-buffer))
+  `((fzfa-file     . #'find-file)
+    (fzfa-buffer   . #'switch-to-buffer)
+    (fzfa-bookmark . #'bookmark-jump)
+    (fzfa-grep     . #'fzfa--grep-jump)
+    (fzfa-location . #'fzfa--location-jump))
   "Default `:apply' function per completion category.
 
 Used by `fzfa--resolve-apply' when a session/source doesn't declare an
