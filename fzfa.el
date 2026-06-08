@@ -840,6 +840,22 @@ stashed state and the captured `default-directory'."
 
 ;;; Built-in preview handlers
 
+(defmacro fzfa-with-quiet-find-file (&rest body)
+  "Run BODY with file-loading prompts suppressed.
+
+`find-file-noselect' can trigger minibuffer prompts via file-local
+variables, `find-file-hook', or warnings — inside an active completion
+those signal \"Command attempted to use minibuffer while in minibuffer\".
+Custom `:preview' handlers that load files should wrap the call in this
+macro."
+  (declare (indent 0) (debug t))
+  `(let ((enable-local-variables :safe)
+         (enable-local-eval nil)
+         (enable-dir-local-variables nil)
+         (non-essential t)
+         (inhibit-message t))
+     ,@body))
+
 (defun fzfa-preview-show (buffer &optional pos)
   "Show BUFFER (optionally moved to POS) in the originating window.
 Does not steal the minibuffer's input focus.  POS may be a buffer
@@ -880,7 +896,8 @@ when invoked from `fzfa-async-completing-read')."
            (line (string-to-number (match-string 2 cand)))
            (path (expand-file-name file)))
       (when (file-readable-p path)
-        (let ((buf (find-file-noselect path)))
+        (let ((buf (fzfa-with-quiet-find-file
+                     (find-file-noselect path 'nowarn))))
           (with-current-buffer buf
             (save-restriction
               (widen)
@@ -901,7 +918,8 @@ is missing or the target cannot be resolved."
               (line   (cdr loc))
               (buf    (cond
                        ((and (stringp source) (file-readable-p source))
-                        (find-file-noselect source))
+                        (fzfa-with-quiet-find-file
+                          (find-file-noselect source 'nowarn)))
                        ((get-buffer source)))))
     (let ((pos (with-current-buffer buf
                  (save-restriction
@@ -948,16 +966,8 @@ no args to reap the rest."
         ;; unlike `get-file-buffer', which is a literal string match.
         (let ((path (expand-file-name arg)))
           (or (find-buffer-visiting path)
-              ;; Suppress prompts that `find-file-noselect' can trigger
-              ;; via local-variables / find-file-hook — under `ivy-mode'
-              ;; those route through `ivy-read' and signal "Command
-              ;; attempted to use minibuffer while in minibuffer".
-              (let* ((enable-local-variables :safe)
-                     (enable-local-eval nil)
-                     (enable-dir-local-variables nil)
-                     (non-essential t)
-                     (inhibit-message t)
-                     (buf (find-file-noselect path 'nowarn)))
+              (let ((buf (fzfa-with-quiet-find-file
+                           (find-file-noselect path 'nowarn))))
                 (push buf ephemerals)
                 buf))))))))
 
