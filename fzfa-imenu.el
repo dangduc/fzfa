@@ -91,52 +91,62 @@ Display differences:
        (walk index nil)))
     (unless entries
       (user-error "No imenu entries%s" (if multi " in any buffer" "")))
-    (when-let* ((result
-                 (fzfa-sync-completing-read
-                  :candidates (nreverse entries)
-                  :prompt (pcase scope
-                            ('all    "imenu-all: ")
-                            ('others "imenu-others: ")
-                            (_       "imenu: "))
-                  :category 'fzfa-imenu
-                  :preview
-                  (lambda (cand)
-                    (when-let* ((hit (gethash cand lookup))
-                                (idx (car hit))
-                                ((< idx (length buf-vec)))
-                                (buf (aref buf-vec idx))
-                                (entry (cdr hit))
-                                (val (cdr entry))
-                                (pos (cond
-                                      ((markerp val) val)
-                                      ((numberp val) val)
-                                      ((overlayp val) (overlay-start val)))))
-                      (fzfa-preview-show buf pos)))
-                  :group
-                  (lambda (cand transform)
-                    (cond
-                     ((not multi)
-                      (if transform cand (or (gethash cand groups) "")))
-                     (transform
-                      ;; Strip "IDX:" prefix for display.
-                      (when (string-match "^[0-9]+:\\(.*\\)$" cand)
-                        (match-string 1 cand)))
-                     (t
-                      ;; Header: reverse-map IDX → buffer name.
-                      (when (string-match "^\\([0-9]+\\):" cand)
-                        (let ((i (string-to-number (match-string 1 cand))))
-                          (when (< i (length buf-vec))
-                            (buffer-name (aref buf-vec i))))))))))
-                (hit (gethash result lookup))
-                (idx (car hit))
-                ((< idx (length buf-vec)))
-                (buffer (aref buf-vec idx))
-                ((buffer-live-p buffer)))
-      (fzfa-with-visit
-        (unless (eq buffer (current-buffer))
-          (switch-to-buffer buffer))
-        (push-mark nil t)
-        (imenu (cdr hit))))))
+    (cl-labels
+        ((resolve-hit (cand)
+           "Return (BUFFER . ENTRY) for CAND, or nil if unresolvable."
+           (when-let* ((hit (gethash cand lookup))
+                       (idx (car hit))
+                       ((< idx (length buf-vec)))
+                       (buffer (aref buf-vec idx))
+                       ((buffer-live-p buffer)))
+             (cons buffer (cdr hit)))))
+      (when-let* ((result
+                   (fzfa-sync-completing-read
+                    :candidates (nreverse entries)
+                    :prompt (pcase scope
+                              ('all    "imenu-all: ")
+                              ('others "imenu-others: ")
+                              (_       "imenu: "))
+                    :category 'fzfa-imenu
+                    :preview
+                    (lambda (cand)
+                      (when-let* ((hit (resolve-hit cand))
+                                  (entry (cdr hit))
+                                  (val (cdr entry))
+                                  (pos (cond
+                                        ((markerp val) val)
+                                        ((numberp val) val)
+                                        ((overlayp val) (overlay-start val)))))
+                        (fzfa-preview-show (car hit) pos)))
+                    :group
+                    (lambda (cand transform)
+                      (cond
+                       ((not multi)
+                        (if transform cand (or (gethash cand groups) "")))
+                       (transform
+                        ;; Strip "IDX:" prefix for display.
+                        (when (string-match "^[0-9]+:\\(.*\\)$" cand)
+                          (match-string 1 cand)))
+                       (t
+                        ;; Header: reverse-map IDX → buffer name.
+                        (when (string-match "^\\([0-9]+\\):" cand)
+                          (let ((i (string-to-number (match-string 1 cand))))
+                            (when (< i (length buf-vec))
+                              (buffer-name (aref buf-vec i))))))))
+                    :apply
+                    (lambda (cand)
+                      (when-let* ((hit (resolve-hit cand))
+                                  (buffer (car hit)))
+                        (unless (eq buffer (current-buffer))
+                          (switch-to-buffer buffer))
+                        (imenu (cdr hit))))))
+                  (hit (resolve-hit result))
+                  (buffer (car hit)))
+        (fzfa-with-visit
+          (unless (eq buffer (current-buffer))
+            (switch-to-buffer buffer))
+          (push-mark nil t)
+          (imenu (cdr hit)))))))
 
 ;;;###autoload
 (defun fzfa-imenu ()
