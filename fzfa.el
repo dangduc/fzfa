@@ -2183,7 +2183,9 @@ PATH and whose command symbol is bound: %s."
          (selection nil))
     (unwind-protect
         (minibuffer-with-setup-hook
-            (lambda () (when handler (fzfa--preview-install)))
+            (lambda ()
+              (fzfa--minibuffer-format-reset)
+              (when handler (fzfa--preview-install)))
           (setq selection
                 (completing-read
                  prompt
