@@ -282,21 +282,14 @@ Idempotent — safe to call more than once."
     (setf (alist-get 'fzfa-location embark-exporters-alist)
           #'fzfa-embark-export-location)
 
-    ;; Hooks on every command reachable from the `Z' prefix — including
-    ;; those inherited from the sync and async sub-maps.  `map-keymap'
-    ;; does NOT recurse into composed parents, so iterate the three maps
-    ;; explicitly.
-    ;;
-    ;; `embark--unmark-target' goes on `embark-pre-action-hooks' (fires
-    ;; before the action runs, in the originating buffer — deactivates
-    ;; the region target).  `embark--allow-edit' goes on
-    ;; `embark-target-injection-hooks' (fires AFTER `embark''s inject
-    ;; closure has inserted the target into the action's minibuffer and
-    ;; queued `exit-minibuffer' on `post-command-hook'; this hook
-    ;; removes that queued exit so the user can actually see and edit
-    ;; the pre-filled filter).
-    (dolist (m (list fzfa-embark-search-map
-                     fzfa-embark-sync-search-map
+    ;; Hooks only on the search sub-maps' commands — where the embark
+    ;; target becomes a refineable fzf query.  Picker commands on the
+    ;; top-level map (theme, buffer, bookmark, recent-file, …) must NOT
+    ;; get `embark--allow-edit': they rely on embark's queued
+    ;; `exit-minibuffer' to auto-submit the injected candidate so their
+    ;; `:apply' / `:return' fires.  `map-keymap' does not recurse into
+    ;; composed parents, so iterate each sub-map directly.
+    (dolist (m (list fzfa-embark-sync-search-map
                      fzfa-embark-async-search-map))
       (map-keymap
        (lambda (_key cmd)
