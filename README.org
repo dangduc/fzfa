@@ -762,10 +762,10 @@ queries).
 *** Multi source disambiguation
 
 Ivy ignores the ~group-function~ completion-metadata key that
-vertico / icomplete consult, so multi-source sessions render as a
+~vertico~ / ~icomplete~ support, so multi-source sessions render as a
 flat merged list by default.  ~fzfa-ivy.el~ registers a display
 transformer under ivy's ~t~ fallback caller that prepends
-~[source-name] ~ to each candidate carrying a fzfa tofu suffix.
+~[source-name] ~ to each candidate instead.
 
 The face for the label is ~fzfa-ivy-multi-source-label~ (inherits
 ~font-lock-comment-face~ by default).
