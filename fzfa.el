@@ -336,16 +336,24 @@ Returns nil for frontends without a selection index (e.g. icomplete)."
 (defun fzfa--frontend-candidate ()
   "Return the currently highlighted candidate string in the active UI, or nil.
 
-Used to implement live preview (e.g. `fzfa-theme')."
-  (cond
-   ((bound-and-true-p vertico-mode)
-    (when (and (boundp 'vertico--candidates) vertico--candidates)
-      (nth (max 0 vertico--index) vertico--candidates)))
-   ((bound-and-true-p ivy-mode)
-    (when (and (boundp 'ivy--all-candidates) ivy--all-candidates)
-      (nth (max 0 ivy--index) ivy--all-candidates)))
-   ((bound-and-true-p icomplete-mode)
-    (car (completion-all-sorted-completions)))))
+Used to implement live preview (e.g. `fzfa-theme').  Switches into the
+minibuffer buffer for the lookup — frontend state
+\(`vertico--candidates', `ivy--all-candidates', icomplete's
+`completion-all-sorted-completions') is all buffer-local there, and
+this function is invoked from idle timers whose `current-buffer' at
+fire time may be any window the user has shifted to (e.g. a help
+buffer after \\[describe-key])."
+  (when-let* ((win (active-minibuffer-window)))
+    (with-current-buffer (window-buffer win)
+      (cond
+       ((bound-and-true-p vertico-mode)
+        (when (and (boundp 'vertico--candidates) vertico--candidates)
+          (nth (max 0 vertico--index) vertico--candidates)))
+       ((bound-and-true-p ivy-mode)
+        (when (and (boundp 'ivy--all-candidates) ivy--all-candidates)
+          (nth (max 0 ivy--index) ivy--all-candidates)))
+       ((bound-and-true-p icomplete-mode)
+        (car (completion-all-sorted-completions)))))))
 
 (defun fzfa--icomplete-fit-mini-window ()
   "Grow the mini-window to fit `icomplete-overlay's `after-string'.
