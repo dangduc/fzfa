@@ -472,19 +472,20 @@ Matches `ivy''s default `ivy-call' binding."
   :group 'fzfa)
 
 (defcustom fzfa-apply-functions
-  `((fzfa-file     . #'find-file)
-    (fzfa-buffer   . #'switch-to-buffer)
-    (fzfa-bookmark . #'bookmark-jump)
-    (fzfa-grep     . #'fzfa--grep-jump)
-    (fzfa-location . #'fzfa--location-jump))
-  "Default `:apply' function per completion category.
+  '((fzfa-file     :apply find-file)
+    (fzfa-buffer   :apply switch-to-buffer)
+    (fzfa-bookmark :apply bookmark-jump)
+    (fzfa-grep     :apply fzfa--grep-jump)
+    (fzfa-location :apply fzfa--location-jump))
+  "Per-category apply handlers.
 
-Used by `fzfa--resolve-apply' when a session/source doesn't declare an
-explicit `:apply' lambda — saves callers from repeating the obvious
-\(find-file for fzfa-file, etc.).  Each value is a function taking a
-single CANDIDATE string.  Set a value to nil to disable the fallback
-for that category."
-  :type '(alist :key-type symbol :value-type function)
+Alist of (CATEGORY . PLIST), where PLIST recognizes the `:apply' slot
+\(a function taking a single CANDIDATE string).  Used by
+`fzfa--resolve-apply' when a session/source doesn't declare an explicit
+`:apply' lambda.  Drop a category's entry (or its `:apply' slot) to
+disable the fallback for that category."
+  :type '(alist :key-type symbol
+                :value-type (plist :options ((:apply function))))
   :group 'fzfa)
 
 (defvar fzfa--session-apply nil
@@ -523,7 +524,9 @@ Single: return `fzfa--session-apply' (already pre-resolved against
                       cand fzfa--multi-active-sources nil)))
       (or (plist-get src :apply)
           (plist-get src :action)
-          (alist-get (plist-get src :category) fzfa-apply-functions))))
+          (plist-get
+           (alist-get (plist-get src :category) fzfa-apply-functions)
+           :apply))))
    (t fzfa--session-apply)))
 
 (defun fzfa--resolve-candidate (cand)
@@ -1355,7 +1358,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
            (handler (fzfa--preview-handler preview category))
            (fzfa--preview-session (and handler (list handler)))
            (fzfa--session-apply
-            (or apply (alist-get category fzfa-apply-functions)))
+            (or apply (plist-get (alist-get category fzfa-apply-functions) :apply)))
            (fzfa--session-resolve-paths resolve-paths)
            (selection nil)
            (handle (fzf-native-async-start
@@ -1675,7 +1678,7 @@ changing FILTER rescores in place via fzf-native.
          (dir (expand-file-name directory))
          (dir-abbrev (abbreviate-file-name directory))
          (fzfa--session-apply
-          (or apply (alist-get category fzfa-apply-functions)))
+          (or apply (plist-get (alist-get category fzfa-apply-functions) :apply)))
          (fzfa--session-resolve-paths resolve-paths)
          (style-sym (or split-style fzfa-2pass-split-style 'perl))
          (style (or (alist-get style-sym fzfa-2pass-split-styles-alist)
@@ -2183,7 +2186,7 @@ PATH and whose command symbol is bound: %s."
          (handler (fzfa--preview-handler preview category))
          (fzfa--preview-session (and handler (list handler)))
          (fzfa--session-apply
-          (or apply (alist-get category fzfa-apply-functions)))
+          (or apply (plist-get (alist-get category fzfa-apply-functions) :apply)))
          ;; Ivy ignores `display-sort-function' in completion metadata,
          ;; so apply the history sort ourselves on the empty-query
          ;; branch.  Vertico/icomplete reach this via the metadata, so
@@ -3268,14 +3271,11 @@ a buffer name."
   (forward-line (1- line)))
 
 (defun fzfa--grep-jump (cand)
-  "Open the SOURCE and jump to the LINE referenced by CAND.
-Used both by the grep commands' selected-candidate handling and by the
-embark default action for the `fzfa-grep' category."
+  "Open the SOURCE and jump to the LINE referenced by CAND."
   (when (string-match fzfa--grep-line-regexp cand)
-    (fzfa-with-visit
-      (fzfa--goto-source
-       (match-string 1 cand)
-       (string-to-number (match-string 2 cand))))))
+    (fzfa--goto-source
+     (match-string 1 cand)
+     (string-to-number (match-string 2 cand)))))
 
 (defvar-keymap fzfa-grep-map
   :doc "Embark keymap for `fzfa-grep' candidates.
@@ -3307,13 +3307,10 @@ in-band for jump but never enter fzf's scoring."
   cand)
 
 (defun fzfa--location-jump (cand)
-  "Open SOURCE and jump to LINE recorded on CAND's `fzfa-location' property.
-Used as the embark default action for the `fzfa-location' category and
-as the post-selection handler for swiper-style commands."
+  "Open SOURCE and jump to LINE recorded on CAND's `fzfa-location' property."
   (when-let* ((loc (and (stringp cand) (> (length cand) 0)
                         (get-text-property 0 'fzfa-location cand))))
-    (fzfa-with-visit
-      (fzfa--goto-source (car loc) (cdr loc)))))
+    (fzfa--goto-source (car loc) (cdr loc))))
 
 (defvar-keymap fzfa-location-map
   :doc "Embark keymap for `fzfa-location' candidates.
@@ -3372,9 +3369,9 @@ public entry point.
                        (fzfa-location fzfa-location-map embark-general-map)))
         (add-to-list 'embark-keymap-alist entry))
       (setf (alist-get 'fzfa-grep     embark-default-action-overrides)
-            #'fzfa--grep-jump)
+            (lambda (cand) (fzfa-with-visit (fzfa--grep-jump cand))))
       (setf (alist-get 'fzfa-location embark-default-action-overrides)
-            #'fzfa--location-jump))
+            (lambda (cand) (fzfa-with-visit (fzfa--location-jump cand)))))
 
     (with-eval-after-load 'marginalia
       (dolist (entry '((fzfa-file     marginalia-annotate-file     none)

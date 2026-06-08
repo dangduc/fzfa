@@ -530,7 +530,9 @@ which is skipped when we bypass it via `:inject' mode."
          (category    (plist-get plist :category))
          (orig-action (plist-get plist :action))
          (apply       (or (plist-get plist :apply)
-                          (alist-get category fzfa-apply-functions)))
+                          (plist-get
+                           (alist-get category fzfa-apply-functions)
+                           :apply)))
          (action
           (lambda (cand)
             (when (and history (symbolp history) (not (eq history t)))
@@ -670,7 +672,9 @@ Returns the selected candidate string, or nil on cancel."
          ;; the vertico path's `fzfa-preview-delay'-based throttling so
          ;; fast scrolling doesn't fire expensive preview handlers per
          ;; row.
-         (apply-fn (or apply (alist-get category fzfa-apply-functions)))
+         (apply-fn (or apply (plist-get
+                              (alist-get category fzfa-apply-functions)
+                              :apply)))
          (source (fzfa-helm-make-async-source
                   :name (or prompt "fzfa")
                   :command command
@@ -729,7 +733,9 @@ metadata."
          (result nil)
          (handler (fzfa--preview-handler preview category))
          (fzfa--preview-session (and handler (list handler)))
-         (apply-fn (or apply (alist-get category fzfa-apply-functions)))
+         (apply-fn (or apply (plist-get
+                              (alist-get category fzfa-apply-functions)
+                              :apply)))
          (action
           (lambda (cand)
             (when (and history (symbolp history) (not (eq history t)))
@@ -805,7 +811,9 @@ matching line), and fire `:exit' + `:return' on exit."
          (helm-completion-style 'emacs)
          (handler (fzfa--preview-handler nil category))
          (fzfa--preview-session (and handler (list handler)))
-         (apply-fn (or apply (alist-get category fzfa-apply-functions)))
+         (apply-fn (or apply (plist-get
+                              (alist-get category fzfa-apply-functions)
+                              :apply)))
          restart-timer poll-timer
          (do-restart
           (lambda (cmd)

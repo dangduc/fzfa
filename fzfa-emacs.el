@@ -263,10 +263,11 @@ when the command was invoked.  Selecting \"default\" disables all themes."
                   (forward-line 1)
                   (cl-incf i))))
             (nreverse lines))))
-    (fzfa--location-jump
-     (fzfa-sync-completing-read :candidates candidates
-                                :prompt "swiper: "
-                                :category 'fzfa-location))))
+    (fzfa-with-visit
+      (fzfa--location-jump
+       (fzfa-sync-completing-read :candidates candidates
+                                  :prompt "swiper: "
+                                  :category 'fzfa-location)))))
 
 ;;;###autoload
 (defun fzfa-swiper-all ()
@@ -306,12 +307,13 @@ LINE:CONTENT — buffer names never enter the search input."
                             (forward-line 1)
                             (cl-incf j))))
                       (nreverse lines))))))
-    (fzfa--location-jump
-     (fzfa-sync-completing-read
-      :candidates candidates
-      :prompt "swiper-all: "
-      :category 'fzfa-location
-      :group #'fzfa--location-group))))
+    (fzfa-with-visit
+      (fzfa--location-jump
+       (fzfa-sync-completing-read
+        :candidates candidates
+        :prompt "swiper-all: "
+        :category 'fzfa-location
+        :group #'fzfa--location-group)))))
 
 (defun fzfa--imenu (scope)
   "Implementation of `fzfa-imenu' / `fzfa-imenu-all'.
@@ -581,7 +583,7 @@ position is recoverable with \\[set-mark-command] \\[set-mark-command]."
                     :category 'fzfa-location
                     :group #'fzfa--location-group)))
       (push-mark nil t)
-      (fzfa--location-jump r))))
+      (fzfa-with-visit (fzfa--location-jump r)))))
 
 ;;;###autoload
 (defun fzfa-global-mark ()
@@ -603,7 +605,7 @@ silently skipped."
                     :category 'fzfa-location
                     :group #'fzfa--location-group)))
       (push-mark nil t)
-      (fzfa--location-jump r))))
+      (fzfa-with-visit (fzfa--location-jump r)))))
 
 ;;;###autoload
 (defun fzfa-register ()
@@ -689,7 +691,7 @@ and line number."
                     :prompt "outline: "
                     :category 'fzfa-location)))
       (push-mark nil t)
-      (fzfa--location-jump r))))
+      (fzfa-with-visit (fzfa--location-jump r)))))
 
 ;;;###autoload
 (defun fzfa-compile-error ()

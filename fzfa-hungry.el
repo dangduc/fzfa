@@ -78,7 +78,7 @@ Selecting a match opens the file and jumps to the line."
                       :directory default-directory
                       :category 'fzfa-grep
                       :group #'fzfa--grep-group)))
-        (fzfa--grep-jump r)))))
+        (fzfa-with-visit (fzfa--grep-jump r))))))
 
 ;;;###autoload
 (defun fzfa-hungry-find ()

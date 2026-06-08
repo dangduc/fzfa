@@ -49,7 +49,7 @@ The command is configurable via `fzfa-grep-command'."
                   :command fzfa-grep-command
                   :category 'fzfa-grep
                   :group #'fzfa--grep-group)))
-    (fzfa--grep-jump r)))
+    (fzfa-with-visit (fzfa--grep-jump r))))
 
 ;;;###autoload
 (defun fzfa-grep-current-file ()
@@ -64,7 +64,7 @@ The command is configurable via `fzfa-grep-current-file-command'."
                   :command (format fzfa-grep-current-file-command
                                    (shell-quote-argument buffer-file-name))
                   :category 'fzfa-grep)))
-    (fzfa--grep-jump r)))
+    (fzfa-with-visit (fzfa--grep-jump r))))
 
 (when (memq 'fzfa-grep-2p fzfa-2p-functions)
   (fzfa-2p-define 'fzfa-grep))
