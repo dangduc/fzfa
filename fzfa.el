@@ -2410,7 +2410,7 @@ exhausted."
    (error "Fzfa narrow key pool exhausted")))
 
 (defun fzfa--format-narrow-hint (sources-v narrow-idx
-                                            &optional width prefix-key)
+                                           &optional width prefix-key)
   "Format the narrow-menu hint.
 SOURCES-V is the source vector; NARROW-IDX is the active narrow
 index or nil.  Shows every source as `KEY:NAME', separated by two
@@ -2610,74 +2610,74 @@ Per-source plist keys:
               ;; silently write to the wrong buffer otherwise.
               (with-selected-window win
                 (let ((interrupted nil))
-                (dotimes (i n)
-                  (if (and narrow-idx (/= narrow-idx i))
-                      (progn
-                        (aset last-results i nil)
-                        (aset filtered i 0)
-                        (aset rank i 0))
-                    (let* ((h     (aref handles i))
-                           (items (aref sync-items i))
-                           (out
-                            (cond
-                             (h (while-no-input
-                                  (fzf-native-async-candidates
-                                   h query limit)))
-                             (items
-                              (if (string-empty-p query)
-                                  items
-                                (while-no-input
-                                  (fzfa--bridge-defcustoms
-                                   #'fzf-native-score-all
-                                   items query)))))))
-                      (cond
-                       ((eq out t) (setq interrupted t))
-                       ((and h (not (fzfa--async-final-p out h query)))
-                        (when-let* ((s (fzf-native-async-stats h)))
-                          (aset totals i (cdr s))))
-                       (t
-                        (when h
-                          (setq out
-                                (mapcar
-                                 (lambda (c)
-                                   (fzfa--multi-tag c i cand->src))
-                                 out)))
-                        (aset last-results i out)
-                        (aset rank i (fzfa--multi-rank out query h))
+                  (dotimes (i n)
+                    (if (and narrow-idx (/= narrow-idx i))
+                        (progn
+                          (aset last-results i nil)
+                          (aset filtered i 0)
+                          (aset rank i 0))
+                      (let* ((h     (aref handles i))
+                             (items (aref sync-items i))
+                             (out
+                              (cond
+                               (h (while-no-input
+                                    (fzf-native-async-candidates
+                                     h query limit)))
+                               (items
+                                (if (string-empty-p query)
+                                    items
+                                  (while-no-input
+                                    (fzfa--bridge-defcustoms
+                                     #'fzf-native-score-all
+                                     items query)))))))
                         (cond
-                         (h (when-let* ((s (fzf-native-async-stats h)))
-                              (aset filtered i (car s))
-                              (aset totals   i (cdr s))))
-                         (t (aset filtered i (length out)))))))))
-                (unless interrupted
-                  (let* ((order (number-sequence 0 (1- n)))
-                         (empty-q (string-empty-p query))
-                         (sorted
-                          (if empty-q
-                              order
-                            (sort order
-                                  (lambda (a b)
-                                    (> (aref rank a) (aref rank b))))))
-                         (cands
-                          (apply #'append
-                                 (mapcar
-                                  (lambda (i)
-                                    (let* ((slot (aref last-results i))
-                                           (hist (and empty-q
-                                                      (plist-get
-                                                       (aref sources-v i)
-                                                       :history))))
-                                      (if hist
-                                          (fzfa--history-rank slot hist)
-                                        slot)))
-                                  sorted))))
-                    (ivy--set-candidates cands)
-                    (ivy--exhibit)
-                    ;; `ivy--exhibit' skips the prompt redraw when the
-                    ;; candidate body didn't change.  Force it so our
-                    ;; `ivy-pre-prompt-function' lambda runs again with
-                    ;; the freshest stats.
-                    (ivy--insert-prompt))))))))
+                         ((eq out t) (setq interrupted t))
+                         ((and h (not (fzfa--async-final-p out h query)))
+                          (when-let* ((s (fzf-native-async-stats h)))
+                            (aset totals i (cdr s))))
+                         (t
+                          (when h
+                            (setq out
+                                  (mapcar
+                                   (lambda (c)
+                                     (fzfa--multi-tag c i cand->src))
+                                   out)))
+                          (aset last-results i out)
+                          (aset rank i (fzfa--multi-rank out query h))
+                          (cond
+                           (h (when-let* ((s (fzf-native-async-stats h)))
+                                (aset filtered i (car s))
+                                (aset totals   i (cdr s))))
+                           (t (aset filtered i (length out)))))))))
+                  (unless interrupted
+                    (let* ((order (number-sequence 0 (1- n)))
+                           (empty-q (string-empty-p query))
+                           (sorted
+                            (if empty-q
+                                order
+                              (sort order
+                                    (lambda (a b)
+                                      (> (aref rank a) (aref rank b))))))
+                           (cands
+                            (apply #'append
+                                   (mapcar
+                                    (lambda (i)
+                                      (let* ((slot (aref last-results i))
+                                             (hist (and empty-q
+                                                        (plist-get
+                                                         (aref sources-v i)
+                                                         :history))))
+                                        (if hist
+                                            (fzfa--history-rank slot hist)
+                                          slot)))
+                                    sorted))))
+                      (ivy--set-candidates cands)
+                      (ivy--exhibit)
+                      ;; `ivy--exhibit' skips the prompt redraw when the
+                      ;; candidate body didn't change.  Force it so our
+                      ;; `ivy-pre-prompt-function' lambda runs again with
+                      ;; the freshest stats.
+                      (ivy--insert-prompt))))))))
          ;; Ivy action list for narrow dispatch.  One entry per
          ;; source's :narrow key (mutates `narrow-idx' and refreshes
          ;; via `ivy-push-multi'), plus a widen entry on
@@ -2886,184 +2886,184 @@ Per-source plist keys:
                     (completing-read
                      prompt
                      (lambda (str _pred action)
-                     (pcase action
-                       ('metadata
-                        (fzfa--completion-metadata
-                         'fzfa-multi
-                         :group
-                         (lambda (cand transform)
-                           (let* ((src (fzfa--multi-source-of
-                                        cand sources-v cand->src))
-                                  (g   (plist-get src :group)))
-                             (if transform
-                                 ;; Per-source :group transform — lets a
-                                 ;; source strip an internal "IDX:" prefix
-                                 ;; or otherwise reshape its display string
-                                 ;; while keeping the raw value as the
-                                 ;; lookup/match key.  Falls back to the raw
-                                 ;; candidate when a source has no :group
-                                 ;; function (or its transform returns nil).
-                                 ;; The tofu suffix is hidden via its
-                                 ;; `display ""' text property, so the raw
-                                 ;; CAND fallback renders cleanly without an
-                                 ;; explicit strip.
-                                 (or (and g (funcall
-                                             g (fzfa--tofu-hide cand) t))
-                                     cand)
-                               ;; Section header.  When narrowed to a single
-                               ;; source, delegate to the per-source :group's
-                               ;; nil branch so any internal sub-grouping
-                               ;; (e.g. per-file headers for grep-style
-                               ;; sources) takes over — matching the
-                               ;; standalone command's layout.  Across
-                               ;; sources, the source name is the only
-                               ;; header that meaningfully separates them.
-                               (or (and narrow-idx g
-                                        (funcall g (fzfa--tofu-hide cand) nil))
-                                   (plist-get src :name) ""))))
-                         :affix
-                         ;; Pin annotations to window-relative column
-                         ;; maxw+1 via a `(space :align-to ...)' display
-                         ;; spec.  Vertico just concatenates suffixes
-                         ;; verbatim (no padding of its own) so it needs
-                         ;; the spec; icomplete's own slice-relative
-                         ;; padding stacks badly with literal spaces, so
-                         ;; the spec wins there too.
-                         (lambda (cands)
-                           (let* ((displays
-                                   (mapcar
-                                    (lambda (c)
-                                      (let* ((src (fzfa--multi-source-of
-                                                   c sources-v cand->src))
-                                             (g (and src
-                                                     (plist-get src :group))))
-                                        (or (and g (funcall
-                                                    g (fzfa--tofu-hide c) t))
-                                            c)))
-                                    cands))
-                                  (maxw (apply #'max 0
-                                               (mapcar #'string-width
-                                                       displays))))
-                             (cl-mapcar
-                              (lambda (cand _display)
-                                (let* ((src (fzfa--multi-source-of
-                                             cand sources-v cand->src))
-                                       (ann (and src
-                                                 (plist-get src :annotate)))
-                                       (s   (and ann (funcall
-                                                      ann
-                                                      (fzfa--tofu-hide cand)))))
-                                  (list cand ""
-                                        (if s
-                                            (concat
-                                             (propertize
-                                              " " 'display
-                                              `(space :align-to
-                                                      (+ left ,(1+ maxw))))
-                                             s)
-                                          ""))))
-                              cands displays)))))
-                       (`(boundaries . ,_) (cons 0 0))
-                       ('lambda t)
-                       ('t
-                        (let ((query (fzfa--current-query str))
-                              (interrupted nil))
-                          (dotimes (i n)
-                            (if (and narrow-idx (/= narrow-idx i))
-                                ;; Source filtered out by narrow — drop
-                                ;; its prior results and zero its filtered
-                                ;; count so the overlay reflects the
-                                ;; narrowed pool.  `totals' is preserved
-                                ;; so re-widening shows the full size.
-                                (progn
-                                  (aset last-results i nil)
-                                  (aset filtered i 0)
-                                  (aset rank i 0))
-                            (let* ((h     (aref handles i))
-                                   (items (aref sync-items i))
-                                   (out
+                       (pcase action
+                         ('metadata
+                          (fzfa--completion-metadata
+                           'fzfa-multi
+                           :group
+                           (lambda (cand transform)
+                             (let* ((src (fzfa--multi-source-of
+                                          cand sources-v cand->src))
+                                    (g   (plist-get src :group)))
+                               (if transform
+                                   ;; Per-source :group transform — lets a
+                                   ;; source strip an internal "IDX:" prefix
+                                   ;; or otherwise reshape its display string
+                                   ;; while keeping the raw value as the
+                                   ;; lookup/match key.  Falls back to the raw
+                                   ;; candidate when a source has no :group
+                                   ;; function (or its transform returns nil).
+                                   ;; The tofu suffix is hidden via its
+                                   ;; `display ""' text property, so the raw
+                                   ;; CAND fallback renders cleanly without an
+                                   ;; explicit strip.
+                                   (or (and g (funcall
+                                               g (fzfa--tofu-hide cand) t))
+                                       cand)
+                                 ;; Section header.  When narrowed to a single
+                                 ;; source, delegate to the per-source :group's
+                                 ;; nil branch so any internal sub-grouping
+                                 ;; (e.g. per-file headers for grep-style
+                                 ;; sources) takes over — matching the
+                                 ;; standalone command's layout.  Across
+                                 ;; sources, the source name is the only
+                                 ;; header that meaningfully separates them.
+                                 (or (and narrow-idx g
+                                          (funcall g (fzfa--tofu-hide cand) nil))
+                                     (plist-get src :name) ""))))
+                           :affix
+                           ;; Pin annotations to window-relative column
+                           ;; maxw+1 via a `(space :align-to ...)' display
+                           ;; spec.  Vertico just concatenates suffixes
+                           ;; verbatim (no padding of its own) so it needs
+                           ;; the spec; icomplete's own slice-relative
+                           ;; padding stacks badly with literal spaces, so
+                           ;; the spec wins there too.
+                           (lambda (cands)
+                             (let* ((displays
+                                     (mapcar
+                                      (lambda (c)
+                                        (let* ((src (fzfa--multi-source-of
+                                                     c sources-v cand->src))
+                                               (g (and src
+                                                       (plist-get src :group))))
+                                          (or (and g (funcall
+                                                      g (fzfa--tofu-hide c) t))
+                                              c)))
+                                      cands))
+                                    (maxw (apply #'max 0
+                                                 (mapcar #'string-width
+                                                         displays))))
+                               (cl-mapcar
+                                (lambda (cand _display)
+                                  (let* ((src (fzfa--multi-source-of
+                                               cand sources-v cand->src))
+                                         (ann (and src
+                                                   (plist-get src :annotate)))
+                                         (s   (and ann (funcall
+                                                        ann
+                                                        (fzfa--tofu-hide cand)))))
+                                    (list cand ""
+                                          (if s
+                                              (concat
+                                               (propertize
+                                                " " 'display
+                                                `(space :align-to
+                                                        (+ left ,(1+ maxw))))
+                                               s)
+                                            ""))))
+                                cands displays)))))
+                         (`(boundaries . ,_) (cons 0 0))
+                         ('lambda t)
+                         ('t
+                          (let ((query (fzfa--current-query str))
+                                (interrupted nil))
+                            (dotimes (i n)
+                              (if (and narrow-idx (/= narrow-idx i))
+                                  ;; Source filtered out by narrow — drop
+                                  ;; its prior results and zero its filtered
+                                  ;; count so the overlay reflects the
+                                  ;; narrowed pool.  `totals' is preserved
+                                  ;; so re-widening shows the full size.
+                                  (progn
+                                    (aset last-results i nil)
+                                    (aset filtered i 0)
+                                    (aset rank i 0))
+                                (let* ((h     (aref handles i))
+                                       (items (aref sync-items i))
+                                       (out
+                                        (cond
+                                         (h (while-no-input
+                                              (fzf-native-async-candidates
+                                               h query limit)))
+                                         (items
+                                          (if (string-empty-p query)
+                                              items
+                                            (while-no-input
+                                              (fzfa--bridge-defcustoms
+                                               #'fzf-native-score-all
+                                               items query)))))))
+                                  (cond
+                                   ((eq out t) (setq interrupted t))
+                                   ;; Async source whose result is not yet
+                                   ;; final — keep the prior per-source slot;
+                                   ;; refresh `totals' so the overlay still
+                                   ;; reflects the live pool.
+                                   ((and h (not (fzfa--async-final-p
+                                                 out h query)))
+                                    (when-let* ((s (fzf-native-async-stats h)))
+                                      (aset totals i (cdr s))))
+                                   (t
+                                    ;; Async returns fresh strings each call;
+                                    ;; re-tag them so group/action lookup works.
+                                    ;; out may be nil (zero matches) — still ok.
+                                    (when h
+                                      (setq out
+                                            (mapcar
+                                             (lambda (c)
+                                               (fzfa--multi-tag c i cand->src))
+                                             out)))
+                                    (aset last-results i out)
+                                    (aset rank i
+                                          (fzfa--multi-rank out query h))
                                     (cond
-                                     (h (while-no-input
-                                          (fzf-native-async-candidates
-                                           h query limit)))
-                                     (items
-                                      (if (string-empty-p query)
-                                          items
-                                        (while-no-input
-                                          (fzfa--bridge-defcustoms
-                                           #'fzf-native-score-all
-                                           items query)))))))
-                              (cond
-                               ((eq out t) (setq interrupted t))
-                               ;; Async source whose result is not yet
-                               ;; final — keep the prior per-source slot;
-                               ;; refresh `totals' so the overlay still
-                               ;; reflects the live pool.
-                               ((and h (not (fzfa--async-final-p
-                                             out h query)))
-                                (when-let* ((s (fzf-native-async-stats h)))
-                                  (aset totals i (cdr s))))
-                               (t
-                                ;; Async returns fresh strings each call;
-                                ;; re-tag them so group/action lookup works.
-                                ;; out may be nil (zero matches) — still ok.
-                                (when h
-                                  (setq out
-                                        (mapcar
-                                         (lambda (c)
-                                           (fzfa--multi-tag c i cand->src))
-                                         out)))
-                                (aset last-results i out)
-                                (aset rank i
-                                      (fzfa--multi-rank out query h))
-                                (cond
-                                 (h (when-let* ((s (fzf-native-async-stats h)))
-                                      (aset filtered i (car s))
-                                      (aset totals   i (cdr s))))
-                                 (t (aset filtered i (length out)))))))))
-                          (when interrupted
-                            (when retry-timer (cancel-timer retry-timer))
-                            (setq retry-timer
-                                  (run-with-idle-timer
-                                   fzfa-input-debounce nil
-                                   (lambda ()
-                                     (setq retry-timer nil)
-                                     (fzfa--frontend-push ivy-push-multi)))))
-                          (when-let* ((win (active-minibuffer-window)))
-                            (with-selected-window win
-                              (unless stats-overlay
-                                (setq stats-overlay
-                                      (make-overlay (point-min)
-                                                    (minibuffer-prompt-end))))
-                              (funcall refresh-overlay)))
-                          (let* ((order (number-sequence 0 (1- n)))
-                                 (empty-q (string-empty-p query))
-                                 ;; `sort' is stable since Emacs 25, so equal
-                                 ;; ranks preserve declared source order.
-                                 (sorted
-                                  (if empty-q
-                                      order
-                                    (sort order
-                                          (lambda (a b)
-                                            (> (aref rank a)
-                                               (aref rank b)))))))
-                            (apply #'append
-                                   (mapcar
-                                    (lambda (i)
-                                      (let* ((slot (aref last-results i))
-                                             ;; Per-source recency only on
-                                             ;; empty input — when scoring
-                                             ;; ran, fzf order wins.
-                                             (hist (and empty-q
-                                                        (plist-get
-                                                         (aref sources-v i)
-                                                         :history))))
-                                        (if hist
-                                            (fzfa--history-rank slot hist)
-                                          slot)))
-                                    sorted)))))
-                       (_ t)))
-                   nil t)))))
+                                     (h (when-let* ((s (fzf-native-async-stats h)))
+                                          (aset filtered i (car s))
+                                          (aset totals   i (cdr s))))
+                                     (t (aset filtered i (length out)))))))))
+                            (when interrupted
+                              (when retry-timer (cancel-timer retry-timer))
+                              (setq retry-timer
+                                    (run-with-idle-timer
+                                     fzfa-input-debounce nil
+                                     (lambda ()
+                                       (setq retry-timer nil)
+                                       (fzfa--frontend-push ivy-push-multi)))))
+                            (when-let* ((win (active-minibuffer-window)))
+                              (with-selected-window win
+                                (unless stats-overlay
+                                  (setq stats-overlay
+                                        (make-overlay (point-min)
+                                                      (minibuffer-prompt-end))))
+                                (funcall refresh-overlay)))
+                            (let* ((order (number-sequence 0 (1- n)))
+                                   (empty-q (string-empty-p query))
+                                   ;; `sort' is stable since Emacs 25, so equal
+                                   ;; ranks preserve declared source order.
+                                   (sorted
+                                    (if empty-q
+                                        order
+                                      (sort order
+                                            (lambda (a b)
+                                              (> (aref rank a)
+                                                 (aref rank b)))))))
+                              (apply #'append
+                                     (mapcar
+                                      (lambda (i)
+                                        (let* ((slot (aref last-results i))
+                                               ;; Per-source recency only on
+                                               ;; empty input — when scoring
+                                               ;; ran, fzf order wins.
+                                               (hist (and empty-q
+                                                          (plist-get
+                                                           (aref sources-v i)
+                                                           :history))))
+                                          (if hist
+                                              (fzfa--history-rank slot hist)
+                                            slot)))
+                                      sorted)))))
+                         (_ t)))
+                     nil t)))))
       (when timer (cancel-timer timer))
       (when retry-timer (cancel-timer retry-timer))
       (remove-hook 'post-command-hook refresh-overlay)
