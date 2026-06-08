@@ -99,8 +99,9 @@ has no effect (the check is macro-expanded at load time, like #ifdef).")
 (defmacro fzfa--log (fmt &rest args)
   "Emit a debug message FMT with ARGS if `fzfa-debug' is non-nil at load.
 Expands to nothing when disabled — zero runtime cost.  Logs to *Messages*
-only; `inhibit-message' suppresses the echo-area write, which would
-otherwise stomp the active minibuffer/mini-window display."
+only; variable `inhibit-message' is bound around the `message' call so
+the echo-area write is suppressed, otherwise it would stomp the
+active minibuffer/mini-window display."
   (when (bound-and-true-p fzfa-debug)
     `(let ((inhibit-message t)) (message ,fmt ,@args))))
 
@@ -387,9 +388,9 @@ the pane back."
   "Refresh icomplete's candidate display after an async generation bump.
 
 Flushes the sorted-completions cache (icomplete reads it via the
-buffer-local `completion-all-sorted-completions'), runs the standard
-`icomplete-exhibit' to repopulate the overlay's `after-string', and
-fits the mini-window."
+buffer-local variable `completion-all-sorted-completions'), runs the
+standard `icomplete-exhibit' to repopulate the overlay's
+`after-string', and fits the mini-window."
   (completion--flush-all-sorted-completions)
   ;; Belt-and-suspenders flush: the function above can short-circuit
   ;; based on region args, leaving the cache populated.
@@ -472,7 +473,7 @@ Matches `ivy''s default `ivy-call' binding."
 
 Used by `fzfa--resolve-apply' when a session/source doesn't declare an
 explicit `:apply' lambda — saves callers from repeating the obvious
-(find-file for fzfa-file, etc.).  Each value is a function taking a
+\(find-file for fzfa-file, etc.).  Each value is a function taking a
 single CANDIDATE string.  Set a value to nil to disable the fallback
 for that category."
   :type '(alist :key-type symbol :value-type function)
@@ -571,9 +572,9 @@ without preview, buffer category, etc.)."
 
 Preview uses `display-buffer-same-window' to render candidates in
 WINDOW; the minibuffer unwind path consults `quit-restore' and related
-display-buffer bookkeeping to revert the window after exit.  Apply
+`display-buffer' bookkeeping to revert the window after exit.  Apply
 \(`fzfa-apply-current') calls this helper so the user's deliberate
-C-z visit survives that reversion.
+\\[fzfa-apply-current] visit survives that reversion.
 
 Implementation: `minibuffer-exit-hook' fires BEFORE the unwind's
 window restoration, so a synchronous `set-window-buffer' inside the
@@ -581,11 +582,10 @@ hook gets clobbered afterward.  Defer the re-assert via `run-at-time
 0 nil' from within the exit hook so the set fires at the next event
 loop tick, after the unwind has fully drained.
 
-On commit (RET), the calling command's post-`completing-read' body
-runs before our deferred re-assert, but it places the candidate's
-buffer in WINDOW anyway, so the re-assert is a harmless no-op when
-the two agree.  On abort (C-g) the body doesn't run and the re-assert
-sticks."
+On commit, the calling command's post-`completing-read' body runs
+before our deferred re-assert, but it places the candidate's buffer
+in WINDOW anyway, so the re-assert is a harmless no-op when the two
+agree.  On abort the body doesn't run and the re-assert sticks."
   (when-let* ((mb (active-minibuffer-window))
               ((window-live-p window))
               ((buffer-live-p buffer)))
@@ -2292,7 +2292,7 @@ plist with `:setup' / `:preview' / `:exit' / `:return' slots plus a
 `:multi-cells' slot exposing the per-source session cell vector —
 callers stash this in the outer preview session so per-candidate
 dispatch outside the router (e.g. `fzfa--promote-from-preview' on a
-C-z apply) can reach the right source's `:opener'.
+\\[fzfa-apply-current] apply) can reach the right source's `:opener'.
 
 For each source, a fresh handler plist is resolved via
 `fzfa--preview-handler' using the source's own `:preview' override

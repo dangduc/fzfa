@@ -109,9 +109,9 @@ function runs on every selection change (preview-style) AND on
 `:persistent-action' idiom.
 
 Set to nil to disable auto-fire — `:apply' then runs only on
-explicit C-z.  Useful for sources whose `:apply' has side effects
-\(buffer kill, command execute) that shouldn't fire on every
-arrow-key press."
+explicit `helm-execute-persistent-action'.  Useful for sources whose
+`:apply' has side effects (buffer kill, command execute) that
+shouldn't fire on every arrow-key press."
   :type 'boolean
   :group 'fzfa)
 
@@ -631,6 +631,9 @@ two-pass command (`:2pass t' in the extracted args)."
   "Helm dispatch for `fzfa-async-completing-read'.
 
 PROMPT, COMMAND, DIRECTORY, SKIP-EXECUTABLE-CHECK as per the caller.
+APPLY is forwarded to `fzfa-helm-make-async-source' for
+persistent-action wiring (falls back to the category default in
+`fzfa-apply-functions').
 CATEGORY and PREVIEW are threaded through to the preview framework:
 `fzfa--preview-handler' resolves a handler plist; if present we
 capture origin window/buffer/`default-directory' into the session
@@ -698,7 +701,10 @@ Returns the selected candidate string, or nil on cancel."
                                      default preview apply)
   "Helm dispatch for `fzfa-sync-completing-read'.
 CANDIDATES, PROMPT, CATEGORY, ANNOTATE, AFFIX, GROUP, HISTORY,
-REQUIRE-MATCH, DEFAULT, and PREVIEW are forwarded from the caller.
+REQUIRE-MATCH, DEFAULT, PREVIEW, and APPLY are forwarded from the
+caller.  APPLY (falling back to `fzfa-apply-functions' by category)
+is wired into helm's `:persistent-action' slot for
+`helm-execute-persistent-action'.
 
 Bypasses `completing-read' (and therefore helm-mode's advice) so we
 can apply per-history candidate ordering — helm doesn't consult the

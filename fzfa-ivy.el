@@ -92,7 +92,7 @@ Multi-source: `fzfa--multi-active-sources' is let-bound by
 In `fzfa' sessions, replace `ivy''s identity action with our `:apply'
 dispatch — the source plist's (or constructor's) `:apply' is invoked
 on the current candidate without exiting.  All other sessions pass
-through unchanged."
+through unchanged via (apply ORIG ARGS)."
   (if (fzfa-ivy--session-p)
       (fzfa-apply-current)
     (apply orig args)))
