@@ -35,6 +35,7 @@
 ;;   `fzfa-register'                 Use a register (jump-to or insert)
 ;;   `fzfa-outline'                  Jump to an outline heading in this buffer
 ;;   `fzfa-compile-error'            Jump to an error from a compilation buffer
+;;   `fzfa-frames'                   Switch focus to another live frame
 
 ;;; Code:
 
@@ -616,6 +617,74 @@ as `compile' itself can navigate them."
           (pop-to-buffer buffer)
           (goto-char pos)
           (compile-goto-error))))))
+
+;;;###autoload
+(defun fzfa-frames ()
+  "Pick a live Emacs frame other than the current one and switch focus to it.
+
+Candidates are visible and iconified frames excluding the
+currently-selected frame.  Selecting via RET calls
+`select-frame-set-input-focus' (deiconifying first when needed).
+The apply key (`fzfa-apply-key', default \\[fzfa-apply-current])
+focuses without exiting the picker — useful for visually
+confirming which frame the candidate refers to before committing.
+
+Previews show the candidate frame's selected-window buffer in the
+originating window, so the picker keeps focus while you browse."
+  (interactive)
+  (let* ((current (selected-frame))
+         (all (frame-list))
+         (frames (cl-remove-if
+                  (lambda (f)
+                    (or (eq f current)
+                        (frame-parameter f 'no-accept-focus)
+                        (not (memq (frame-visible-p f) '(t icon)))))
+                  all))
+         (lookup (make-hash-table :test 'equal))
+         (used   (make-hash-table :test 'equal))
+         (candidates
+          (cl-loop
+           for f in frames
+           for name = (or (frame-parameter f 'name)
+                          (format "Frame-%d"
+                                  (1+ (cl-position f all))))
+           for buf  = (buffer-name (window-buffer (frame-selected-window f)))
+           for vis  = (if (eq (frame-visible-p f) 'icon)
+                          "iconified"
+                        "visible")
+           for display = (format "[%s]  %s  %dx%d  %s"
+                                 name buf
+                                 (frame-width f) (frame-height f)
+                                 vis)
+           do (progn
+                (while (gethash display used)
+                  (setq display (concat display " ")))
+                (puthash display t used)
+                (puthash display f lookup))
+           collect display)))
+    (unless candidates
+      (user-error "No other frames"))
+    (cl-labels
+        ((focus-frame (cand)
+           (when-let* ((f (gethash cand lookup)) ((frame-live-p f)))
+             (when (eq (frame-visible-p f) 'icon)
+               (make-frame-visible f))
+             (fzfa-with-visit (select-frame-set-input-focus f))))
+         (preview-frame (cand)
+           (when-let* ((f (gethash cand lookup))
+                       ((frame-live-p f))
+                       (win (frame-selected-window f))
+                       ((window-live-p win))
+                       (buf (window-buffer win))
+                       ((buffer-live-p buf)))
+             (fzfa-preview-show buf (window-point win)))))
+      (when-let* ((result (fzfa-sync-completing-read
+                           :candidates candidates
+                           :prompt "frame: "
+                           :category 'fzfa-frame
+                           :apply #'focus-frame
+                           :preview #'preview-frame)))
+        (focus-frame result)))))
 
 (provide 'fzfa-emacs)
 
