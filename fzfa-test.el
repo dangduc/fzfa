@@ -843,7 +843,7 @@ referenced by the resolve tests as no-op functions so they are
 (ert-deftest fzfa-smart-define-propagates-multi-mode ()
   "Active `fzfa--multi-mode' propagates through the smart command.
 This is the contract that makes smart commands work transparently
-inside `fzfa-multi-read' (`:extract') and `fzfa--2pass-dispatch'."
+inside `fzfa-multi-read' (`:extract')."
   (let ((sym (intern "fzfa-smart-test-multi"))
         (backend (intern "fzfa-test-backend-multi"))
         observed)

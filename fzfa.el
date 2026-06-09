@@ -330,12 +330,6 @@ through `completing-read' (where helm-mode's advice picks it up but
 ignores the `display-sort-function' metadata, so per-history ordering
 is lost).")
 
-(defvar fzfa-2pass-helm-handler nil
-  "Function called by `fzfa-2pass-completing-read' under `helm-mode'.
-Receives :prompt :directory :category :group :initial-input
-:split-style and returns the selected candidate string, or nil.
-When nil, fzfa signals a `user-error' under `helm-mode'.")
-
 (defvar fzfa-multi-helm-handler nil
   "Function called by `fzfa--multi-read' under `helm-mode'.
 Receives the SOURCES list as the first argument and :prompt as a
@@ -509,16 +503,16 @@ disable the fallback for that category."
 
 Lambda taking a single CANDIDATE; invoked by `fzfa-apply-current'
 without exiting the session.  `let'-bound by
-`fzfa-async-completing-read' / `fzfa-sync-completing-read' /
-`fzfa-2pass-completing-read' from the constructor's `:apply' keyword
-\(falling back to `fzfa-apply-functions' by category).  Multi sessions
-look up `:apply' per-source via `fzfa--resolve-apply' instead.")
+`fzfa-async-completing-read' / `fzfa-sync-completing-read' from the
+constructor's `:apply' keyword \(falling back to `fzfa-apply-functions'
+by category).  Multi sessions look up `:apply' per-source via
+`fzfa--resolve-apply' instead.")
 
 (defvar fzfa--session-resolve-paths nil
   "Whether to expand path candidates for the active single-source session.
 
 Mirrors the constructor's `:resolve-paths' argument; `let'-bound by
-`fzfa-async-completing-read' / `fzfa-2pass-completing-read'.  Passed
+`fzfa-async-completing-read'.  Passed
 to `fzfa--maybe-expand' in `fzfa-apply-current'; the directory comes
 from the minibuffer's `default-directory' which the setup hook
 already binds to the constructor's `:directory'.  Multi sessions read
@@ -1315,15 +1309,33 @@ Priority: `fzfa-directory' >
                                       (directory (fzfa--default-dir))
                                       (category 'fzfa-file)
                                       group
+                                      initial-input
                                       (resolve-paths t)
+                                      (display 'hidden)
+                                      (split-style nil)
                                       skip-executable-check
                                       preview
                                       apply)
   "Run shell COMMAND with asynchronous `completing-read'.
 
+The minibuffer input is split into a shell-CMD part and an
+fzf-FILTER part via `fzfa-async-split-style' (or :SPLIT-STYLE).
+With the default `perl' style the buffer text has shape
+\"#CMD#FILTER\".  Changing CMD restarts the subprocess; changing
+FILTER rescores in place via fzf-native.
+
+:DISPLAY controls how much of the CMD region is visible.  Press
+`fzfa-async-display-key' (default \">\") to cycle:
+  hidden  — entire `#CMD#' prefix is invisible; only FILTER appears
+            editable.  This is the default for legacy async callers.
+  compact — flags within CMD collapse behind ` ... '; program name
+            and the trailing argument slot remain visible.
+  full    — whole `#CMD#FILTER' string is shown verbatim.
+
 :PROMPT                 Minibuffer prompt.  Derived from the first token of
                         COMMAND (e.g. \"find: \" for \"find .\") when omitted.
 :COMMAND                Shell command whose stdout lines become candidates.
+                        Pre-inserted into the minibuffer as `#COMMAND#'.
 :DIRECTORY              Working directory for COMMAND.  Defaults to
                         `fzfa--default-dir' (respects
                         `fzfa-project-backend').
@@ -1331,6 +1343,10 @@ Priority: `fzfa-directory' >
                         `fzfa-file' (most async commands return file
                         paths).  Pass `fzfa-grep' for FILE:LINE:CONTENT
                         candidates, `fzfa-misc' for non-file output, etc.
+:GROUP                  Optional grouping function for completion metadata.
+:INITIAL-INPUT          Optional initial minibuffer text overriding the
+                        auto-built `#COMMAND#'.  Either a string or
+                        (TEXT . POSITION) cons with 0-based cursor offset.
 :RESOLVE-PATHS          When non-nil (the default), the returned
                         candidate is passed through `expand-file-name'
                         against :DIRECTORY before being handed back to the
@@ -1338,6 +1354,9 @@ Priority: `fzfa-directory' >
                         of the caller's `default-directory'.  Pass nil for
                         commands that return non-path output (e.g. shell
                         output where the raw text matters).
+:DISPLAY                Initial display mode (`hidden', `compact', or
+                        `full'); see above.
+:SPLIT-STYLE            Override `fzfa-async-split-style' for this call.
 :SKIP-EXECUTABLE-CHECK  When non-nil, skip the `executable-find' guard on
                         the first token of COMMAND.
 :PREVIEW                Per-call live-preview handler that bypasses the
@@ -1372,7 +1391,10 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
       (throw 'fzfa-extracted
              (list :prompt prompt :command command
                    :directory directory :category category :group group
-                   :resolve-paths resolve-paths :preview preview)))
+                   :initial-input initial-input
+                   :resolve-paths resolve-paths
+                   :display display :split-style split-style
+                   :preview preview)))
      ((eq (car-safe fzfa--multi-mode) :inject)
       ;; One-shot consume: mutate the outer action's `let' cell so the
       ;; rest of the caller's body (and any nested fzfa calls) run with
@@ -1390,74 +1412,251 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                   :category category :preview preview :apply apply)
          directory resolve-paths)))
     (let* ((completion-styles '(fzfa))
+           (dir (expand-file-name directory))
+           (dir-abbrev (abbreviate-file-name directory))
            (handler (fzfa--preview-handler preview category))
            (fzfa--preview-session (and handler (list handler)))
            (fzfa--session-apply
             (or apply (plist-get (alist-get category fzfa-apply-functions) :apply)))
            (fzfa--session-resolve-paths resolve-paths)
+           (style-sym (or split-style fzfa-async-split-style 'perl))
+           (style (or (alist-get style-sym fzfa-async-split-styles-alist)
+                      (user-error
+                       "Unknown fzfa-async split style: %s" style-sym)))
+           (initial-char (plist-get style :initial))
+           ;; Auto-build initial input as "#COMMAND#" when caller did not
+           ;; supply an :INITIAL-INPUT.  Point lands inside the trailing
+           ;; quote pair if the command ends with one (e.g. grep's `'')`,
+           ;; otherwise just after the closing separator.
+           (init-text (cond
+                       ((consp initial-input) (car initial-input))
+                       ((stringp initial-input) initial-input)
+                       ((and command initial-char)
+                        (concat (char-to-string initial-char) command
+                                (char-to-string initial-char)))
+                       (t nil)))
+           (init-point
+            (cond
+             ((consp initial-input) (cdr initial-input))
+             ((and init-text command initial-char)
+              (cond
+               ((or (string-suffix-p "''" command)
+                    (string-suffix-p "\"\"" command))
+                (- (length init-text) 2))
+               (t (length init-text))))
+             (t nil)))
+           (splitter (plist-get style :function))
+           (limit (fzfa--candidate-limit))
            (selection nil)
-           (handle (fzf-native-async-start
-                    command (expand-file-name directory)))
-           (dir (abbreviate-file-name directory))
+           (handle nil)
+           (current-cmd nil)
            (last-gen -1)
            (last-result nil)
-           (last-query nil)
-           (stats-overlay nil)
            (last-filtered 0)
            (last-total 0)
-           (limit (fzfa--candidate-limit))
            (last-exhibit-scheduled 0.0)
+           (last-restart-time 0.0)
+           (stats-overlay nil)
+           (display-overlays nil)
+           (display-state display)
+           (display-clear
+            (lambda ()
+              (mapc #'delete-overlay display-overlays)
+              (setq display-overlays nil)))
+           (display-apply
+            (lambda ()
+              (funcall display-clear)
+              (cl-case display-state
+                ((hidden)
+                 (when-let* ((bounds (fzfa--async-display-region-bounds
+                                      initial-char)))
+                   (setq display-overlays
+                         (fzfa--async-display-make-hidden-overlays
+                          (car bounds) (cdr bounds)))))
+                ((compact)
+                 (when-let* ((bounds (fzfa--async-display-cmd-bounds
+                                      initial-char)))
+                   (setq display-overlays
+                         (fzfa--async-display-make-overlays
+                          (car bounds) (cdr bounds))))))))
+           (display-cycle
+            (lambda ()
+              (interactive)
+              (setq display-state
+                    (cl-case display-state
+                      ((hidden) 'compact)
+                      ((compact) 'full)
+                      ((full) 'hidden)
+                      (t 'hidden)))
+              (funcall display-apply)))
+           restart-timer retry-timer poll-timer ivy-push
            (refresh-overlay
             (lambda ()
               (when (and stats-overlay (active-minibuffer-window))
                 (with-selected-window (active-minibuffer-window)
-                  (let* ((idx (fzfa--frontend-index))
-                         (text (fzfa--format-stats
-                                (concat prompt dir " ")
-                                idx last-filtered last-total)))
-                    (fzfa--log "DEBUG: %s" text)
-                    (overlay-put stats-overlay 'display text))))))
-           ;; Ivy push path: score the current query and push into
-           ;; `ivy--all-candidates' directly. Used instead of
-           ;; `fzfa--frontend-exhibit' for ivy because
-           ;; ivy does not re-call the collection lambda on timer ticks.
-           ;; Skip when ivy has dropped to static collection (post
-           ;; `ivy-restrict-to-matches'): pushing would overwrite the
-           ;; restricted set ivy just locked in.
-           (ivy-push
+                  (overlay-put
+                   stats-overlay 'display
+                   (fzfa--format-stats (concat prompt dir-abbrev " ")
+                                       (fzfa--frontend-index)
+                                       last-filtered last-total))))
+              (fzfa--insert-prompt-if-ivy)))
+           (do-restart
+            (lambda (cmd)
+              (when handle
+                (fzfa--defer-async-stop handle)
+                (setq handle nil))
+              ;; Keep `last-result' across restarts so the display stays
+              ;; populated with stale candidates until new ones stream in.
+              (setq current-cmd cmd
+                    last-gen -1
+                    last-filtered 0
+                    last-total 0
+                    last-restart-time (float-time))
+              (when (and cmd (not (string-empty-p cmd)))
+                (setq handle (fzf-native-async-start cmd dir)))
+              (fzfa--frontend-push ivy-push)))
+           (table
+            (lambda (str _pred action)
+              (pcase action
+                ('metadata (fzfa--completion-metadata category :group group))
+                (`(boundaries . ,_) (cons 0 0))
+                ('t
+                 (let* ((input (fzfa--current-query str))
+                        (split (funcall splitter input style))
+                        (cmd (car split))
+                        (query (cdr split)))
+                   (cond
+                    ((not (equal cmd current-cmd))
+                     ;; Cancel any pending restart and reschedule.  Each
+                     ;; keystroke debounces; the throttle term is the
+                     ;; floor on the gap between actual spawns when the
+                     ;; user keeps typing past one debounce window.
+                     (when restart-timer
+                       (cancel-timer restart-timer)
+                       (setq restart-timer nil))
+                     (let* ((elapsed (- (float-time) last-restart-time))
+                            (delay (max fzfa-shell-command-debounce
+                                        (- fzfa-shell-command-throttle elapsed))))
+                       (setq restart-timer
+                             (run-with-timer
+                              (max 0.01 delay) nil
+                              (lambda ()
+                                (setq restart-timer nil)
+                                (funcall do-restart cmd)))))
+                     ;; Fetch from the *current* handle (previous cmd's
+                     ;; process) so the display reflects something while the
+                     ;; user is mid-typing in the cmd portion.
+                     (let ((r (and handle
+                                   (fzf-native-async-candidates
+                                    handle query limit))))
+                       (when (and handle (fzfa--async-final-p r handle query))
+                         (setq last-result r))
+                       last-result))
+                    ((null handle) last-result)
+                    (t
+                     (let ((r (while-no-input
+                                (fzf-native-async-candidates
+                                 handle query limit))))
+                       (cond
+                        ((eq r t)
+                         (when retry-timer (cancel-timer retry-timer))
+                         (setq retry-timer
+                               (run-with-idle-timer
+                                fzfa-input-debounce nil
+                                (lambda ()
+                                  (setq retry-timer nil)
+                                  (fzfa--frontend-push ivy-push))))
+                         last-result)
+                        (t
+                         (when-let* ((stats (fzf-native-async-stats handle)))
+                           (setq last-filtered (car stats)
+                                 last-total    (cdr stats)))
+                         (when-let* ((win (active-minibuffer-window)))
+                           (with-selected-window win
+                             (unless stats-overlay
+                               (setq stats-overlay
+                                     (make-overlay (point-min)
+                                                   (minibuffer-prompt-end))))
+                             (funcall refresh-overlay)))
+                         (when (fzfa--async-final-p r handle query)
+                           (setq last-result r))
+                         last-result)))))))
+                (_ t)))))
+      ;; Install `ivy-push' into the placeholder declared in the let*
+      ;; above.  Deferred so its lambda can close over `do-restart' (which
+      ;; references back into `ivy-push'), and so `setq' mutates the
+      ;; placeholder's cell rather than shadowing it.
+      (setq ivy-push
             (lambda ()
-              (when (and handle (active-minibuffer-window)
-                         (or (not (bound-and-true-p ivy-last))
-                             (ivy-state-dynamic-collection ivy-last)))
-                (when-let* ((query (and (boundp 'ivy-text) ivy-text)))
-                  (let ((cands (while-no-input
+              (when-let* ((win   (active-minibuffer-window))
+                          ((or (not (bound-and-true-p ivy-last))
+                               (ivy-state-dynamic-collection ivy-last)))
+                          (query (and (boundp 'ivy-text) ivy-text)))
+                (with-selected-window win
+                  (let* ((split  (funcall splitter query style))
+                         (cmd    (car split))
+                         (filter (cdr split)))
+                    (cond
+                     ((not (equal cmd current-cmd))
+                      (when restart-timer
+                        (cancel-timer restart-timer)
+                        (setq restart-timer nil))
+                      (let* ((elapsed (- (float-time) last-restart-time))
+                             (delay (max fzfa-shell-command-debounce
+                                         (- fzfa-shell-command-throttle
+                                            elapsed))))
+                        (setq restart-timer
+                              (run-with-timer
+                               (max 0.01 delay) nil
+                               (lambda ()
+                                 (setq restart-timer nil)
+                                 (funcall do-restart cmd)))))
+                      (let ((r (and handle
+                                    (fzf-native-async-candidates
+                                     handle filter limit))))
+                        (when (and handle
+                                   (fzfa--async-final-p r handle filter))
+                          (setq last-result r))))
+                     ((null handle) nil)
+                     (t
+                      (let ((r (while-no-input
                                  (fzf-native-async-candidates
-                                  handle query limit))))
-                    (unless (eq cands t)
-                      (when-let* ((stats (fzf-native-async-stats handle)))
-                        (setq last-filtered (car stats)
-                              last-total    (cdr stats)))
-                      (when (fzfa--async-final-p cands handle query)
-                        (setq last-query  query
-                              last-result cands)
-                        (ivy--set-candidates cands)
-                        (ivy--exhibit))))))))
-           retry-timer
-           timer)
-      (setq timer
+                                  handle filter limit))))
+                        (cond
+                         ((eq r t) nil)
+                         (t
+                          (when-let* ((stats (fzf-native-async-stats handle)))
+                            (setq last-filtered (car stats)
+                                  last-total    (cdr stats)))
+                          (when (fzfa--async-final-p r handle filter)
+                            (setq last-result r)))))))
+                    (when last-result
+                      (ivy--set-candidates last-result)
+                      (ivy--exhibit)
+                      (ivy--insert-prompt)))))))
+      ;; Pre-arm the subprocess so candidates start streaming before the
+      ;; minibuffer is even shown.  Prefer :COMMAND; fall back to parsing
+      ;; init-text (covers callers that pass :INITIAL-INPUT without :COMMAND).
+      (cond
+       ((and command (not (string-empty-p command)))
+        (funcall do-restart command))
+       (init-text
+        (let ((cmd (car (funcall splitter init-text style))))
+          (when (and cmd (not (string-empty-p cmd)))
+            (funcall do-restart cmd)))))
+      (setq poll-timer
             (run-with-timer
              0 fzfa-refresh-delay
              (lambda ()
                (when handle
                  (let ((gen (fzf-native-async-generation handle)))
-                   (when (and gen (not (= gen last-gen))
-                              (not (input-pending-p)))
-                     (when (>= (- (float-time) last-exhibit-scheduled)
-                               fzfa-input-throttle)
-                       (setq last-gen gen)
-                       (setq last-exhibit-scheduled (float-time))
-                       (run-with-idle-timer
-                        0 nil #'fzfa--frontend-push ivy-push))))))))
+                   (when (and gen (not (= gen last-gen)) (not (input-pending-p))
+                              (>= (- (float-time) last-exhibit-scheduled)
+                                  fzfa-input-throttle))
+                     (setq last-gen gen
+                           last-exhibit-scheduled (float-time))
+                     (run-with-idle-timer
+                      0 nil #'fzfa--frontend-push ivy-push)))))))
       (add-hook 'post-command-hook refresh-overlay)
       (sit-for fzfa-refresh-delay)
       (fzfa--maybe-expand
@@ -1470,79 +1669,62 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                  ;; relative candidates against the working directory the
                  ;; command actually ran in.
                  (setq-local default-directory directory)
+                 ;; Auto-insert the separator when no init-text was supplied;
+                 ;; otherwise completing-read seeded the buffer already.
+                 (when (and initial-char (null init-text))
+                   (save-excursion
+                     (goto-char (minibuffer-prompt-end))
+                     (unless (equal initial-char (char-after))
+                       (insert (char-to-string initial-char)))))
+                 (when init-point
+                   (let ((p init-point))
+                     (run-at-time
+                      0 nil
+                      (lambda ()
+                        (when-let* ((win (active-minibuffer-window)))
+                          (with-selected-window win
+                            (goto-char (+ (minibuffer-prompt-end) p))))))))
                  (fzfa--minibuffer-format-reset)
-                 (when handler (fzfa--preview-install)))
+                 (when handler (fzfa--preview-install))
+                 (cursor-intangible-mode 1)
+                 (when fzfa-async-display-key
+                   (let ((map (make-sparse-keymap)))
+                     (set-keymap-parent map (current-local-map))
+                     (define-key map (kbd fzfa-async-display-key)
+                                 display-cycle)
+                     (use-local-map map)))
+                 (funcall display-apply))
              (let ((ivy-completing-read-dynamic-collection t)
                    (ivy-count-format
                     (when (bound-and-true-p ivy-mode) ""))
                    (ivy-pre-prompt-function
                     (when (bound-and-true-p ivy-mode)
                       (lambda ()
-                        (fzfa--format-stats (concat dir " ")
+                        (fzfa--format-stats (concat prompt dir-abbrev " ")
                                             (fzfa--frontend-index)
                                             last-filtered last-total)))))
                (setq selection
-                     (completing-read
-                      prompt
-                      (lambda (str _pred action)
-                        (pcase action
-                          ('metadata
-                           (fzfa--completion-metadata category :group group))
-                          ;; Treat input as one field; prevents space-splitting.
-                          (`(boundaries . ,_) (cons 0 0))
-                          ('t
-                           (let* ((query (fzfa--current-query str))
-                                  (r (while-no-input
-                                       (fzf-native-async-candidates
-                                        handle query limit))))
-                             (if (eq r t)
-                                 ;; Scoring was interrupted by pending input.
-                                 ;; Debounce a retry so the display self-heals
-                                 ;; once the user pauses typing.
-                                 (progn
-                                   (when retry-timer (cancel-timer retry-timer))
-                                   (setq retry-timer
-                                         (run-with-idle-timer
-                                          fzfa-input-debounce nil
-                                          (lambda ()
-                                            (setq retry-timer nil)
-                                            (fzfa--frontend-push ivy-push)))))
-                               (when-let* ((stats (fzf-native-async-stats
-                                                   handle)))
-                                 (setq last-filtered (car stats)
-                                       last-total    (cdr stats)))
-                               (unless (bound-and-true-p ivy-mode)
-                                 (when-let* ((win (active-minibuffer-window)))
-                                   (with-selected-window win
-                                     (unless stats-overlay
-                                       (setq stats-overlay
-                                             (make-overlay
-                                              (point-min)
-                                              (minibuffer-prompt-end))))
-                                     (funcall refresh-overlay))))
-                               (when (fzfa--async-final-p r handle query)
-                                 (setq last-query query
-                                       last-result r)))
-                             (when (equal query last-query) last-result)))
-                          (_ t)))))))
-         (cancel-timer timer)
+                     (completing-read prompt table nil nil init-text nil))))
+         (when poll-timer (cancel-timer poll-timer))
          (when retry-timer (cancel-timer retry-timer))
+         (when restart-timer (cancel-timer restart-timer))
          (remove-hook 'post-command-hook refresh-overlay)
          (when stats-overlay (delete-overlay stats-overlay))
+         (funcall display-clear)
          (fzfa--defer-async-stop handle)
          (when handler (fzfa--preview-return selection)))
        directory resolve-paths))))
 
-;;; Two-pass (consult-style) `completing-read'
+;;; Split-style + display infrastructure
 
 (defcustom fzfa-async-split-style 'perl
-  "Splitting style for `fzfa-2pass-completing-read'.
+  "Splitting style for `fzfa-async-completing-read'.
 See `fzfa-async-split-styles-alist' for available styles."
   :type '(choice (const :tag "Perl-style (#cmd#filter)" perl))
   :group 'fzfa)
 
 (defcustom fzfa-shell-command-debounce 0.2
-  "Seconds of typing silence before a `shell-command' start fires.
+  "Seconds of typing silence before a shell-command restart fires.
 Each keystroke that changes the command portion of the minibuffer
 reschedules a fresh restart timer; the producer process is not
 spawned until the user pauses for this long, so a burst of
@@ -1551,13 +1733,13 @@ keystrokes ends with exactly one restart on the final cmd value."
   :group 'fzfa)
 
 (defcustom fzfa-shell-command-throttle 0.5
-  "Minimum seconds between `shell-command' restarts in 2 pass route."
+  "Minimum seconds between shell-command restarts."
   :type 'float
   :group 'fzfa)
 
 (defcustom fzfa-async-split-styles-alist
   `((perl :initial ?# :function ,#'fzfa--async-split-perl))
-  "Splitting styles for `fzfa-2pass-completing-read'.
+  "Splitting styles for `fzfa-async-completing-read'.
 Each entry is (SYMBOL . PLIST).  Recognized PLIST keys:
   :function  (STR PLIST) -> (CMD . FILTER).  Required.
              CMD is the `shell-command' portion (re-runs on change);
@@ -1648,357 +1830,33 @@ only spans are left alone."
         (mk prog-end cmd-end ""))))
     overlays))
 
-;;;###autoload
-(cl-defun fzfa-2pass-completing-read
-    (&key prompt
-          (directory (fzfa--default-dir))
-          (category 'fzfa-misc)
-          group
-          initial-input
-          (resolve-paths nil)
-          (split-style nil)
-          apply)
-  "Two-pass (consult-style) async `completing-read'.
+(defun fzfa--async-display-region-bounds (sep)
+  "Return (BEG . END) for the entire `#CMD#' region in the minibuffer.
 
-Input is split into a shell-CMD part and an fzf-FILTER part via
-`fzfa-async-split-style' (or :SPLIT-STYLE override).  With the
-default `perl' style the prompt has shape \"#CMD#FILTER\" (the
-leading `#' is inserted automatically when no :INITIAL-INPUT is
-supplied).  Changing CMD restarts the underlying process;
-changing FILTER rescores in place via fzf-native.
+SEP is the separator character.  BEG points at the opening separator;
+END points just past the closing separator.  Returns nil when the
+minibuffer does not begin with SEP or no closing SEP is present."
+  (save-excursion
+    (goto-char (minibuffer-prompt-end))
+    (when (eq (char-after) sep)
+      (let ((beg (point)))
+        (forward-char 1)
+        (when (search-forward (char-to-string sep) nil t)
+          (cons beg (point)))))))
 
-:PROMPT         Minibuffer prompt.  Defaults to \"fzfa-2pass: \".
-:DIRECTORY      Working directory for CMD.
-:CATEGORY       Completion category (e.g. `fzfa-file', `fzfa-grep').
-:GROUP          Optional grouping function.
-:INITIAL-INPUT  Optional initial minibuffer contents.  Either a string
-                or a cons (TEXT . POSITION); POSITION is a 0-based
-                offset within TEXT at which point is placed.
-:RESOLVE-PATHS  When non-nil, the returned candidate is passed through
-                `expand-file-name' against :DIRECTORY.  Off by default
-                since the shell command's output is often free-form.
-:SPLIT-STYLE    Override `fzfa-async-split-style' for this call.
-:APPLY          Lambda (CAND) -> any.
-                See `fzfa-async-completing-read' for semantics."
-  (fzfa--ensure-setup)
-  (cond
-   ((eq fzfa--multi-mode :extract)
-    (throw 'fzfa-extracted
-           (list :prompt prompt :directory directory
-                 :category category :group group
-                 :initial-input initial-input
-                 :resolve-paths resolve-paths
-                 :split-style split-style
-                 :2pass t)))
-   ((eq (car-safe fzfa--multi-mode) :inject)
-    (let ((cand (cdr fzfa--multi-mode)))
-      (setq fzfa--multi-mode nil)
-      (cl-return-from fzfa-2pass-completing-read
-        (fzfa--maybe-expand cand directory resolve-paths)))))
-  (when (bound-and-true-p helm-mode)
-    (if fzfa-2pass-helm-handler
-        (cl-return-from fzfa-2pass-completing-read
-          (fzfa--maybe-expand
-           (funcall fzfa-2pass-helm-handler
-                    :prompt prompt :directory directory
-                    :category category :group group
-                    :initial-input initial-input
-                    :split-style split-style
-                    :apply apply)
-           directory resolve-paths))
-      (user-error
-       "`fzfa-2pass-completing-read' does not yet support helm-mode")))
-  (let* ((completion-styles '(fzfa))
-         (prompt (or prompt "fzfa-2pass: "))
-         (dir (expand-file-name directory))
-         (dir-abbrev (abbreviate-file-name directory))
-         (fzfa--session-apply
-          (or apply (plist-get (alist-get category fzfa-apply-functions) :apply)))
-         (fzfa--session-resolve-paths resolve-paths)
-         (style-sym (or split-style fzfa-async-split-style 'perl))
-         (style (or (alist-get style-sym fzfa-async-split-styles-alist)
-                    (user-error
-                     "Unknown fzfa-async split style: %s" style-sym)))
-         (initial-char (plist-get style :initial))
-         (init-text (if (consp initial-input)
-                        (car initial-input)
-                      initial-input))
-         (init-point (and (consp initial-input) (cdr initial-input)))
-         (splitter (plist-get style :function))
-         (limit (fzfa--candidate-limit))
-         (handle nil)
-         (current-cmd nil)
-         (last-gen -1)
-         (last-result nil)
-         (last-filtered 0)
-         (last-total 0)
-         (last-exhibit-scheduled 0.0)
-         (last-restart-time 0.0)
-         (stats-overlay nil)
-         (compact-overlays nil)
-         (compact-on nil)
-         (compact-clear
-          (lambda ()
-            (mapc #'delete-overlay compact-overlays)
-            (setq compact-overlays nil)))
-         (compact-apply
-          (lambda ()
-            (when-let* ((bounds (fzfa--async-display-cmd-bounds
-                                 initial-char)))
-              (setq compact-overlays
-                    (fzfa--async-display-make-overlays
-                     (car bounds) (cdr bounds))))))
-         (compact-toggle
-          (lambda ()
-            (interactive)
-            (funcall compact-clear)
-            (setq compact-on (not compact-on))
-            (when compact-on (funcall compact-apply))))
-         restart-timer retry-timer poll-timer ivy-push-2pass
-         (refresh-overlay
-          (lambda ()
-            (when (and stats-overlay (active-minibuffer-window))
-              (with-selected-window (active-minibuffer-window)
-                (overlay-put
-                 stats-overlay 'display
-                 (fzfa--format-stats (concat prompt dir-abbrev " ")
-                                     (fzfa--frontend-index)
-                                     last-filtered last-total))))
-            (fzfa--insert-prompt-if-ivy)))
-         (do-restart
-          (lambda (cmd)
-            (when handle
-              (fzfa--defer-async-stop handle)
-              (setq handle nil))
-            ;; Keep `last-result' across restarts so the display stays
-            ;; populated with stale candidates until new ones stream in.
-            (setq current-cmd cmd
-                  last-gen -1
-                  last-filtered 0
-                  last-total 0
-                  last-restart-time (float-time))
-            (when (and cmd (not (string-empty-p cmd)))
-              (setq handle (fzf-native-async-start cmd dir)))
-            (fzfa--frontend-push ivy-push-2pass)))
-         ;; Ivy push closure: ivy doesn't re-call the collection on
-         ;; timer ticks, so async streaming wouldn't update.  Mirrors
-         ;; the `'t' action body but reads `ivy-text', splits via the
-         ;; current style's splitter, and pushes via
-         ;; `ivy--set-candidates' + `ivy--exhibit' (+ forced
-         ;; `ivy--insert-prompt' for the stats line refresh).
-         (table
-          (lambda (str _pred action)
-            (pcase action
-              ('metadata (fzfa--completion-metadata category :group group))
-              (`(boundaries . ,_) (cons 0 0))
-              ('t
-               (let* ((input (fzfa--current-query str))
-                      (split (funcall splitter input style))
-                      (cmd (car split))
-                      (query (cdr split)))
-                 (cond
-                  ((not (equal cmd current-cmd))
-                   ;; Cancel any pending restart and reschedule.  Each
-                   ;; keystroke debounces; the throttle term is the
-                   ;; floor on the gap between actual spawns when the
-                   ;; user keeps typing past one debounce window.
-                   (when restart-timer
-                     (cancel-timer restart-timer)
-                     (setq restart-timer nil))
-                   (let* ((elapsed (- (float-time) last-restart-time))
-                          (delay (max fzfa-shell-command-debounce
-                                      (- fzfa-shell-command-throttle elapsed))))
-                     (setq restart-timer
-                           (run-with-timer
-                            (max 0.01 delay) nil
-                            (lambda ()
-                              (setq restart-timer nil)
-                              (funcall do-restart cmd)))))
-                   ;; Fetch from the *current* handle (previous cmd's
-                   ;; process) so the display reflects something while the
-                   ;; user is mid-typing in the cmd portion.
-                   (let ((r (and handle
-                                 (fzf-native-async-candidates
-                                  handle query limit))))
-                     (when (and handle (fzfa--async-final-p r handle query))
-                       (setq last-result r))
-                     last-result))
-                  ((null handle) last-result)
-                  (t
-                   (let ((r (while-no-input
-                              (fzf-native-async-candidates
-                               handle query limit))))
-                     (cond
-                      ((eq r t)
-                       (when retry-timer (cancel-timer retry-timer))
-                       (setq retry-timer
-                             (run-with-idle-timer
-                              fzfa-input-debounce nil
-                              (lambda ()
-                                (setq retry-timer nil)
-                                (fzfa--frontend-push ivy-push-2pass))))
-                       last-result)
-                      (t
-                       (when-let* ((stats (fzf-native-async-stats handle)))
-                         (setq last-filtered (car stats)
-                               last-total    (cdr stats)))
-                       (when-let* ((win (active-minibuffer-window)))
-                         (with-selected-window win
-                           (unless stats-overlay
-                             (setq stats-overlay
-                                   (make-overlay (point-min)
-                                                 (minibuffer-prompt-end))))
-                           (funcall refresh-overlay)))
-                       (when (fzfa--async-final-p r handle query)
-                         (setq last-result r))
-                       last-result)))))))
-              (_ t)))))
-    ;; Install `ivy-push-2pass' into the placeholder declared in the
-    ;; let* above.  Deferred so its lambda can close over `do-restart'
-    ;; (which references back into `ivy-push-2pass'), and so `setq'
-    ;; mutates the placeholder's cell rather than shadowing it — the
-    ;; closures captured by `do-restart' and the timers reference that
-    ;; cell.
-    (setq ivy-push-2pass
-          (lambda ()
-            (when-let* ((win   (active-minibuffer-window))
-                        ((or (not (bound-and-true-p ivy-last))
-                             (ivy-state-dynamic-collection ivy-last)))
-                        (query (and (boundp 'ivy-text) ivy-text)))
-              (with-selected-window win
-                (let* ((split  (funcall splitter query style))
-                       (cmd    (car split))
-                       (filter (cdr split)))
-                  (cond
-                   ((not (equal cmd current-cmd))
-                    (when restart-timer
-                      (cancel-timer restart-timer)
-                      (setq restart-timer nil))
-                    (let* ((elapsed (- (float-time) last-restart-time))
-                           (delay (max fzfa-shell-command-debounce
-                                       (- fzfa-shell-command-throttle
-                                          elapsed))))
-                      (setq restart-timer
-                            (run-with-timer
-                             (max 0.01 delay) nil
-                             (lambda ()
-                               (setq restart-timer nil)
-                               (funcall do-restart cmd)))))
-                    (let ((r (and handle
-                                  (fzf-native-async-candidates
-                                   handle filter limit))))
-                      (when (and handle
-                                 (fzfa--async-final-p r handle filter))
-                        (setq last-result r))))
-                   ((null handle) nil)
-                   (t
-                    (let ((r (while-no-input
-                               (fzf-native-async-candidates
-                                handle filter limit))))
-                      (cond
-                       ((eq r t) nil)
-                       (t
-                        (when-let* ((stats (fzf-native-async-stats handle)))
-                          (setq last-filtered (car stats)
-                                last-total    (cdr stats)))
-                        (when (fzfa--async-final-p r handle filter)
-                          (setq last-result r)))))))
-                  (when last-result
-                    (ivy--set-candidates last-result)
-                    (ivy--exhibit)
-                    (ivy--insert-prompt)))))))
-    (when init-text
-      (let ((cmd (car (funcall splitter init-text style))))
-        (when (and cmd (not (string-empty-p cmd)))
-          (funcall do-restart cmd))))
-    (setq poll-timer
-          (run-with-timer
-           0 fzfa-refresh-delay
-           (lambda ()
-             (when handle
-               (let ((gen (fzf-native-async-generation handle)))
-                 (when (and gen (not (= gen last-gen)) (not (input-pending-p))
-                            (>= (- (float-time) last-exhibit-scheduled)
-                                fzfa-input-throttle))
-                   (setq last-gen gen
-                         last-exhibit-scheduled (float-time))
-                   (run-with-idle-timer
-                    0 nil #'fzfa--frontend-push ivy-push-2pass)))))))
-    (add-hook 'post-command-hook refresh-overlay)
-    (sit-for fzfa-refresh-delay)
-    (fzfa--maybe-expand
-     (unwind-protect
-         (minibuffer-with-setup-hook
-             (lambda ()
-               (setq-local default-directory directory)
-               ;; Auto-insert the separator only when no init-text was
-               ;; supplied; otherwise the caller is responsible for the
-               ;; prefix.
-               (when (and initial-char (null init-text))
-                 (save-excursion
-                   (goto-char (minibuffer-prompt-end))
-                   (unless (equal initial-char (char-after))
-                     (insert (char-to-string initial-char)))))
-               (when init-point
-                 (let ((p init-point))
-                   (run-at-time
-                    0 nil
-                    (lambda ()
-                      (when-let* ((win (active-minibuffer-window)))
-                        (with-selected-window win
-                          (goto-char (+ (minibuffer-prompt-end) p))))))))
-               (fzfa--minibuffer-format-reset)
-               (when fzfa-async-display-key
-                 (let ((map (make-sparse-keymap)))
-                   (set-keymap-parent map (current-local-map))
-                   (define-key map (kbd fzfa-async-display-key)
-                               compact-toggle)
-                   (use-local-map map))
-                 (setq compact-on t)
-                 (funcall compact-apply)))
-           (let ((ivy-completing-read-dynamic-collection t)
-                 (ivy-count-format
-                  (when (bound-and-true-p ivy-mode) ""))
-                 (ivy-pre-prompt-function
-                  (when (bound-and-true-p ivy-mode)
-                    (lambda ()
-                      (fzfa--format-stats (concat prompt dir-abbrev " ")
-                                          (fzfa--frontend-index)
-                                          last-filtered last-total)))))
-             (completing-read prompt table nil nil init-text nil)))
-       (when poll-timer (cancel-timer poll-timer))
-       (when retry-timer (cancel-timer retry-timer))
-       (when restart-timer (cancel-timer restart-timer))
-       (remove-hook 'post-command-hook refresh-overlay)
-       (when stats-overlay (delete-overlay stats-overlay))
-       (funcall compact-clear)
-       (fzfa--defer-async-stop handle))
-     directory resolve-paths)))
+(defun fzfa--async-display-make-hidden-overlays (region-beg region-end)
+  "Return overlays hiding the `#CMD#' region from REGION-BEG to REGION-END.
 
-(defcustom fzfa-2p-functions
-  '(fzfa-ag-2p
-    fzfa-ag-files-2p
-    fzfa-fd-2p
-    fzfa-find-2p
-    fzfa-git-grep-2p
-    fzfa-grep-2p
-    fzfa-locate-2p
-    fzfa-rg-2p
-    fzfa-smart-find-2p
-    fzfa-smart-grep-2p
-    fzfa-ugrep-2p)
-  "Two-pass (consult-style) command variants to enable.
-Each entry is a symbol of the form `fzfa-COMMAND-2p'.  When the
-matching extension file is loaded, its top-level guard checks this
-list and calls `fzfa-2p-define' for opted-in entries only.
+The overlay renders the region with `display \"\"' so the user sees
+only the FILTER portion, and marks it `cursor-intangible' so point
+skips past on `C-a' or arrow-key navigation."
+  (let ((ov (make-overlay region-beg region-end nil t nil)))
+    (overlay-put ov 'display "")
+    (overlay-put ov 'cursor-intangible t)
+    (overlay-put ov 'fzfa-async-display t)
+    (list ov)))
 
-Defining the variant is the user's opt-in; making it callable from
-a cold `M-x' before the extension file has been loaded additionally
-requires an `autoload' form in the user's init (see the README)."
-  :type '(repeat symbol)
-  :group 'fzfa)
-
-(defun fzfa--2pass-extract-args (cmd)
+(defun fzfa--async-extract-args (cmd)
   "Run CMD in `:extract' mode and return its keyword args plist.
 Returns nil if CMD does not flow through a fzfa `completing-read'."
   (catch 'fzfa-extracted
@@ -2006,66 +1864,6 @@ Returns nil if CMD does not flow through a fzfa `completing-read'."
       (funcall cmd))
     nil))
 
-(defun fzfa--2pass-initial-input (shell-cmd separator)
-  "Build (TEXT . CURSOR-POS) initial input from SHELL-CMD using SEPARATOR.
-SEPARATOR is the leading char (e.g. ?#).  When SHELL-CMD ends in an
-empty-quote pair (\"''\" or `\"\"'), point lands between the quotes;
-otherwise it lands after the trailing separator so the user can start
-typing a filter immediately."
-  (let* ((sep (char-to-string separator))
-         (text (concat sep shell-cmd sep)))
-    (cons text
-          (cond
-           ((or (string-suffix-p "''" shell-cmd)
-                (string-suffix-p "\"\"" shell-cmd))
-            (- (length text) 2))
-           (t (length text))))))
-
-(defun fzfa--2pass-dispatch (cmd)
-  "Run CMD in two-pass mode.
-Extracts CMD's async args, pre-fills the minibuffer with its shell
-command, and routes the selection back to CMD via `:inject' so its
-post-action (e.g. `find-file', grep-jump) still runs."
-  (let ((args (fzfa--2pass-extract-args cmd)))
-    (unless args
-      (user-error "`%s' is not a fzfa command" cmd))
-    (when (plist-get args :2pass)
-      (user-error "`%s' is already a two-pass command" cmd))
-    (let ((shell-cmd (plist-get args :command)))
-      (unless shell-cmd
-        (user-error "`%s' is not an async (`:command') fzfa command — \
-two-pass only wraps async producers" cmd))
-      (let* ((style-sym (or fzfa-async-split-style 'perl))
-             (style (alist-get style-sym fzfa-async-split-styles-alist))
-             (sep (or (plist-get style :initial) ?#))
-             (initial (fzfa--2pass-initial-input shell-cmd sep))
-             (result (fzfa-2pass-completing-read
-                      :prompt (plist-get args :prompt)
-                      :directory (plist-get args :directory)
-                      :category (plist-get args :category)
-                      :group (plist-get args :group)
-                      :initial-input initial
-                      :resolve-paths nil)))
-        (when result
-          (let ((fzfa--multi-mode (cons :inject result)))
-            (funcall cmd)))))))
-
-(defun fzfa-2p-define (cmd)
-  "Define CMD-2p as the two-pass variant of CMD.
-Intended for use inside an extension file, gated on membership of the
-generated symbol in `fzfa-2p-functions'.  Returns the new symbol."
-  (let ((name (intern (concat (symbol-name cmd) "-2p"))))
-    (defalias name
-      (lambda ()
-        (interactive)
-        (fzfa--2pass-dispatch cmd))
-      (format "Two-pass (consult-style) variant of `%s'.
-Edit the command portion of the minibuffer (between the leading and
-trailing separators) to re-run the underlying producer; type after
-the trailing separator to fuzzy-filter via fzf-native.  Selection is
-routed to `%s' so its post-action runs."
-              cmd cmd))
-    name))
 
 ;;; Smart dispatch
 
@@ -2102,8 +1900,7 @@ unconditional fallback.
 The generated command is interactive and calls the chosen CMD via
 `funcall', so the active `fzfa--multi-mode' (if any) propagates and
 the smart command transparently participates in multi-source dispatch
-\(`fzfa-multi-read') and two-pass dispatch (`fzfa-2p-define') without
-needing any special-casing.
+\(`fzfa-multi-read') without needing any special-casing.
 
 Resolution runs on every invocation — no caching — so PATH changes,
 TRAMP buffers, and containerized shells are handled naturally.

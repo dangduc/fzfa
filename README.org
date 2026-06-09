@@ -17,46 +17,96 @@ Built for candidate pools in the hundreds of thousands to millions of
 lines or files.  Scoring runs in a C dynamic module across every
 available core, never blocking the Emacs main thread.
 
-* Why
+* Motivation
 
-Existing async completion packages share a fundamental design problem: the
-user's query string is consumed in *two separate stages* by two different
-matching algorithms.
+Design goals that distinguish ~fzfa~ from the existing
+completion packages like ~helm~, ~counsel~, and ~consult~:
 
-Take ~consult-ripgrep~ as an example. The query is first passed directly to
-~rg~ as a pattern, narrowing the candidate pool at the shell level.  The
-survivors are then handed back to Emacs where the active ~completion-style~
-rescores and re-sorts them.  Those two stages may use incompatible matching
-semantics: ~rg~ applies regex or literal matching while the completion style
-applies its own fuzzy or flex logic.
+** Single-stage filtering — one query, one filter
 
-e.g. [[https://github.com/minad/consult#asynchronous-search][consult: asynchronous search]]
+When a single user query drives *both* a producer-side filter (regex,
+shell pattern, …) *and* a local re-filter (Emacs ~completion-style~,
+~ivy~ matcher, ~helm~ ~:match~, or ~orderless~ filter), the two stages
+can disagree about what counts as a match — and the user has no way
+to reconcile them from inside one input field.
 
-~fzfa~ eliminates the two-stage problem entirely. The shell command runs
-*without a query* and emits candidates unconditionally. The user's query is
-given *only* to fzf, which handles both filtering and scoring in a single,
-coherent pass.
+The pattern recurs across the major async completion packages:
 
-This is equivalent to calling ~fzf~ directly in the shell.
-** The fzf algorithm
+- ~consult-line-multi~ compiles input to a (potentially non-fuzzy) regexp
+  via ~consult--compile-regexp~, scans buffers; surviving lines are
+  re-filtered by the active ~completion-style~.
+- ~counsel-ag~ / ~counsel-rg~ / ~counsel-git-grep~
+  (~counsel.el:3246~ et al.) transform input via ~ivy--regex~, run
+  the shell tool, then ivy's active matcher (e.g. ~flx~,
+  ~ivy--regex-plus~, fuzzy, …) re-filters the results.
+- ~helm-grep-ag~ (~helm-grep.el:1641~) feeds ~helm-pattern~ to ~ag~
+  directly; helm's source-level match functions re-filter what
+  comes back.
 
-fzf uses a modified Smith-Waterman sequence alignment algorithm.  Every
-character of the query must appear in the candidate in order, but not
-necessarily consecutively — standard fuzzy matching.  Bonus points are
-awarded for matching at word boundaries, path component separators, and
-camelCase transitions, which causes semantically better matches to rank
-higher than incidental character matches.
+See [[https://github.com/minad/consult/discussions/1312][consult discussion #1312]] for the user-visible angle.
 
-Scores are bounded non-negative integers (typically 0–10 000), which makes
-radix-style counting sort feasible and avoids the O(n log n) overhead of
-comparison sort for large candidate sets.
+Basically, the pipeline issue boils down to pre-filtering with a
+non-fuzzy regexp and then filtering/scoring/sorting with a fuzzy
+regexp.  These two things are incompatible with each other if
+correctness is important.
+
+~Consult~'s ~consult-ripgrep~ / ~consult-find~ / ~consult-fd~ /
+~consult-grep~ address the gap with an explicit split — input can be
+parsed as ~#SHELL-CMD#QUERY~ via ~consult--command-split~, so the
+user can address each stage independently.
+
+~fzfa~ runs the shell command *without* the user's query initially
+(e.g. empty query) (unconditionally emitting ALL candidates) and hands
+the query *only* to ~fzf~, which does both filtering and scoring in a
+single pass — equivalent to piping the producer's stdout into ~fzf~
+in a shell.
+
+This is conceptually similar to what ~consult~ does with
+~#SHELL-CMD#QUERY~ except ~fzfa~:
+1. by default, runs with an empty query to stream all candidates
+   immediately, e.g. a user's first input is modifying the QUERY vs
+   modifying the SHELL-CMD.
+2. uses ~fzf-native~ under the hood, so is fast enough to do this
+   without incurring sluggish typing performance.
+3. allows the user to edit the SHELL-CMD fully — see
+   [[*Editing the shell command mid-session]] below.
+4. applies this approach to every ~fzfa-*~ command so the pipeline
+   incongruence is avoided.
+
+** Smart fuzzy matching
+~fzfa~ uses ~fzf~'s matching algorithm under the hood with ~fzf-native~.
+
+~fzf~ uses a modified Smith-Waterman sequence alignment algorithm.
+Every character of the query must appear in the candidate in order,
+but not necessarily consecutively — standard fuzzy matching.  Bonus
+points are awarded for matches at word boundaries, path component
+separators, and camelCase transitions, so semantically better
+matches rank higher than incidental character matches.
+
+Compared to substring or regex matchers, the algorithm surfaces the
+candidate the user usually wanted with less typing.  Typing ~fhf~
+matches ~fzfa-helm-flymake~ ahead of ~fzfa-find-foo~ because of
+word-boundary alignment.
+
+The alternatives in Emacs today usually have various tradeoffs that
+make them unsuitable for large (e.g. 100K+ to millions of files)
+codebases.  For example, ~flex~ in Emacs 31 may have smart fuzzy
+matching, but isn't multithreaded, and doesn't have multi component
+matching.  ~flx~ may have smart matching but is incredibly slow, being
+written in Elisp.  ~orderless~ does not have smart matching but has
+multi component matching.  ~hotfuzz~ is multithreaded, has smart fuzzy
+matching, but has no multi component matching.  ~fzf-native~ on the
+other hand, has smart fuzzy matching, multithreading, and multi
+component matching, while also being an industry standard matching
+algorithm.
 
 - [[https://github.com/junegunn/fzf][fzf]] — original fzf written in Go
 - [[https://github.com/nvim-telescope/telescope-fzf-native.nvim][telescope-fzf-native.nvim]]
   — C port of fzf
 - [[https://github.com/dangduc/fzf-native][fzf-native]] — Emacs wrapper
 
-** Multi-component filtering
+** Multi-component query syntax
+
 [[https://github.com/junegunn/fzf#search-syntax][fzf syntax]] is supported:
 
 | Token       | Match type                 | Description                          |
@@ -69,9 +119,9 @@ comparison sort for large candidate sets.
 | ~!^music~   | inverse-prefix-exact-match | Items that do not start with ~music~ |
 | ~!.mp3$~    | inverse-suffix-exact-match | Items that do not end with ~.mp3~    |
 
-A single bar character term acts as an OR operator. For example, the following
-query matches entries that start with ~core~ and end with either ~go~, ~rb~,
-or ~py~.
+A single bar character term acts as an OR operator.  For example,
+the following query matches entries that start with ~core~ and end
+with either ~go~, ~rb~, or ~py~:
 
 #+begin_src
 ^core go$ | rb$ | py$
@@ -79,17 +129,59 @@ or ~py~.
 
 Refer to:
 [[https://github.com/nvim-telescope/telescope-fzf-native.nvim#telescope-fzf-nativenvim][telescope-fzf-native query syntax]]
-** Multithreaded scoring
 
-Scoring is performed by
-[[https://github.com/dangduc/fzf-native][fzf-native]],
-a C dynamic module that spawns multiple worker threads to split up the work.
+** Performance / Speed
 
-Both ~fussy~ and ~fzfa~ are multithreaded at the C layer.  With ~fussy~,
-Emacs blocks until the full candidate list is scored and returned — suitable
-for in-memory lists.  ~fzfa~ runs the shell command in a background
-process and incrementally refreshes the completion UI as candidates arrive
-and are scored.
+Scoring runs in a C dynamic module
+([[https://github.com/dangduc/fzf-native][fzf-native]]) with worker
+threads across all available cores.  The shell command streams
+candidates into the scoring pool incrementally rather than blocking
+on a full materialization, so a million-line ~rg~ output is
+filterable while it's still arriving.
+
+Both ~fussy~ and ~fzfa~ are multithreaded at the C layer.  With
+~fussy~, Emacs blocks until the full candidate list is scored and
+returned — suitable for in-memory lists.  ~fzfa~ runs the shell
+command in a background process and incrementally refreshes the
+completion UI as candidates arrive and are scored.
+
+In casual testing, ~fzfa~ and ~fzf.el~ are the only packages that
+handle 10M+ candidates without visible degradation.  Numbers depend on
+the candidate shape and the host machine — see [[*Comparison]] for the
+full matrix.
+
+** Cross-frontend support
+
+Most async completion packages are tied to one frontend: ~helm-rg~
+needs ~helm~, ~counsel-rg~ needs ~ivy~, ~consult-ripgrep~ runs through
+plain ~completing-read~ (so ~vertico~ / ~icomplete~ but not ~ivy~ or
+~helm~).  Switching frontends usually means switching command surfaces
+— ~helm-X~ vs. ~counsel-X~ vs. ~consult-X~.  Although there's no
+lock-in between packages, it's likely most users "migrate" to one
+package and then use another for specific commands.
+
+~fzfa~ commands, on the other hand, run unchanged under ~vertico~ /
+~icomplete~ (plain ~completing-read~), ~ivy~ / ~counsel~ (~ivy-mode~),
+and ~helm~ (~helm-mode~).  Each frontend gets a dedicated extension
+(=fzfa-vertico.el=, =fzfa-ivy.el=, =fzfa-helm.el=) so users can choose
+their preferred ~completing-read~ package without feeling locked in to
+the ecosystem.
+
+See [[*Cross-frontend integration]] for design and implementation.
+
+** Mixed async + sync multi-source
+
+~fzfa-multi-read~ composes any combination of async producers
+(shell commands streamed into the scorer) and sync candidate lists
+(static collections, history rings, etc.) into a single picker, with
+per-source narrowing, preview, and apply.
+
+~consult--multi~ is sync only; ivy/counsel has no multi-source
+primitive (~counsel-buffer-or-recentf~ concatenates two lists into a
+flat collection, no per-source semantics); helm has native
+multi-source but re-shells per keystroke on async sources, which
+limits the candidate counts it can handle.  See [[*Multi-source][Multi-source]] for
+the comparison.
 
 * Installation
 
@@ -420,7 +512,14 @@ explicitly).
 | ~spotlight~ | ~fzfa-spotlight~ | macOS ~mdfind~                                   | ~fzfa-spotlight~, ~fzfa-spotlight-apps~, ~fzfa-spotlight-audio~ — application launcher                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ~vc~        | ~fzfa-vc~        | none (built-in)                                  | ~fzfa-vc-modified-files~ — multi-source picker over the current repository's modified / added / staged / HEAD files.  Detects the backend with ~vc-responsible-backend~ (cheap — walks parents) and dispatches to per-backend commands shipped by sibling extensions: ~fzfa-git-modified-locally~, ~fzfa-git-added-files~, ~fzfa-git-staged-for-commit~, ~fzfa-git-modified-in-head~ (in ~git~ extension) and ~fzfa-hg-modified-locally~, ~fzfa-hg-added-files~, ~fzfa-hg-modified-in-head~ (in ~hg~ extension).  Per-backend commands are also callable directly without going through the dispatcher.  Extend to other backends via ~fzfa-vc-modified-files-sources~                                                                                                  |
 
-Default value of ~fzfa-extensions~ is ~(ag chrome company emacs embark evil fd find flymake git grep hg hungry info locate mail make music notmuch org pass project rg shell spotlight ugrep vc)~.
+Default value of ~fzfa-extensions~:
+
+#+begin_src elisp
+(ag chrome company emacs embark evil fd find flymake git grep hg
+ hungry info locate mail make music notmuch org pass project rg shell
+ spotlight ugrep vc)
+#+end_src
+
 Each loads without its soft dependency present — the dependency is
 only required when you invoke one of the extension's commands.  Soft
 dependencies are not declared in ~Package-Requires~ — install them
@@ -438,117 +537,59 @@ To disable extension loading entirely:
     :custom (fzfa-extensions nil))
 #+end_src
 
-* Two-pass commands
+* Editing the shell command mid-session
 
-Some async commands have a ~-2p~ (two-pass, ~consult~-inspired) variant
-where the minibuffer input is split into a shell-COMMAND part
-(re-runs the underlying process on change) and an fzf-FILTER part
-(rescores/sorts in place via fzf-native).  With the default ~perl~ split
-style the prompt has shape ~#COMMAND#FILTER~.
+Every async command (~fzfa-rg~, ~fzfa-grep~, ~fzfa-fd~, ~fzfa-find~,
+…) splits its minibuffer input into a shell-COMMAND part (re-runs
+the underlying process on change) and an fzf-FILTER part
+(rescores/sorts in place via fzf-native).  With the default ~perl~
+split style the buffer text has shape ~#COMMAND#FILTER~.
 
-The main difference compared to ~consult~'s version is ~fzfa~ lets you modify
-the entire shell command that's being used.
-Refer to https://github.com/minad/consult#asynchronous-search
-for a more exhaustive set of features/advantages ~consult~ may provide
-over this implementation.
-
-Comparison demo below (first is ~consult-ripgrep~, second is ~fzfa-rg-2p~,
-using ~fussy~ as the ~completion-style~.):
-
-#+HTML: <video src="https://github.com/user-attachments/assets/d6580b1b-13ee-40df-8626-f8ed4ac2ecd8" controls style="max-width: 100%; height: auto;"></video>
-
-** Compact view
-
-The shell command in a ~-2p~ session can be long (e.g. ~rg
---line-number --no-heading --with-filename %s ''~), and most of the
-time you only want to type into the quoted-argument slot.  Each ~-2p~
-minibuffer therefore starts in *compact* mode: flags are hidden by default.
+By default the COMMAND region is *invisible* and only the FILTER
+portion appears editable — which matches the old async UX where the
+producer was fixed and only filtering was interactive.  Press ~>~
+inside the minibuffer to cycle through three display modes:
 
 #+begin_example
-  Compact:   #rg ... '|'#
-  Expanded:  #rg --line-number --no-heading --with-filename %s '|'#
+  hidden   →   the COMMAND region is hidden behind a display "" overlay
+               (default; the typing experience is just FILTER).
+  compact  →   only the program name + trailing argument slot show;
+               the flags collapse into ` ... '.
+  full     →   the whole #COMMAND#FILTER buffer is shown verbatim.
 #+end_example
 
-If there is no quoted-argument slot in the command, the entire flag
-tail is hidden silently (e.g. ~find %s -type f~ shows as ~#find#~).
+Concretely, for ~fzfa-rg~ (whose underlying command is roughly
+~rg --line-number --no-heading --with-filename %s ''~):
 
-Press ~>~ inside the minibuffer to toggle between compact and
-expanded.
+#+begin_example
+  hidden:    |
+  compact:   #rg ... '|'#
+  full:      #rg --line-number --no-heading --with-filename %s '|'#
+#+end_example
 
-Customize ~fzfa-async-display-key~ to change the key, or set it to
-~nil~ to disable the feature entirely (no binding, no initial
-compaction — the full command is shown verbatim, as before).
+Editing inside ~compact~ or ~full~ replaces the active shell command
+(debounced via ~fzfa-shell-command-debounce~ /
+~fzfa-shell-command-throttle~).  Demoting back to ~hidden~ keeps
+those edits live — there is no commit/discard step; the subprocess
+has already restarted on each meaningful change.
 
-** Two-pass configuration & autoloading
-| Command              | Variant                  | Source file       |
-|----------------------+--------------------------+-------------------|
-| ~fzfa-ag~            | ~fzfa-ag-2p~             | ~fzfa-ag.el~      |
-| ~fzfa-ag-files~      | ~fzfa-ag-files-2p~       | ~fzfa-ag.el~      |
-| ~fzfa-fd~            | ~fzfa-fd-2p~             | ~fzfa-fd.el~      |
-| ~fzfa-find~          | ~fzfa-find-2p~           | ~fzfa-find.el~    |
-| ~fzfa-git-grep~      | ~fzfa-git-grep-2p~       | ~fzfa-git.el~     |
-| ~fzfa-grep~          | ~fzfa-grep-2p~           | ~fzfa-grep.el~    |
-| ~fzfa-locate~        | ~fzfa-locate-2p~         | ~fzfa-locate.el~  |
-| ~fzfa-rg~            | ~fzfa-rg-2p~             | ~fzfa-rg.el~      |
-| ~fzfa-smart-find~    | ~fzfa-smart-find-2p~     | ~fzfa.el~         |
-| ~fzfa-smart-grep~    | ~fzfa-smart-grep-2p~     | ~fzfa.el~         |
-| ~fzfa-ugrep~         | ~fzfa-ugrep-2p~          | ~fzfa-ugrep.el~   |
+Customize ~fzfa-async-display-key~ to change the cycling key, or
+set it to ~nil~ to disable the feature entirely (the session is
+stuck in whatever ~:display~ the caller passed; default = ~hidden~).
+~<~ remains reserved for ~fzfa-multi-narrow-key~ (source
+narrow/widen in multi-source sessions).
 
-Each ~-2p~ variant is only *defined* when its symbol is listed in
-~fzfa-2p-functions~ (default: all of the above).  Loading the
-extension file checks this list and conditionally creates the
-variant via ~fzfa-2p-define~.
+The main difference compared to ~consult~'s asynchronous commands is
+that ~fzfa~ lets you modify the *entire* shell command, not just an
+argument slot.  Refer to https://github.com/minad/consult#asynchronous-search
+for a more exhaustive set of features/advantages ~consult~ may
+provide over this implementation.
 
-The defcustom controls *whether* the variant is defined; ~autoload~
-forms control *whether cold ~M-x~ on the variant can find it before
-the extension file has been loaded*.  Both opt-ins must line up — the
-defcustom enables the definition inside the extension file, and the
-matching ~autoload~ tells Emacs which file to load when the user
-invokes the variant.  Without the autoload, cold ~M-x fzfa-rg-2p~
-fails because Emacs has no record that ~fzfa-rg.el~ is the file that
-defines it.
+Comparison demo below (first is ~consult-ripgrep~, second is
+~fzfa-rg~ with the ~>~ key revealing the underlying command, using
+~fussy~ as the ~completion-style~.):
 
-#+begin_src emacs-lisp :tangle yes
-  (use-package fzfa
-    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest)
-    :defer t
-    :custom (fzfa-2p-functions '(fzfa-ag-2p fzfa-ag-files-2p fzfa-fd-2p
-                                 fzfa-find-2p fzfa-git-grep-2p fzfa-grep-2p
-                                 fzfa-locate-2p fzfa-rg-2p fzfa-smart-find-2p
-                                 fzfa-smart-grep-2p fzfa-ugrep-2p))
-    :init
-    ;; Without these `autoload' forms, `fzfa-2p-functions' still gates
-    ;; the defun at extension-load time, but Emacs doesn't know which
-    ;; file to load for a cold `M-x fzfa-rg-2p' — leaving the variant
-    ;; discoverable only after some other fzfa command has triggered
-    ;; the extension to load.
-    (autoload 'fzfa-ag-2p         "fzfa-ag"     nil t)
-    (autoload 'fzfa-ag-files-2p   "fzfa-ag"     nil t)
-    (autoload 'fzfa-fd-2p         "fzfa-fd"     nil t)
-    (autoload 'fzfa-find-2p       "fzfa-find"   nil t)
-    (autoload 'fzfa-git-grep-2p   "fzfa-git"    nil t)
-    (autoload 'fzfa-grep-2p       "fzfa-grep"   nil t)
-    (autoload 'fzfa-locate-2p     "fzfa-locate" nil t)
-    (autoload 'fzfa-rg-2p         "fzfa-rg"     nil t)
-    (autoload 'fzfa-ugrep-2p      "fzfa-ugrep"  nil t)
-    (autoload 'fzfa-smart-find-2p "fzfa"        nil t)
-    (autoload 'fzfa-smart-grep-2p "fzfa"        nil t))
-#+end_src
-
-To opt into only a subset, remove the unwanted entries from
-~fzfa-2p-functions~ and drop their matching ~autoload~ forms.
-
-Users can also define their own ~-2p~ functions by either using:
-
-~fzfa-2p-define~ over an existing ~fzfa-*~ function, e.g.
-
-#+begin_src emacs-lisp :tangle yes
-(fzfa-2p-define 'fzfa-rg) ; -> M-x fzfa-rg-2p
-#+end_src
-
-or wrap:
-
-~fzfa-2pass-completing-read~ and implement manually.
+#+HTML: <video src="https://github.com/user-attachments/assets/d6580b1b-13ee-40df-8626-f8ed4ac2ecd8" controls style="max-width: 100%; height: auto;"></video>
 
 * Smart dispatch
 
@@ -583,19 +624,14 @@ supplied, returns non-nil) wins, provided ~CMD~ is ~fboundp~.  A clause
 with neither key is an unconditional fallback.
 
 Because the generated command simply ~funcall~ s the resolved backend
-(rather than reimplementing it), it composes transparently with both
-multi-source and two-pass dispatch:
-
-- *Multi-source* — drop ~fzfa-smart-find~ into ~fzfa-find-any-commands~
-  (or any other list passed to ~fzfa-multi-read~) and the multi-source
-  machinery extracts the chosen backend's ~:command~ / ~:category~ /
-  ~:group~ as if it were that backend directly.  No special-casing.
-- *Two-pass* — wrapping with ~fzfa-2p-define~ produces
-  ~fzfa-smart-find-2p~ / ~fzfa-smart-grep-2p~ automatically; the
-  two-pass dispatcher extracts the active backend's shell command,
-  lets you edit it, and routes the selection back through the smart
-  wrapper.  Both are gated on ~fzfa-2p-functions~ alongside the other
-  ~-2p~ variants — see [[*Two-pass configuration & autoloading][Two-pass configuration & autoloading]].
+(rather than reimplementing it), it composes transparently with
+multi-source dispatch: drop ~fzfa-smart-find~ into
+~fzfa-find-any-commands~ (or any other list passed to ~fzfa-multi-read~)
+and the multi-source machinery extracts the chosen backend's
+~:command~ / ~:category~ / ~:group~ as if it were that backend
+directly.  Inline shell editing via ~>~ works the same — the smart
+command transparently inherits the display cycling of the underlying
+backend.
 
 * Completion style compatibility
 
@@ -744,9 +780,8 @@ plumbing layered on:
 
 | Entry point                  | Ivy plumbing                                                                                 |
 |------------------------------+----------------------------------------------------------------------------------------------|
-| ~fzfa-async-completing-read~ | =:dynamic-collection t= binding, =ivy-push= closure on timer/retry, stats via =ivy-pre-prompt-function= |
+| ~fzfa-async-completing-read~ | =:dynamic-collection t= + =ivy-push= closure mirroring the cmd-split + restart logic of the =('t)= body                  |
 | ~fzfa-sync-completing-read~  | =:dynamic-collection t= binding only (sync has no streaming or stats overlay)                          |
-| ~fzfa-2pass-completing-read~ | =:dynamic-collection t= + =ivy-push-2pass= closure mirroring the cmd-split + restart logic of the =('t)= body |
 | ~fzfa--multi-read~           | =:dynamic-collection t= + =ivy-push-multi= per-source iterate/score/rank/concat + display transformer + actions for narrow |
 
 Ivy's push model means typing doesn't re-call the collection
@@ -845,7 +880,6 @@ a handler that bypasses ~completing-read~ entirely and runs
 |------------------------------+---------------------------|
 | ~fzfa-async-completing-read~ | ~fzfa-async-helm-handler~ |
 | ~fzfa-sync-completing-read~  | ~fzfa-sync-helm-handler~  |
-| ~fzfa-2pass-completing-read~ | ~fzfa-2pass-helm-handler~ |
 | ~fzfa--multi-read~           | ~fzfa-multi-helm-handler~ |
 
 Each handler builds a ~helm-source-sync~ source with ~:match-dynamic t~
@@ -1338,59 +1372,66 @@ Opens the selected PDF with `open'."
 | Frontends supported                 | vertico/icomplete/helm/ivy | vertico/icomplete? | helm only               | ivy only      | vertico/icomplete | own UI     |
 | Smart fuzzy scoring                 | ✓ (fzf-native)             | ✓ (emacs31 flex)   | ✓ (emacs31 flex or flx) | flx           | (emacs31 flex)    | ✓ (binary) |
 | Multi-component query               | ✓ (fzfa)                   | ✓ (orderless)      | ✓ (substring AND)       | ✓ (regex AND) | ✓ (orderless)     | ✓ (fzf)    |
-| Producer runs once                  | ✓                          | ✓                  | ×                       | ×             | ×*                | ✓          |
+| Producer runs once                  | ✓**                        | ✓                  | ×                       | ×             | ×*                | ✓          |
 | Async multi-source                  | ✓                          | ×                  | ✓                       | ×             | sync only         | ×          |
 | Scales to large repos/sources       | ✓                          | ×                  | ×                       | ×             | ×                 | ✓          |
 | Integrates with =completion-styles= | ✓*                         | ✓                  | ✓*                      | ×             | ✓                 | ×          |
 | Language                            | Elisp + C                  | Elisp              | Elisp                   | Elisp         | Elisp             | Elisp + Go |
 
-- There may be some fuzzy matching packages that try to interop with ~helm~ or ~counsel~ though it's hard to say how performant they are.
-  e.g. ~helm-fuz~ which brings ~fuz~ to ~helm~ or ~flx~ which is one of the original fuzzy matching packages for Emacs.
-- ~flx~ is smart fuzzy matching, but slow and doesn't scale to large codebases at all.
-- ~affe~, ~helm~, and ~consult~ can take advantage of ~completion-styles~ and leverage Emacs 31's C flex implemention using Gotoh's algorithm.
-  From my short testing, the C implementation doesn't scale very well to large codebases, being single-threaded.
-- ~fzfa~ and ~fzf.el~ were the only packages capable of handling millions (10+~) of candidates without degraded performance.
+- There may be some fuzzy matching packages that try to interop with
+  ~helm~ or ~counsel~ though it's hard to say how performant they are.
+  E.g. ~helm-fuz~ which brings ~fuz~ to ~helm~, or ~flx~ which is one
+  of the original fuzzy matching packages for Emacs.
+- ~flx~ is smart fuzzy matching, but slow and doesn't scale to large
+  codebases at all.
+- ~affe~, ~helm~, and ~consult~ can take advantage of
+  ~completion-styles~ and leverage Emacs 31's C flex implementation
+  using Gotoh's algorithm.  From my short testing, the C
+  implementation doesn't scale very well to large codebases, being
+  single-threaded.
+- ~fzfa~ and ~fzf.el~ were the only packages capable of handling
+  millions (10+~) of candidates without degraded performance.
   Caveat: Try the packages yourself to come to your own conclusion.
-- Multicomponent queries exist with these packages with varying functionality. For example, using multicomponent matching is possible
-  with ~orderless~, but adding ~flex~ filtering to the matching will slow Emacs to a crawl. If you use ~emacs31 flex~ instead, you lose the multi component matching.
-- ~fzfa~ integrates with ~completion-styles~ though ~fzfa~ does it by taking over the variable (ignoring the other values in the list).
-- ~helm~ integrates with ~completion-styles~ through a separate defcustom that doesn't apply to every source.
+- Multicomponent queries exist with these packages with varying
+  functionality.  For example, using multicomponent matching is
+  possible with ~orderless~, but adding ~flex~ filtering to the
+  matching will slow Emacs to a crawl.  If you use ~emacs31 flex~
+  instead, you lose the multi component matching.
+- ~fzfa~ integrates with ~completion-styles~ though ~fzfa~ does it by
+  taking over the variable (ignoring the other values in the list).
+- ~helm~ integrates with ~completion-styles~ through a separate
+  defcustom that doesn't apply to every source.
+- ~fzfa~'s producer runs once for the default session, but it can be
+  re-spawned mid-session when the user opts in to editing the
+  underlying shell command — see [[*Editing the shell command mid-session]].
 
 (Best-effort matrix; corrections welcome.)
 
 ** Smart fuzzy vs filter-only
 
-~fzf~ scores bonuses for word boundaries, camel-case transitions,
-consecutive runs, and position (leading chars matter more).  Typing
-=fhf= matches =fzfa-helm-flymake= with a higher score than
-=fzfa-find-foo= because of the word-boundary alignment.
+How the other packages handle the smart-fuzzy-vs-filter dimension
+covered in [[*Smart fuzzy matching][Smart fuzzy matching]]:
 
 - =orderless= treats query components as substring / literal / regex
   / flex predicates.  Its =flex= dispatcher is the only mainstream
   pure-Elisp fuzzy implementation but is too slow for large
-  candidate sets. -The advantage of this approach is it can integrate with
-  other types of sorting Emacs provides like history/recency sorting.-
-- =affe= filters via =all-completions= + orderless regex.  Pure
-  filter; no per-character scoring; ranking is whatever
-  =all-completions= returns.
+  candidate sets.  It does integrate with other Emacs sorting like
+  history/recency.
+- =affe= filters via =all-completions= + optional ~orderless~ regex
+  through ~completion-styles~.  Pure filter; no per-character scoring;
+  ranking is whatever =all-completions= returns.
 - =helm-= sources use helm's multi-pattern matcher (substring or
-  regex), there are a few external packages that tries to hook smart
-  fuzzy matching in ~helm~ but they have the listed downsides mentioned
-  above.
-- =hotfuzz= is another mention, written in C and pluggable to ~completion-styles~.
-
-~fzfa~ runs fzf scoring in C via
-[[https://github.com/dangduc/fzf-native][fzf-native]] with the same
-algorithm as the =fzf= command-line tool — including the extended
-syntax (=^foo=, =foo$=, ='foo=, ==foo==, =!foo=).
+  regex).  A few external packages try to hook smart fuzzy matching
+  into ~helm~ but with the downsides listed above.
+- =hotfuzz= is written in C and pluggable to ~completion-styles~.
 
 ** Multi-source
 
 - *helm* has native multi-source (helm-mini-style: stream from N
   producer processes concurrently, each filtered/scored live).
-- *vertico/consult* has =consult--multi=, but it's sync only — which potentially
-  limits the scope of what you can do with a multi source function.
-  =consult-buffer= shows the shape of what's possible.
+- *vertico/consult* has =consult--multi=, but it's sync only — which
+  potentially limits the scope of what you can do with a multi source
+  function.  =consult-buffer= shows the shape of what's possible.
 - *ivy/counsel* has no multi-source primitive.
   =counsel-buffer-or-recentf= and friends concatenate two lists into
   a flat collection — no per-source narrowing, filtering, or
@@ -1402,20 +1443,18 @@ syntax (=^foo=, =foo$=, ='foo=, ==foo==, =!foo=).
 
 ** Cross-frontend integration
 
-Emacs packages like ~helm~, ~counsel~ and ~consult~ are somewhat
-tied to their base packages e.g. ~helm~, ~ivy~, and ~vertico~ / plain
-~completing-read~. ~consult~ and ~vertico~ are
-the most -standard- in the sense that they integrate the most with base
-Emacs but users generally aren't able to use a ~consult~
-function with ~helm~'s UI or vice versa. This is why these packages
-(and this one too) generally duplicate the same async-* functions.
-e.g. There will be a helm-rg, counsel-rg, consult-rg.
+~consult~ and ~vertico~ integrate the most with base Emacs
+(plain ~completing-read~), but a ~consult~ function generally can't
+run in helm's UI or vice versa.  That's why each frontend's
+ecosystem duplicates the same async-* surface — there's a
+~helm-rg~, a ~counsel-rg~, and a ~consult-ripgrep~.
 
-~fzfa~ tries to integrate with these packages on the other hand.
-Each frontend gets a dedicated extension (=fzfa-helm.el=, =fzfa-ivy.el=,
-=fzfa-vertico.el=). Using ~helm~ as an example, ~fzfa~ can provide "sources"
-that ~helm~ can read (e.g. with ~helm-mini~) or calling ~fzfa-*~ functions
-using ~helm~'s UI.
+~fzfa~ commands run unchanged under all three.  Each frontend gets a
+dedicated extension (=fzfa-helm.el=, =fzfa-ivy.el=, =fzfa-vertico.el=)
+that wires the same producer + scorer pair into its native UI
+plumbing.  Using ~helm~ as an example, ~fzfa~ can provide "sources"
+that ~helm~ can read (e.g. with ~helm-mini~), and ~fzfa-*~ commands
+themselves render in helm's UI when ~helm-mode~ is on.
 
 ** Per-package notes (opinions mixed in)
 
@@ -1442,15 +1481,17 @@ using ~helm~'s UI.
   value proposition at this point. From my testing, the most typing
   responsive of the bunch (no benchmarking).
 
-- *=vertico/consult-=*: newest of bunch, but mature/comprehensive at this point
-  The various ~consult-*~ integrates heavily with Emacs base packages so
-  it's probably the best in terms of a future-looking experience. The
-  ~all-completions~ and ~completion-regexp-list~ approach it takes to filtering
-  means it "just works" with most packages as well as ~orderless~ but that's the
-  same reason it's not yet? compatible with ~fzf~ style matching, which mostly
-  wants a clean/empty prefix to match against. It gets around this somewhat using
-  a 2 pass approach (e.g. ~consult-rg~), where you can set a specific ripgrep
-  shell command to run and a separate query to filter.
+- *=vertico/consult-=*: newest of the bunch, but mature/comprehensive
+  at this point.  The various ~consult-*~ integrates heavily with
+  Emacs base packages so it's probably the best in terms of a
+  future-looking experience.  The ~all-completions~ and
+  ~completion-regexp-list~ approach it takes to filtering means it
+  "just works" with most packages as well as ~orderless~ but that's
+  the same reason it's not yet? compatible with ~fzf~-style matching,
+  which mostly wants a clean/empty prefix to match against.  It gets
+  around this somewhat using a 2-pass approach (e.g. ~consult-rg~),
+  where you can set a specific ripgrep shell command to run and a
+  separate query to filter.
 
 - *[[https://github.com/minad/affe][affe]]*: closest architectural
   cousin to ~fzfa~ — background producer + async filter.

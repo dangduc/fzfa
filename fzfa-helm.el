@@ -13,9 +13,9 @@
 ;; Helm frontend for `fzfa'.  Loaded automatically when `helm' is in
 ;; `fzfa-extensions' and `fzfa-setup' has been called.  Loading this
 ;; file does NOT activate helm dispatch on its own — that happens in
-;; `fzfa-helm-setup', which registers the four handler defvars in
+;; `fzfa-helm-setup', which registers the three handler defvars in
 ;; `fzfa.el' (`fzfa-async-helm-handler', `fzfa-sync-helm-handler',
-;; `fzfa-2pass-helm-handler', `fzfa-multi-helm-handler') and defers
+;; `fzfa-multi-helm-handler') and defers
 ;; the registration via `with-eval-after-load' on `helm' so it kicks
 ;; in only when helm is actually loaded.
 ;;
@@ -68,9 +68,9 @@ this value (see that defcustom for rationale)."
   "Per-source candidate cap for SINGLE-source helm paths.
 
 Used by `fzfa-helm-make-async-source', `fzfa-helm-make-sync-source',
-`fzfa-helm--async-read', `fzfa-helm--sync-read', and
-`fzfa-helm--2pass-read'.  Like the multi cap, this controls both
-fzf-native's returned-list size and helm's `:candidate-number-limit'.
+`fzfa-helm--async-read', `fzfa-helm--sync-read'.  Like the multi cap,
+this controls both fzf-native's returned-list size and helm's
+`:candidate-number-limit'.
 
 Default is `fzfa-helm-multi-source-candidate-limit' × 10."
   :type 'integer
@@ -90,9 +90,9 @@ disorienting mid-session.
 
 When this is non-nil (the default), each fzfa-helm handler
 \(`fzfa-helm--async-read', `fzfa-helm--sync-read',
-`fzfa-helm--2pass-read', `fzfa-helm--multi-read') explicitly kills
-its session buffer in `unwind-protect' cleanup — no leftovers in
-`buffer-list', no stale candidates downstream.
+`fzfa-helm--multi-read') explicitly kills its session buffer in
+`unwind-protect' cleanup — no leftovers in `buffer-list', no stale
+candidates downstream.
 
 Set to nil to defer to helm's default bury behavior — useful if you
 rely on `helm-resume' for fzfa sessions, though async producers
@@ -162,7 +162,7 @@ before the idle delay elapses -> timer fires post-cleanup ->
 (declare-function fzf-native-async-stats "fzf-native")
 (declare-function fzf-native-score-all "fzf-native")
 (declare-function fzfa--history-rank "fzfa")
-(declare-function fzfa--2pass-extract-args "fzfa")
+(declare-function fzfa--async-extract-args "fzfa")
 (declare-function fzfa--commas "fzfa")
 (declare-function fzfa--preview-handler "fzfa")
 (declare-function fzfa--preview-call "fzfa")
@@ -585,15 +585,10 @@ For pure-fzfa multis with several async sources, `fzfa-multi-read'
 is faster.  Composition into helm-mini-style sessions is the
 intended use case.
 
-Errors if CMD is not an extract-capable fzfa command, or if it is a
-two-pass command (`:2pass t' in the extracted args)."
-  (let ((args (fzfa--2pass-extract-args cmd)))
+Errors if CMD is not an extract-capable fzfa command."
+  (let ((args (fzfa--async-extract-args cmd)))
     (unless args
       (user-error "`%s' is not an extract-capable fzfa command" cmd))
-    (when (plist-get args :2pass)
-      (user-error
-       "`%s' is a two-pass fzfa command — not yet composable as a helm source"
-       cmd))
     (cond
      ;; Multi-source command — build one helm source per inner plist.
      ;; Each inner plist already carries an :action closure that
@@ -764,166 +759,6 @@ metadata."
         (fzfa--preview-return result))
       (fzfa-helm--cancel-stranded-follow-timer)
       (fzfa-helm--maybe-kill-session-buffer "*helm fzfa sync*"))
-    result))
-
-;;; 2pass handler — registered as `fzfa-2pass-helm-handler'
-
-(defvar fzfa-async-split-style)
-(defvar fzfa-async-split-styles-alist)
-(defvar fzfa-shell-command-debounce)
-(defvar fzfa-shell-command-throttle)
-(declare-function fzfa--defer-async-stop "fzfa")
-
-(cl-defun fzfa-helm--2pass-read (&key prompt directory category group
-                                      initial-input split-style apply)
-  "Helm dispatch for `fzfa-2pass-completing-read'.
-
-PROMPT, DIRECTORY, INITIAL-INPUT, SPLIT-STYLE as per the caller.
-GROUP is accepted for signature parity but unused under helm (helm
-sources do not consume completion-read metadata).
-
-CATEGORY is used to resolve a preview handler from
-`fzfa-preview-functions' — 2pass commands like `fzfa-rg-2p' carry
-their underlying command's category (e.g. `fzfa-grep'), which has a
-registered :preview handler.  When a handler resolves we capture
-origin window/buffer/`default-directory', fire `:setup', wire
-`:persistent-action' to a debounced `:preview' dispatcher (so
-scrolling the candidate list live-jumps the origin window to the
-matching line), and fire `:exit' + `:return' on exit."
-  (ignore group)
-  (let* ((prompt (or prompt "fzfa-2pass: "))
-         (dir (expand-file-name (or directory default-directory)))
-         (style-sym (or split-style fzfa-async-split-style 'perl))
-         (style (or (alist-get style-sym fzfa-async-split-styles-alist)
-                    (user-error "Unknown fzfa-async split style: %s"
-                                style-sym)))
-         (splitter (plist-get style :function))
-         (limit fzfa-helm-candidate-limit)
-         (init-text (if (consp initial-input)
-                        (car initial-input)
-                      initial-input))
-         (handle nil)
-         (current-cmd nil)
-         (last-gen -1)
-         (last-restart-time 0.0)
-         (stopped nil)
-         (result nil)
-         (helm-completion-style 'emacs)
-         (handler (fzfa--preview-handler nil category))
-         (fzfa--preview-session (and handler (list handler)))
-         (apply-fn (or apply (plist-get
-                              (alist-get category fzfa-apply-functions)
-                              :apply)))
-         restart-timer poll-timer
-         (do-restart
-          (lambda (cmd)
-            (when handle
-              (fzfa--defer-async-stop handle)
-              (setq handle nil))
-            (setq current-cmd cmd
-                  last-gen -1
-                  last-restart-time (float-time))
-            (when (and cmd (not (string-empty-p cmd)))
-              (setq handle (fzf-native-async-start cmd dir)))
-            (when helm-alive-p (helm-force-update))))
-         (cleanup
-          (lambda ()
-            (unless stopped
-              (setq stopped t)
-              (when restart-timer
-                (cancel-timer restart-timer)
-                (setq restart-timer nil))
-              (when poll-timer
-                (cancel-timer poll-timer)
-                (setq poll-timer nil))
-              (when handle
-                (fzfa--defer-async-stop handle)
-                (setq handle nil))))))
-    ;; Pre-arm initial cmd's producer BEFORE helm activates so fork
-    ;; happens in quiescent Lisp state (same reason as the async path).
-    (when init-text
-      (let ((cmd (car (funcall splitter init-text style))))
-        (when (and cmd (not (string-empty-p cmd)))
-          (funcall do-restart cmd))))
-    (setq poll-timer
-          (run-with-timer
-           0 fzfa-refresh-delay
-           (lambda ()
-             (when (and helm-alive-p handle (not stopped))
-               (let ((gen (fzf-native-async-generation handle)))
-                 (when (and gen (> gen last-gen))
-                   (setq last-gen gen)
-                   (helm-force-update)))))))
-    (when handler
-      (fzfa-preview-put :origin-window (selected-window))
-      (fzfa-preview-put :origin-buffer (window-buffer (selected-window)))
-      (fzfa-preview-put :default-directory default-directory)
-      (fzfa--preview-call :setup))
-    (unwind-protect
-        (let ((default-directory dir))
-          (helm
-           :sources
-           (apply #'helm-make-source prompt 'helm-source-sync
-                  :header-name
-                  (lambda (n)
-                    (format "%s [%s]%s" n (abbreviate-file-name dir)
-                            (fzfa-helm--async-stats-suffix handle)))
-                  :candidates
-                  (lambda ()
-                    (let* ((split (funcall splitter helm-pattern style))
-                           (cmd (car split))
-                           (query (cdr split)))
-                      (cond
-                       ((not (equal cmd current-cmd))
-                        ;; cmd changed — debounce restart, fetch from
-                        ;; the old handle in the meantime so the display
-                        ;; doesn't blank.
-                        (when restart-timer
-                          (cancel-timer restart-timer)
-                          (setq restart-timer nil))
-                        (let* ((elapsed (- (float-time) last-restart-time))
-                               (delay (max fzfa-shell-command-debounce
-                                           (- fzfa-shell-command-throttle
-                                              elapsed))))
-                          (setq restart-timer
-                                (run-with-timer
-                                 (max 0.01 delay) nil
-                                 (lambda ()
-                                   (setq restart-timer nil)
-                                   (funcall do-restart cmd)))))
-                        (and handle
-                             (fzf-native-async-candidates handle query limit)))
-                       ((null handle) nil)
-                       (t (fzf-native-async-candidates handle query limit)))))
-                  :match-dynamic t
-                  :nohighlight t
-                  :candidate-number-limit limit
-                  :cleanup cleanup
-                  :action (lambda (cand) (setq result cand))
-                  ;; Preserve text properties on candidates + optionally
-                  ;; annotate (no annotate path for 2pass commands today).
-                  ;; And wire live preview when a handler is registered
-                  ;; for the source's category — `fzfa-rg-2p' carries
-                  ;; `fzfa-grep' category which has a `:preview' handler.
-                  (append
-                   (list :filtered-candidate-transformer
-                         (fzfa-helm--make-display-transformer nil))
-                   (cond
-                    (apply-fn
-                     (append (list :persistent-action apply-fn)
-                             (when fzfa-helm-apply-follow '(:follow 1))))
-                    (handler
-                     (list :persistent-action
-                           (fzfa-helm--make-debounced-preview-fn)
-                           :follow 1)))))
-           :buffer "*helm fzfa 2pass*"
-           :input init-text))
-      (funcall cleanup)
-      (when handler
-        (fzfa--preview-call :exit)
-        (fzfa--preview-return result))
-      (fzfa-helm--cancel-stranded-follow-timer)
-      (fzfa-helm--maybe-kill-session-buffer "*helm fzfa 2pass*"))
     result))
 
 ;;; Multi handler — registered as `fzfa-multi-helm-handler'
@@ -1335,7 +1170,6 @@ to call multiple times — `setq' is idempotent."
   (with-eval-after-load 'helm
     (setq fzfa-async-helm-handler #'fzfa-helm--async-read)
     (setq fzfa-sync-helm-handler  #'fzfa-helm--sync-read)
-    (setq fzfa-2pass-helm-handler #'fzfa-helm--2pass-read)
     (setq fzfa-multi-helm-handler #'fzfa-helm--multi-read)))
 
 (provide 'fzfa-helm)
