@@ -1535,9 +1535,9 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
 
 ;;; Two-pass (consult-style) `completing-read'
 
-(defcustom fzfa-2pass-split-style 'perl
+(defcustom fzfa-async-split-style 'perl
   "Splitting style for `fzfa-2pass-completing-read'.
-See `fzfa-2pass-split-styles-alist' for available styles."
+See `fzfa-async-split-styles-alist' for available styles."
   :type '(choice (const :tag "Perl-style (#cmd#filter)" perl))
   :group 'fzfa)
 
@@ -1555,8 +1555,8 @@ keystrokes ends with exactly one restart on the final cmd value."
   :type 'float
   :group 'fzfa)
 
-(defcustom fzfa-2pass-split-styles-alist
-  `((perl :initial ?# :function ,#'fzfa--2pass-split-perl))
+(defcustom fzfa-async-split-styles-alist
+  `((perl :initial ?# :function ,#'fzfa--async-split-perl))
   "Splitting styles for `fzfa-2pass-completing-read'.
 Each entry is (SYMBOL . PLIST).  Recognized PLIST keys:
   :function  (STR PLIST) -> (CMD . FILTER).  Required.
@@ -1568,7 +1568,7 @@ Each entry is (SYMBOL . PLIST).  Recognized PLIST keys:
   :type '(alist :key-type symbol :value-type plist)
   :group 'fzfa)
 
-(defun fzfa--2pass-split-perl (str &optional _plist)
+(defun fzfa--async-split-perl (str &optional _plist)
   "Split STR into (CMD . FILTER) using a perl-style separator.
 If the first character of STR is punctuation it is the separator: text
 between the first and second occurrence is CMD; text after the second
@@ -1584,7 +1584,7 @@ FILTER is empty.  Without a leading separator, the whole STR is CMD."
             (cons (substring str 1) "")))))
     (cons str "")))
 
-(defcustom fzfa-2pass-compact-key "<"
+(defcustom fzfa-async-display-key ">"
   "Key string that toggles compact view of the CMD portion.
 When compact, only the program name and the quoted-argument slot
 \(if any) are visible; flags are hidden behind a `...' display.
@@ -1594,7 +1594,7 @@ session starts compact.  Set to nil to disable the feature entirely
   :type '(choice (const :tag "Disabled" nil) string)
   :group 'fzfa)
 
-(defun fzfa--2pass-compact-cmd-bounds (sep)
+(defun fzfa--async-display-cmd-bounds (sep)
   "Return (CMD-BEG . CMD-END) for the CMD region in the current minibuffer.
 SEP is the separator character used by the active split style.  Returns
 nil when the minibuffer does not begin with SEP or no closing SEP is
@@ -1607,7 +1607,7 @@ present yet."
         (when (search-forward (char-to-string sep) nil t)
           (cons beg (1- (point))))))))
 
-(defun fzfa--2pass-compact-make-overlays (cmd-beg cmd-end)
+(defun fzfa--async-display-make-overlays (cmd-beg cmd-end)
   "Return overlays compacting flag regions between CMD-BEG and CMD-END.
 Uses the *last* balanced `\\='…\\=' / \"…\" pair as anchor (so an
 earlier quoted flag value like `-flag=\\='val\\='' is ignored in favor
@@ -1636,7 +1636,7 @@ only spans are left alone."
                             (buffer-substring-no-properties beg end)))
                   (let ((ov (make-overlay beg end nil t nil)))
                     (overlay-put ov 'display display)
-                    (overlay-put ov 'fzfa-2pass-compact t)
+                    (overlay-put ov 'fzfa-async-display t)
                     (push ov overlays)))))
       (cond
        (last-pair
@@ -1661,7 +1661,7 @@ only spans are left alone."
   "Two-pass (consult-style) async `completing-read'.
 
 Input is split into a shell-CMD part and an fzf-FILTER part via
-`fzfa-2pass-split-style' (or :SPLIT-STYLE override).  With the
+`fzfa-async-split-style' (or :SPLIT-STYLE override).  With the
 default `perl' style the prompt has shape \"#CMD#FILTER\" (the
 leading `#' is inserted automatically when no :INITIAL-INPUT is
 supplied).  Changing CMD restarts the underlying process;
@@ -1677,7 +1677,7 @@ changing FILTER rescores in place via fzf-native.
 :RESOLVE-PATHS  When non-nil, the returned candidate is passed through
                 `expand-file-name' against :DIRECTORY.  Off by default
                 since the shell command's output is often free-form.
-:SPLIT-STYLE    Override `fzfa-2pass-split-style' for this call.
+:SPLIT-STYLE    Override `fzfa-async-split-style' for this call.
 :APPLY          Lambda (CAND) -> any.
                 See `fzfa-async-completing-read' for semantics."
   (fzfa--ensure-setup)
@@ -1715,10 +1715,10 @@ changing FILTER rescores in place via fzf-native.
          (fzfa--session-apply
           (or apply (plist-get (alist-get category fzfa-apply-functions) :apply)))
          (fzfa--session-resolve-paths resolve-paths)
-         (style-sym (or split-style fzfa-2pass-split-style 'perl))
-         (style (or (alist-get style-sym fzfa-2pass-split-styles-alist)
+         (style-sym (or split-style fzfa-async-split-style 'perl))
+         (style (or (alist-get style-sym fzfa-async-split-styles-alist)
                     (user-error
-                     "Unknown fzfa-2pass split style: %s" style-sym)))
+                     "Unknown fzfa-async split style: %s" style-sym)))
          (initial-char (plist-get style :initial))
          (init-text (if (consp initial-input)
                         (car initial-input)
@@ -1743,10 +1743,10 @@ changing FILTER rescores in place via fzf-native.
             (setq compact-overlays nil)))
          (compact-apply
           (lambda ()
-            (when-let* ((bounds (fzfa--2pass-compact-cmd-bounds
+            (when-let* ((bounds (fzfa--async-display-cmd-bounds
                                  initial-char)))
               (setq compact-overlays
-                    (fzfa--2pass-compact-make-overlays
+                    (fzfa--async-display-make-overlays
                      (car bounds) (cdr bounds))))))
          (compact-toggle
           (lambda ()
@@ -1948,10 +1948,10 @@ changing FILTER rescores in place via fzf-native.
                         (with-selected-window win
                           (goto-char (+ (minibuffer-prompt-end) p))))))))
                (fzfa--minibuffer-format-reset)
-               (when fzfa-2pass-compact-key
+               (when fzfa-async-display-key
                  (let ((map (make-sparse-keymap)))
                    (set-keymap-parent map (current-local-map))
-                   (define-key map (kbd fzfa-2pass-compact-key)
+                   (define-key map (kbd fzfa-async-display-key)
                                compact-toggle)
                    (use-local-map map))
                  (setq compact-on t)
@@ -2035,8 +2035,8 @@ post-action (e.g. `find-file', grep-jump) still runs."
       (unless shell-cmd
         (user-error "`%s' is not an async (`:command') fzfa command — \
 two-pass only wraps async producers" cmd))
-      (let* ((style-sym (or fzfa-2pass-split-style 'perl))
-             (style (alist-get style-sym fzfa-2pass-split-styles-alist))
+      (let* ((style-sym (or fzfa-async-split-style 'perl))
+             (style (alist-get style-sym fzfa-async-split-styles-alist))
              (sep (or (plist-get style :initial) ?#))
              (initial (fzfa--2pass-initial-input shell-cmd sep))
              (result (fzfa-2pass-completing-read

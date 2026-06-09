@@ -768,8 +768,8 @@ metadata."
 
 ;;; 2pass handler — registered as `fzfa-2pass-helm-handler'
 
-(defvar fzfa-2pass-split-style)
-(defvar fzfa-2pass-split-styles-alist)
+(defvar fzfa-async-split-style)
+(defvar fzfa-async-split-styles-alist)
 (defvar fzfa-shell-command-debounce)
 (defvar fzfa-shell-command-throttle)
 (declare-function fzfa--defer-async-stop "fzfa")
@@ -793,9 +793,9 @@ matching line), and fire `:exit' + `:return' on exit."
   (ignore group)
   (let* ((prompt (or prompt "fzfa-2pass: "))
          (dir (expand-file-name (or directory default-directory)))
-         (style-sym (or split-style fzfa-2pass-split-style 'perl))
-         (style (or (alist-get style-sym fzfa-2pass-split-styles-alist)
-                    (user-error "Unknown fzfa-2pass split style: %s"
+         (style-sym (or split-style fzfa-async-split-style 'perl))
+         (style (or (alist-get style-sym fzfa-async-split-styles-alist)
+                    (user-error "Unknown fzfa-async split style: %s"
                                 style-sym)))
          (splitter (plist-get style :function))
          (limit fzfa-helm-candidate-limit)

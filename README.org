@@ -472,10 +472,10 @@ minibuffer therefore starts in *compact* mode: flags are hidden by default.
 If there is no quoted-argument slot in the command, the entire flag
 tail is hidden silently (e.g. ~find %s -type f~ shows as ~#find#~).
 
-Press ~<~ inside the minibuffer to toggle between compact and
+Press ~>~ inside the minibuffer to toggle between compact and
 expanded.
 
-Customize ~fzfa-2pass-compact-key~ to change the key, or set it to
+Customize ~fzfa-async-display-key~ to change the key, or set it to
 ~nil~ to disable the feature entirely (no binding, no initial
 compaction — the full command is shown verbatim, as before).
 
