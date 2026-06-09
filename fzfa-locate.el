@@ -38,8 +38,5 @@ The command is configurable via `fzfa-locate-command'."
                        :command fzfa-locate-command)))
     (fzfa-with-visit (find-file result))))
 
-(when (memq 'fzfa-locate-2p fzfa-2p-functions)
-  (fzfa-2p-define 'fzfa-locate))
-
 (provide 'fzfa-locate)
 ;;; fzfa-locate.el ends here

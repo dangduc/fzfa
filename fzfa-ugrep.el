@@ -47,8 +47,5 @@ The command is configurable via `fzfa-ugrep-command'."
                   :group #'fzfa--grep-group)))
     (fzfa-with-visit (fzfa--grep-jump r))))
 
-(when (memq 'fzfa-ugrep-2p fzfa-2p-functions)
-  (fzfa-2p-define 'fzfa-ugrep))
-
 (provide 'fzfa-ugrep)
 ;;; fzfa-ugrep.el ends here

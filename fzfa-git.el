@@ -200,8 +200,5 @@ The command is configurable via `fzfa-git-log-grep-command'."
               ((string-match "\\`\\([a-f0-9]+\\)" result)))
     (funcall fzfa-git-log-grep-action (match-string 1 result))))
 
-(when (memq 'fzfa-git-grep-2p fzfa-2p-functions)
-  (fzfa-2p-define 'fzfa-git-grep))
-
 (provide 'fzfa-git)
 ;;; fzfa-git.el ends here

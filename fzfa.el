@@ -2141,12 +2141,6 @@ PATH and whose command symbol is bound: %s."
    (fzfa-ag    :executable "ag")
    (fzfa-grep  :executable "grep"))) ;; -> `fzfa-smart-grep'
 
-(when (memq 'fzfa-smart-find-2p fzfa-2p-functions)
-  (fzfa-2p-define 'fzfa-smart-find)) ;; -> `fzfa-smart-find-2p'
-
-(when (memq 'fzfa-smart-grep-2p fzfa-2p-functions)
-  (fzfa-2p-define 'fzfa-smart-grep)) ;; -> `fzfa-smart-grep-2p'
-
 ;;; Sync `completing-read'
 
 (cl-defun fzfa-sync-completing-read (&key

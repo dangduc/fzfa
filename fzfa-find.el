@@ -37,8 +37,5 @@ The command is configurable via `fzfa-find-command'."
   (when-let* ((result (fzfa-async-completing-read :command fzfa-find-command)))
     (fzfa-with-visit (find-file result))))
 
-(when (memq 'fzfa-find-2p fzfa-2p-functions)
-  (fzfa-2p-define 'fzfa-find))
-
 (provide 'fzfa-find)
 ;;; fzfa-find.el ends here

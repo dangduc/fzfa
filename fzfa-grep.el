@@ -66,8 +66,5 @@ The command is configurable via `fzfa-grep-current-file-command'."
                   :category 'fzfa-grep)))
     (fzfa-with-visit (fzfa--grep-jump r))))
 
-(when (memq 'fzfa-grep-2p fzfa-2p-functions)
-  (fzfa-2p-define 'fzfa-grep))
-
 (provide 'fzfa-grep)
 ;;; fzfa-grep.el ends here
