@@ -1519,60 +1519,26 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
            (display-cycle
             (lambda ()
               (interactive)
-              (let ((from display-state)
-                    (to (cl-case display-state
-                          ((hidden) 'compact)
-                          ((compact) 'full)
-                          ((full) 'hidden)
-                          (t 'hidden))))
-                ;; Transitions that cross the hidden boundary mutate the
-                ;; buffer: hidden→compact materializes `#command#' into
-                ;; the editable region; full→hidden extracts the current
-                ;; `#cmd#' back into `command' and deletes it from the
-                ;; buffer.  Separator protective overlays are installed /
-                ;; removed alongside, since they only make sense when
-                ;; `#…#' actually exists in the buffer.
+              (let* ((from display-state)
+                     (to (fzfa--async-display-next-state from)))
+                ;; Transitions across the hidden boundary mutate the
+                ;; buffer via the shared materialize / extract helpers
+                ;; (see `fzfa--async-display-materialize' and
+                ;; `fzfa--async-display-extract').  Both helpers are
+                ;; frontend-agnostic — they operate on `current-buffer'
+                ;; using `minibuffer-prompt-end' as the start anchor, so
+                ;; the same logic powers the helm `>' key when that
+                ;; lands.  See `fzfa--async-display-next-state' for the
+                ;; cycle order.
                 (cond
                  ((and (eq from 'hidden) (eq to 'compact))
-                  ;; Materialize `#command#' at the start of the editable
-                  ;; region.  Place point past the closing separator,
-                  ;; preserving the user's original offset within FILTER
-                  ;; (so an empty FILTER lands the cursor at the end of
-                  ;; `#CMD#'; a FILTER like "abc" with point at "c"
-                  ;; keeps point at "c" in the new layout).
-                  (let* ((mbe (minibuffer-prompt-end))
-                         (filter-offset (max 0 (- (point) mbe)))
-                         (cmd-str (or command ""))
-                         (cmd-text (concat (char-to-string initial-char)
-                                           cmd-str
-                                           (char-to-string initial-char))))
-                    (goto-char mbe)
-                    (insert cmd-text)
-                    (goto-char (+ mbe (length cmd-text) filter-offset))
-                    (let ((close-pos (+ mbe 1 (length cmd-str))))
-                      (setq separator-overlays
-                            (list (fzfa--async-protect-separator
-                                   mbe initial-char)
-                                  (fzfa--async-protect-separator
-                                   close-pos initial-char))))))
+                  (setq separator-overlays
+                        (fzfa--async-display-materialize
+                         command initial-char)))
                  ((eq to 'hidden)
-                  ;; Extract current CMD into `command' and delete the
-                  ;; `#CMD#' prefix from the buffer.  Overlays go first
-                  ;; so their `modification-hooks' don't self-heal what
-                  ;; we're intentionally removing.  `delete-region's
-                  ;; default cursor behavior already does the right
-                  ;; thing: FILTER-side point shifts back; CMD-side or
-                  ;; separator-side point lands at start of FILTER.
-                  (let* ((mbe (minibuffer-prompt-end))
-                         (input (buffer-substring-no-properties
-                                 mbe (point-max)))
-                         (split (funcall splitter input style))
-                         (cmd (car split)))
-                    (setq command cmd)
-                    (mapc #'delete-overlay separator-overlays)
-                    (setq separator-overlays nil)
-                    (delete-region mbe (min (point-max)
-                                            (+ mbe 2 (length cmd)))))))
+                  (setq command (fzfa--async-display-extract
+                                 splitter style separator-overlays))
+                  (setq separator-overlays nil)))
                 (setq display-state to)
                 (funcall display-apply))))
            restart-timer retry-timer poll-timer ivy-push
@@ -1948,6 +1914,69 @@ only spans are left alone."
        (t
         (mk prog-end cmd-end ""))))
     overlays))
+
+(defun fzfa--async-display-next-state (state)
+  "Return the display state cycled one step forward.
+
+The cycle is `hidden' → `compact' → `full' → `hidden'.  Any unknown
+input falls back to `hidden' (defensive default for an unknown
+session state)."
+  (cl-case state
+    ((hidden) 'compact)
+    ((compact) 'full)
+    ((full) 'hidden)
+    (otherwise 'hidden)))
+
+(defun fzfa--async-display-materialize (cmd initial-char)
+  "Materialize `#CMD#' at the start of the editable region.
+
+Inserts INITIAL-CHAR + CMD + INITIAL-CHAR at `minibuffer-prompt-end'
+in the current buffer.  Preserves point's offset within FILTER —
+i.e. the distance from `minibuffer-prompt-end' before the call
+equals the distance from the start of the new FILTER region after.
+
+Installs two self-healing protective overlays on the separators and
+returns them as a two-element list `(OPEN-OVERLAY CLOSE-OVERLAY)'.
+
+Operates on `current-buffer'.  Inside an actual minibuffer
+`minibuffer-prompt-end' returns the position past the prompt's
+`field' boundary; in temp buffers it returns `(point-min)' so this
+helper is testable in isolation."
+  (let* ((mbe (minibuffer-prompt-end))
+         (filter-offset (max 0 (- (point) mbe)))
+         (cmd-str (or cmd ""))
+         (cmd-text (concat (char-to-string initial-char)
+                           cmd-str
+                           (char-to-string initial-char))))
+    (goto-char mbe)
+    (insert cmd-text)
+    (goto-char (+ mbe (length cmd-text) filter-offset))
+    (let ((close-pos (+ mbe 1 (length cmd-str))))
+      (list (fzfa--async-protect-separator mbe initial-char)
+            (fzfa--async-protect-separator close-pos initial-char)))))
+
+(defun fzfa--async-display-extract (splitter style separator-overlays)
+  "Parse `#CMD#FILTER' at start of editable region, delete `#CMD#'.
+
+Reads the buffer contents from `minibuffer-prompt-end' to
+`point-max', runs SPLITTER on it with STYLE, and uses the resulting
+CMD to delete the leading `#CMD#' prefix.
+
+Removes SEPARATOR-OVERLAYS first so their `modification-hooks'
+don't self-heal the very deletion we're about to perform.
+
+Returns the extracted CMD string.  The caller is responsible for
+storing it into the session's closure variable so the hidden-mode
+trivial-split picks it up on the next tick.
+
+Operates on `current-buffer'."
+  (let* ((mbe (minibuffer-prompt-end))
+         (input (buffer-substring-no-properties mbe (point-max)))
+         (split (funcall splitter input style))
+         (cmd (car split)))
+    (mapc #'delete-overlay separator-overlays)
+    (delete-region mbe (min (point-max) (+ mbe 2 (length cmd))))
+    cmd))
 
 (defun fzfa--async-extract-args (cmd)
   "Run CMD in `:extract' mode and return its keyword args plist.

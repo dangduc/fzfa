@@ -943,5 +943,109 @@ characters) is the FILTER."
                                        #'fzfa--async-split-perl style)
                    '("real" . "#fake#filter")))))
 
+;;; fzfa--async-display-next-state
+
+(ert-deftest fzfa-async-display-next-state-cycle ()
+  "State cycles hidden → compact → full → hidden."
+  (should (eq (fzfa--async-display-next-state 'hidden)  'compact))
+  (should (eq (fzfa--async-display-next-state 'compact) 'full))
+  (should (eq (fzfa--async-display-next-state 'full)    'hidden)))
+
+(ert-deftest fzfa-async-display-next-state-fallback ()
+  "Unknown input falls back to `hidden'."
+  (should (eq (fzfa--async-display-next-state 'bogus) 'hidden))
+  (should (eq (fzfa--async-display-next-state nil)    'hidden)))
+
+;;; fzfa--async-display-materialize / extract
+
+(ert-deftest fzfa-async-display-materialize-empty-filter ()
+  "Materialize on empty FILTER inserts `#CMD#' and lands point at end."
+  (with-temp-buffer
+    (fzfa--async-display-materialize "find ." ?#)
+    (should (equal (buffer-string) "#find .#"))
+    (should (= (point) (point-max)))))
+
+(ert-deftest fzfa-async-display-materialize-preserves-filter-offset ()
+  "With existing FILTER `abc' and point at `c', materialize keeps point at `c'."
+  (with-temp-buffer
+    (insert "abc")
+    (goto-char (point-max))  ; point at position 4 (after `c`)
+    (let ((offset-before (- (point) (minibuffer-prompt-end))))
+      (fzfa--async-display-materialize "find ." ?#)
+      (should (equal (buffer-string) "#find .#abc"))
+      ;; Point should be at the same offset within the new FILTER region.
+      (let* ((mbe (minibuffer-prompt-end))
+             (cmd-text-len (length "#find .#"))
+             (new-filter-offset (- (point) mbe cmd-text-len)))
+        (should (= new-filter-offset offset-before))))))
+
+(ert-deftest fzfa-async-display-materialize-nil-cmd ()
+  "Nil CMD coerces to empty string — buffer ends up as `##'."
+  (with-temp-buffer
+    (fzfa--async-display-materialize nil ?#)
+    (should (equal (buffer-string) "##"))))
+
+(ert-deftest fzfa-async-display-materialize-returns-overlays ()
+  "Returns a list of two protective overlays covering the two separators."
+  (with-temp-buffer
+    (let ((overlays (fzfa--async-display-materialize "find ." ?#)))
+      (should (= (length overlays) 2))
+      (should (cl-every #'overlayp overlays))
+      ;; First overlay covers the opening `#' at position 1.
+      (should (= (overlay-start (car overlays)) 1))
+      (should (= (overlay-end   (car overlays)) 2))
+      ;; Second overlay covers the closing `#' at position 8 (after "find .").
+      (should (= (overlay-start (cadr overlays)) 8))
+      (should (= (overlay-end   (cadr overlays)) 9)))))
+
+(ert-deftest fzfa-async-display-extract-basic ()
+  "Extract returns CMD and deletes the `#CMD#' prefix from the buffer."
+  (with-temp-buffer
+    (insert "#find .#filter")
+    (let* ((style (fzfa-test--perl-style))
+           (cmd (fzfa--async-display-extract
+                  #'fzfa--async-split-perl style nil)))
+      (should (equal cmd "find .")) ; extracted CMD
+      (should (equal (buffer-string) "filter"))))) ; only FILTER survives
+
+(ert-deftest fzfa-async-display-extract-empty-cmd ()
+  "Extract handles `##filter' (empty CMD region)."
+  (with-temp-buffer
+    (insert "##filter")
+    (let* ((style (fzfa-test--perl-style))
+           (cmd (fzfa--async-display-extract
+                  #'fzfa--async-split-perl style nil)))
+      (should (equal cmd ""))
+      (should (equal (buffer-string) "filter")))))
+
+(ert-deftest fzfa-async-display-extract-deletes-overlays ()
+  "Extract removes the separator-protective overlays before mutating the buffer.
+\(Their `modification-hooks' would otherwise self-heal the deletion.)"
+  (with-temp-buffer
+    (insert "#find .#abc")
+    (let* ((style (fzfa-test--perl-style))
+           (overlays
+            ;; Build dummy overlays carrying the same heal hook the real
+            ;; ones do; if extract fails to delete them first, the heal
+            ;; hook re-inserts the deleted `#' and buffer ends up wrong.
+            (list (fzfa--async-protect-separator 1 ?#)
+                  (fzfa--async-protect-separator 8 ?#))))
+      (should (= (length (overlays-in 1 9)) 2))
+      (fzfa--async-display-extract #'fzfa--async-split-perl style overlays)
+      ;; Buffer is correctly reduced; deleted overlays don't self-heal.
+      (should (equal (buffer-string) "abc")))))
+
+(ert-deftest fzfa-async-display-materialize-extract-roundtrip ()
+  "Materialize then extract restores the original buffer + cmd."
+  (with-temp-buffer
+    (insert "abc")
+    (let ((overlays (fzfa--async-display-materialize "find ." ?#))
+          (style (fzfa-test--perl-style)))
+      (should (equal (buffer-string) "#find .#abc"))
+      (let ((cmd (fzfa--async-display-extract
+                  #'fzfa--async-split-perl style overlays)))
+        (should (equal cmd "find ."))
+        (should (equal (buffer-string) "abc"))))))
+
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here
