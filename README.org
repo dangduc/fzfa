@@ -174,7 +174,7 @@ See [[*Cross-frontend integration]] for design and implementation.
 ~fzfa-multi-read~ composes any combination of async producers
 (shell commands streamed into the scorer) and sync candidate lists
 (static collections, history rings, etc.) into a single picker, with
-per-source narrowing, preview, and apply.
+per-source narrowing, preview, and apply (~helm~ persistent actions / ~ivy~-call).
 
 ~consult--multi~ is sync only; ivy/counsel has no multi-source
 primitive (~counsel-buffer-or-recentf~ concatenates two lists into a
@@ -546,9 +546,8 @@ the underlying process on change) and an fzf-FILTER part
 split style the buffer text has shape ~#COMMAND#FILTER~.
 
 By default the COMMAND region is *invisible* and only the FILTER
-portion appears editable — which matches the old async UX where the
-producer was fixed and only filtering was interactive.  Press ~>~
-inside the minibuffer to cycle through three display modes:
+portion appears editable. Press ~>~ inside the minibuffer to cycle
+through three display modes:
 
 #+begin_example
   hidden   →   the COMMAND region is hidden behind a display "" overlay
