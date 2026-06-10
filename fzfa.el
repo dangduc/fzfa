@@ -1608,13 +1608,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                 (`(boundaries . ,_) (cons 0 0))
                 ('t
                  (let* ((input (fzfa--current-query str))
-                        ;; In hidden mode the buffer has no `#…#'; CMD
-                        ;; lives in `command', and the whole input is
-                        ;; the FILTER half.  In compact/full the standard
-                        ;; configured splitter parses `#CMD#FILTER'.
-                        (split (if (eq display-state 'hidden)
-                                   (cons (or command "") input)
-                                 (funcall splitter input style)))
+                        (split (fzfa--async-split
+                                input display-state command splitter style))
                         (cmd (car split))
                         (query (cdr split)))
                    (cond
@@ -1685,9 +1680,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                (ivy-state-dynamic-collection ivy-last)))
                           (query (and (boundp 'ivy-text) ivy-text)))
                 (with-selected-window win
-                  (let* ((split (if (eq display-state 'hidden)
-                                    (cons (or command "") query)
-                                  (funcall splitter query style)))
+                  (let* ((split (fzfa--async-split
+                                 query display-state command splitter style))
                          (cmd    (car split))
                          (filter (cdr split)))
                     (cond
@@ -1873,6 +1867,23 @@ FILTER is empty.  Without a leading separator, the whole STR is CMD."
            (t
             (cons (substring str 1) "")))))
     (cons str "")))
+
+(defun fzfa--async-split (input display-state command splitter style)
+  "Return (CMD . FILTER) for INPUT given the current session state.
+
+In `hidden' DISPLAY-STATE, CMD lives outside the buffer (in COMMAND,
+the closure variable in `fzfa-async-completing-read''s body or its
+helm/multi analogue), so the split is trivial: CMD = COMMAND, FILTER
+= INPUT.  In any other display state, the configured SPLITTER parses
+INPUT against STYLE (a plist from `fzfa-async-split-styles-alist').
+
+Frontend-agnostic — the table-lambda in completing-read sessions
+calls it with `(fzfa--current-query str)' as INPUT; helm's
+`:candidates' callback (once `>' support lands) calls it with
+`helm-pattern'.  Same body for both."
+  (if (eq display-state 'hidden)
+      (cons (or command "") input)
+    (funcall splitter input style)))
 
 (defcustom fzfa-async-display-key ">"
   "Key string that toggles compact view of the CMD portion.
