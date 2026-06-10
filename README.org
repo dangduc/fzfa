@@ -963,8 +963,9 @@ use ~fussy~ for non-~fzfa~ sources and ~fzfa~ otherwise. Example below.
 
   (use-package helm
     :ensure t
-    :config
+    :init
     (helm-mode)
+    :config
     (setq helm-completion-style 'emacs) ;; Needed for `fussy'.
     (setq helm-input-idle-delay 0.05)
     (setq helm-autoresize-max-height 30)
