@@ -368,25 +368,83 @@ APPLY, when non-nil, is a (CAND) -> ANY function bound to `helm''s
 `:follow' tracks `fzfa-helm-apply-follow' — auto-fire on every
 selection move (default) or on `helm-execute-persistent-action'.
 
+Display cycling: `fzfa-async-display-key' (default `>') is bound in
+the source's keymap and cycles `hidden' → `compact' → `full' →
+`hidden' using the shared `fzfa--async-display-{materialize,extract}'
+helpers.  Editing the `#CMD#' region in compact / full debounce-
+restarts the subprocess with the new command.  Same UX as the
+completing-read path.
+
 Internal — used by both `fzfa-helm-make-async-source' (single-source)
 and `fzfa-helm--multi-read' (batch with bulk-stop)."
   (let* ((dir (expand-file-name (or directory default-directory)))
+         ;; Splitter setup mirrors `fzfa-async-completing-read'.  The
+         ;; style is resolved once at session-start; the per-tick
+         ;; dispatch is via `fzfa--async-split'.
+         (style-sym (or fzfa-async-split-style 'perl))
+         (style (or (alist-get style-sym fzfa-async-split-styles-alist)
+                    (user-error
+                     "Unknown fzfa-async split style: %s" style-sym)))
+         (splitter (plist-get style :function))
+         (initial-char (plist-get style :initial))
          (handle (fzf-native-async-start command dir))
+         ;; Display-state machinery.  `command' is the cl-defun arg —
+         ;; mutated in place by `display-cycle' when the user edits and
+         ;; demotes back to hidden.  `current-cmd' is what the running
+         ;; subprocess is using; differs from `command' between the user
+         ;; editing and the debounced restart actually firing.
+         (display-state 'hidden)
+         (current-cmd command)
+         (separator-overlays nil)
+         (restart-timer nil)
+         (last-restart-time 0.0)
          (last-gen -1)
          (stopped nil)
          (timer nil)
+         (do-restart
+          (lambda (cmd)
+            (when handle (fzfa--defer-async-stop handle))
+            (setq handle (and cmd (not (string-empty-p cmd))
+                              (fzf-native-async-start cmd dir))
+                  current-cmd cmd
+                  last-gen -1
+                  last-restart-time (float-time))
+            (when helm-alive-p (helm-force-update))))
+         (display-cycle
+          (lambda ()
+            (interactive)
+            (let* ((from display-state)
+                   (to (fzfa--async-display-next-state from)))
+              (cond
+               ((and (eq from 'hidden) (eq to 'compact))
+                (setq separator-overlays
+                      (fzfa--async-display-materialize
+                       command initial-char)))
+               ((eq to 'hidden)
+                (setq command (fzfa--async-display-extract
+                               splitter style separator-overlays))
+                (setq separator-overlays nil)))
+              (setq display-state to)
+              ;; Force helm to re-read `helm-pattern' immediately
+              ;; rather than waiting for the next post-command tick.
+              (when helm-alive-p (helm-force-update)))))
          (stop
           (lambda ()
             (unless stopped
               (setq stopped t)
               (when timer (cancel-timer timer) (setq timer nil))
+              (when restart-timer
+                (cancel-timer restart-timer)
+                (setq restart-timer nil))
+              (mapc #'delete-overlay separator-overlays)
+              (setq separator-overlays nil)
               (fzfa--defer-async-stop handle)))))
     (setq timer
           (run-with-timer
            0 fzfa-refresh-delay
            (lambda ()
              (when (and helm-alive-p (not stopped))
-               (let ((gen (fzf-native-async-generation handle)))
+               (let ((gen (and handle (fzf-native-async-generation handle))))
                  (when (and gen (> gen last-gen))
                    (setq last-gen gen)
                    (helm-force-update)))))))
@@ -395,11 +453,40 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
             :header-name
             (lambda (n)
               (format "%s [%s]%s" n (abbreviate-file-name dir)
-                      (fzfa-helm--async-stats-suffix handle)))
+                      (and handle (fzfa-helm--async-stats-suffix handle))))
+            :keymap (let ((map (make-sparse-keymap)))
+                      (set-keymap-parent map helm-map)
+                      (when fzfa-async-display-key
+                        (define-key map (kbd fzfa-async-display-key)
+                                    display-cycle))
+                      map)
             :candidates
             (lambda ()
               (unless stopped
-                (fzf-native-async-candidates handle helm-pattern limit)))
+                (pcase-let* ((`(,cmd . ,filter)
+                              (fzfa--async-split
+                               (or helm-pattern "") display-state command
+                               splitter style)))
+                  (when (not (equal cmd current-cmd))
+                    ;; Debounce-then-restart, mirroring the completing-
+                    ;; read path's `do-restart' scheduling.  Floor on the
+                    ;; restart gap is `fzfa-shell-command-throttle' so
+                    ;; rapid edits don't fork a process per keystroke.
+                    (when restart-timer
+                      (cancel-timer restart-timer)
+                      (setq restart-timer nil))
+                    (let* ((elapsed (- (float-time) last-restart-time))
+                           (delay (max fzfa-shell-command-debounce
+                                       (- fzfa-shell-command-throttle
+                                          elapsed))))
+                      (setq restart-timer
+                            (run-with-timer
+                             (max 0.01 delay) nil
+                             (lambda ()
+                               (setq restart-timer nil)
+                               (funcall do-restart cmd))))))
+                  (and handle
+                       (fzf-native-async-candidates handle filter limit)))))
             :match-dynamic t
             :nohighlight t
             :candidate-number-limit limit
