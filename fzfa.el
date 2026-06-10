@@ -3124,7 +3124,8 @@ inner sources receive auto-derived keys from their own :name."
     (apply #'fzfa--multi-read sources options)))
 
 (defcustom fzfa-find-any-commands
-  '(fzfa-imenu
+  '(fzfa-frames
+    fzfa-imenu
     (fzfa-vc-modified-locally :narrow l)
     fzfa-vc-added-files
     (fzfa-vc-staged-for-commit :narrow c)
@@ -3143,7 +3144,8 @@ Each entry is either a bare command symbol or a list
   :group 'fzfa)
 
 (defcustom fzfa-find-some-commands
-  '(fzfa-imenu
+  '(fzfa-frames
+    fzfa-imenu
     (fzfa-vc-modified-locally :narrow l)
     fzfa-vc-added-files
     (fzfa-vc-staged-for-commit :narrow c)
