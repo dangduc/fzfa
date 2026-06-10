@@ -396,6 +396,7 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
          (display-state 'hidden)
          (current-cmd command)
          (separator-overlays nil)
+         (display-overlays nil)
          (restart-timer nil)
          (last-restart-time 0.0)
          (last-gen -1)
@@ -410,6 +411,23 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
                   last-gen -1
                   last-restart-time (float-time))
             (when helm-alive-p (helm-force-update))))
+         (display-clear
+          (lambda ()
+            (mapc #'delete-overlay display-overlays)
+            (setq display-overlays nil)))
+         (display-apply
+          (lambda ()
+            ;; Only `compact' installs an overlay (flags collapse to
+            ;; `…').  `hidden' has no `#CMD#' in the buffer and `full'
+            ;; shows the cmd verbatim — both no-op.  Mirrors the
+            ;; `display-apply' closure in the completing-read body.
+            (funcall display-clear)
+            (when (eq display-state 'compact)
+              (when-let* ((bounds (fzfa--async-display-cmd-bounds
+                                   initial-char)))
+                (setq display-overlays
+                      (fzfa--async-display-make-overlays
+                       (car bounds) (cdr bounds)))))))
          (display-cycle
           (lambda ()
             (interactive)
@@ -425,9 +443,20 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
                                splitter style separator-overlays))
                 (setq separator-overlays nil)))
               (setq display-state to)
-              ;; Force helm to re-read `helm-pattern' immediately
-              ;; rather than waiting for the next post-command tick.
-              (when helm-alive-p (helm-force-update)))))
+              (funcall display-apply)
+              ;; Sync `helm-pattern' to the post-mutation
+              ;; minibuffer-contents.  Otherwise post-command-hook's
+              ;; `helm-check-minibuffer-input' would see the mutation
+              ;; as a pattern change and fire `helm-update' — which
+              ;; erases the helm-buffer and re-renders the entire
+              ;; candidate list, even though the filter portion (and
+              ;; therefore the candidates) is unchanged.  Real CMD
+              ;; edits in compact/full happen via `self-insert-command'
+              ;; and DO trigger the natural helm-update path because
+              ;; `helm-pattern' is stale by the time post-command-hook
+              ;; runs.
+              (when helm-alive-p
+                (setq helm-pattern (minibuffer-contents))))))
          (stop
           (lambda ()
             (unless stopped
@@ -437,7 +466,9 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
                 (cancel-timer restart-timer)
                 (setq restart-timer nil))
               (mapc #'delete-overlay separator-overlays)
-              (setq separator-overlays nil)
+              (mapc #'delete-overlay display-overlays)
+              (setq separator-overlays nil
+                    display-overlays nil)
               (fzfa--defer-async-stop handle)))))
     (setq timer
           (run-with-timer
