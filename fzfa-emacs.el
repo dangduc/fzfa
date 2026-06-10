@@ -36,6 +36,7 @@
 ;;   `fzfa-outline'                  Jump to an outline heading in this buffer
 ;;   `fzfa-compile-error'            Jump to an error from a compilation buffer
 ;;   `fzfa-frames'                   Switch focus to another live frame
+;;   `fzfa-tabs'                     Switch to a tab on the current frame
 
 ;;; Code:
 
@@ -685,6 +686,72 @@ originating window, so the picker keeps focus while you browse."
                            :apply #'focus-frame
                            :preview #'preview-frame)))
         (focus-frame result)))))
+
+;;;###autoload
+(defun fzfa-tabs ()
+  "Pick a tab on the current frame and switch to it.
+
+Candidates include every tab on the selected frame, marking the
+active one.  Selecting via RET calls `tab-bar-select-tab' with
+the chosen tab's 1-based index.  The apply key (`fzfa-apply-key',
+default \\[fzfa-apply-current]) switches without exiting the picker,
+so you can hop between tabs visually before committing.
+
+Previews show a representative buffer for the candidate tab — the
+current buffer for the active tab, or the head of the tab's saved
+buffer list for the others."
+  (interactive)
+  (require 'tab-bar)
+  (let* ((tabs (tab-bar-tabs))
+         (lookup (make-hash-table :test 'equal))
+         (used   (make-hash-table :test 'equal))
+         (candidates
+          (cl-loop
+           for tab in tabs
+           for i from 1
+           for current = (eq (car tab) 'current-tab)
+           for name = (or (alist-get 'name tab) (format "Tab-%d" i))
+           for buf = (cond
+                      (current (buffer-name (current-buffer)))
+                      ((alist-get 'wc-bl tab)
+                       (let ((b (car (alist-get 'wc-bl tab))))
+                         (and (buffer-live-p b) (buffer-name b)))))
+           for display = (format "[%d]  %s%s%s"
+                                 i name
+                                 (if (and buf (not (equal buf name)))
+                                     (format "  %s" buf)
+                                   "")
+                                 (if current "  (current)" ""))
+           do (progn
+                (while (gethash display used)
+                  (setq display (concat display " ")))
+                (puthash display t used)
+                (puthash display i lookup))
+           collect display)))
+    (unless candidates
+      (user-error "No tabs"))
+    (cl-labels
+        ((tab-buffer (i)
+           (let ((tab (nth (1- i) tabs)))
+             (cond
+              ((eq (car tab) 'current-tab) (current-buffer))
+              ((alist-get 'wc-bl tab)
+               (car (alist-get 'wc-bl tab))))))
+         (switch-tab (cand)
+           (when-let* ((i (gethash cand lookup)))
+             (fzfa-with-visit (tab-bar-select-tab i))))
+         (preview-tab (cand)
+           (when-let* ((i (gethash cand lookup))
+                       (buf (tab-buffer i))
+                       ((buffer-live-p buf)))
+             (fzfa-preview-show buf))))
+      (when-let* ((result (fzfa-sync-completing-read
+                           :candidates candidates
+                           :prompt "tab: "
+                           :category 'fzfa-tab
+                           :apply #'switch-tab
+                           :preview #'preview-tab)))
+        (switch-tab result)))))
 
 (provide 'fzfa-emacs)
 
