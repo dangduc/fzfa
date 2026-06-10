@@ -122,6 +122,38 @@ fzfa-helm handler calls this in its `unwind-protect' cleanup."
   (when (and fzfa-helm-kill-buffer-on-exit (get-buffer name))
     (kill-buffer name)))
 
+(defun fzfa-helm--wrap-apply (apply-fn dir origin-window origin-buffer)
+  "Return APPLY-FN wrapped so each fire runs against a stable baseline.
+
+DIR / ORIGIN-WINDOW / ORIGIN-BUFFER are captured at session-start.
+
+Helm fires `:persistent-action' in whatever buffer is currently shown
+in its persistent-action-display-window.  When the apply is something
+like `find-file', the first fire mutates that window (opens dired for
+a directory candidate, opens an unrelated buffer for a file
+candidate, etc.).  Every subsequent fire then inherits the mutated
+buffer's `default-directory', and `expand-file-name' on a relative
+candidate compounds the corruption.  Under `:follow 1' this cascades
+into completely bogus paths within one or two scroll steps
+\(e.g. `~/.emacs.d/user-lisp-30/user-lisp-30/extra/transient.el').
+
+This wrapper restores the captured origin window/buffer/dir before
+each fire — mirroring `fzfa--preview-call''s baseline reset — so the
+cascade can't take hold.  The other frontends (vertico/icomplete/ivy)
+don't need this because their apply only fires on user keypress and
+the candidate is pre-resolved to an absolute path upstream of the
+action; helm's `:follow 1' fires apply on every selection move with
+the raw candidate string, so the baseline must be re-established
+inside the action."
+  (lambda (cand)
+    (if (and (window-live-p origin-window) (buffer-live-p origin-buffer))
+        (with-selected-window origin-window
+          (with-current-buffer origin-buffer
+            (let ((default-directory (or dir default-directory)))
+              (funcall apply-fn cand))))
+      (let ((default-directory (or dir default-directory)))
+        (funcall apply-fn cand)))))
+
 (defvar helm--execute-persistent-action-timer)
 
 (defun fzfa-helm--cancel-stranded-follow-timer ()
@@ -670,6 +702,15 @@ Returns the selected candidate string, or nil on cancel."
          (apply-fn (or apply (plist-get
                               (alist-get category fzfa-apply-functions)
                               :apply)))
+         (origin-window (selected-window))
+         (origin-buffer (window-buffer (selected-window)))
+         ;; Wrap apply with baseline restoration so helm's :follow 1
+         ;; can't cascade `default-directory' through the bogus buffer
+         ;; state it leaves behind after each fire.  See
+         ;; `fzfa-helm--wrap-apply' for the mechanism.
+         (apply-fn (and apply-fn
+                        (fzfa-helm--wrap-apply
+                         apply-fn dir origin-window origin-buffer)))
          (source (fzfa-helm-make-async-source
                   :name (or prompt "fzfa")
                   :command command
@@ -731,6 +772,16 @@ metadata."
          (apply-fn (or apply (plist-get
                               (alist-get category fzfa-apply-functions)
                               :apply)))
+         (origin-window (selected-window))
+         (origin-buffer (window-buffer (selected-window)))
+         ;; Wrap apply with baseline restoration — see
+         ;; `fzfa-helm--wrap-apply'.  Sync sources have no `:directory'
+         ;; concept, so the baseline `default-directory' is whatever the
+         ;; user invoked the command from (their origin buffer's dir).
+         (apply-fn (and apply-fn
+                        (fzfa-helm--wrap-apply
+                         apply-fn default-directory
+                         origin-window origin-buffer)))
          (action
           (lambda (cand)
             (when (and history (symbolp history) (not (eq history t)))
