@@ -709,34 +709,26 @@ buffer list for the others."
           (cl-loop
            for tab in tabs
            for i from 1
-           for current = (eq (car tab) 'current-tab)
-           for name = (or (alist-get 'name tab) (format "Tab-%d" i))
-           for buf = (cond
-                      (current (buffer-name (current-buffer)))
-                      ((alist-get 'wc-bl tab)
-                       (let ((b (car (alist-get 'wc-bl tab))))
-                         (and (buffer-live-p b) (buffer-name b)))))
-           for display = (format "[%d]  %s%s%s"
-                                 i name
-                                 (if (and buf (not (equal buf name)))
-                                     (format "  %s" buf)
-                                   "")
-                                 (if current "  (current)" ""))
-           do (progn
-                (while (gethash display used)
-                  (setq display (concat display " ")))
-                (puthash display t used)
-                (puthash display i lookup))
-           collect display)))
+           unless (eq (car tab) 'current-tab)
+           collect
+           (let* ((name (or (alist-get 'name tab) (format "Tab-%d" i)))
+                  (b (car (alist-get 'wc-bl tab)))
+                  (buf (and (buffer-live-p b) (buffer-name b)))
+                  (display (format "[%d]  %s%s"
+                                   i name
+                                   (if (and buf (not (equal buf name)))
+                                       (format "  %s" buf)
+                                     ""))))
+             (while (gethash display used)
+               (setq display (concat display " ")))
+             (puthash display t used)
+             (puthash display i lookup)
+             display))))
     (unless candidates
-      (user-error "No tabs"))
+      (user-error "No other tabs"))
     (cl-labels
         ((tab-buffer (i)
-           (let ((tab (nth (1- i) tabs)))
-             (cond
-              ((eq (car tab) 'current-tab) (current-buffer))
-              ((alist-get 'wc-bl tab)
-               (car (alist-get 'wc-bl tab))))))
+           (car (alist-get 'wc-bl (nth (1- i) tabs))))
          (switch-tab (cand)
            (when-let* ((i (gethash cand lookup)))
              (fzfa-with-visit (tab-bar-select-tab i))))
