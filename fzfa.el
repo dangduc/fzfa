@@ -1302,6 +1302,45 @@ Priority: `fzfa-directory' >
 
 ;;; Async `completing-read'
 
+(defun fzfa--async-separator-heal-hook (overlay is-after _beg _end
+                                                &optional _prelength)
+  "Re-insert OVERLAY's separator char if the overlay's range collapsed.
+
+Used as a `modification-hooks' entry on the protective overlays placed
+over the `#…#' splitter separators.  Fires for both content changes and
+text-property changes; we self-heal only when the overlay's range
+collapsed to zero, which is the signature of a deletion of the covered
+character.  Face additions (e.g. vertico's `add-face-text-property')
+leave the range intact, so they pass through unmodified.
+
+`inhibit-modification-hooks' is bound during the re-insertion so it
+doesn't recurse through this hook."
+  (when (and is-after
+             (overlay-buffer overlay)
+             (= (overlay-start overlay) (overlay-end overlay)))
+    (let ((inhibit-modification-hooks t)
+          (p (overlay-start overlay))
+          (sep (overlay-get overlay 'fzfa-async-separator-char)))
+      (when (and p sep)
+        (save-excursion
+          (goto-char p)
+          (insert (char-to-string sep)))
+        (move-overlay overlay p (1+ p))))))
+
+(defun fzfa--async-protect-separator (pos sep-char)
+  "Place a self-healing protective overlay at POS covering SEP-CHAR.
+
+Returns the overlay.  The overlay tracks its single character via
+`front-advance' t / `rear-advance' nil so insertions adjacent to the
+separator don't extend its range; if the covered char is deleted by
+any path, `fzfa--async-separator-heal-hook' restores it."
+  (let ((ov (make-overlay pos (1+ pos) nil t nil)))
+    (overlay-put ov 'fzfa-async-separator-char sep-char)
+    (overlay-put ov 'cursor-intangible t)
+    (overlay-put ov 'modification-hooks
+                 (list #'fzfa--async-separator-heal-hook))
+    ov))
+
 ;;;###autoload
 (cl-defun fzfa-async-completing-read (&key
                                       prompt
@@ -1424,27 +1463,30 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                       (user-error
                        "Unknown fzfa-async split style: %s" style-sym)))
            (initial-char (plist-get style :initial))
-           ;; Auto-build initial input as "#COMMAND#" when caller did not
-           ;; supply an :INITIAL-INPUT.  Point lands inside the trailing
-           ;; quote pair if the command ends with one (e.g. grep's `'')`,
-           ;; otherwise just after the closing separator.
-           (init-text (cond
-                       ((consp initial-input) (car initial-input))
-                       ((stringp initial-input) initial-input)
-                       ((and command initial-char)
-                        (concat (char-to-string initial-char) command
-                                (char-to-string initial-char)))
-                       (t nil)))
+           ;; Build initial input.  Hidden mode keeps `#CMD#' OUT of the
+           ;; minibuffer entirely — CMD lives in the `preset-cmd' closure
+           ;; variable, and the editable region is just FILTER.  Compact
+           ;; / full pre-seed `#CMD#' as before so the user can edit it.
+           (init-text
+            (cond
+             ((consp initial-input) (car initial-input))
+             ((stringp initial-input) initial-input)
+             ((and command initial-char (memq display '(compact full)))
+              (concat (char-to-string initial-char) command
+                      (char-to-string initial-char)))
+             (t nil)))
+           ;; Place point at the end of the seeded text (start of the
+           ;; FILTER region in compact/full; same physical position as
+           ;; start of an empty editable region in hidden).
            (init-point
             (cond
              ((consp initial-input) (cdr initial-input))
-             ((and init-text command initial-char)
-              (cond
-               ((or (string-suffix-p "''" command)
-                    (string-suffix-p "\"\"" command))
-                (- (length init-text) 2))
-               (t (length init-text))))
+             (init-text (length init-text))
              (t nil)))
+           ;; Mutable CMD slot used by hidden-mode splitter.  Updated
+           ;; from the buffer when transitioning out of compact/full
+           ;; back to hidden (so user edits inside `#CMD#' carry over).
+           (preset-cmd command)
            (splitter (plist-get style :function))
            (limit (fzfa--candidate-limit))
            (selection nil)
@@ -1457,6 +1499,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
            (last-exhibit-scheduled 0.0)
            (last-restart-time 0.0)
            (stats-overlay nil)
+           (separator-overlays nil)
            (display-overlays nil)
            (display-state display)
            (display-clear
@@ -1465,30 +1508,75 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
               (setq display-overlays nil)))
            (display-apply
             (lambda ()
+              ;; Only compact mode installs an overlay (flags collapse).
+              ;; Hidden and full are pure buffer states — hidden has no
+              ;; `#CMD#' to hide; full shows it verbatim.
               (funcall display-clear)
-              (cl-case display-state
-                ((hidden)
-                 (when-let* ((bounds (fzfa--async-display-region-bounds
-                                      initial-char)))
-                   (setq display-overlays
-                         (fzfa--async-display-make-hidden-overlays
-                          (car bounds) (cdr bounds)))))
-                ((compact)
-                 (when-let* ((bounds (fzfa--async-display-cmd-bounds
-                                      initial-char)))
-                   (setq display-overlays
-                         (fzfa--async-display-make-overlays
-                          (car bounds) (cdr bounds))))))))
+              (when (eq display-state 'compact)
+                (when-let* ((bounds (fzfa--async-display-cmd-bounds
+                                     initial-char)))
+                  (setq display-overlays
+                        (fzfa--async-display-make-overlays
+                         (car bounds) (cdr bounds)))))))
            (display-cycle
             (lambda ()
               (interactive)
-              (setq display-state
-                    (cl-case display-state
-                      ((hidden) 'compact)
-                      ((compact) 'full)
-                      ((full) 'hidden)
-                      (t 'hidden)))
-              (funcall display-apply)))
+              (let ((from display-state)
+                    (to (cl-case display-state
+                          ((hidden) 'compact)
+                          ((compact) 'full)
+                          ((full) 'hidden)
+                          (t 'hidden))))
+                ;; Transitions that cross the hidden boundary mutate the
+                ;; buffer: hidden→compact materializes `#preset-cmd#' into
+                ;; the editable region; full→hidden extracts the current
+                ;; `#cmd#' back into `preset-cmd' and deletes it from the
+                ;; buffer.  Separator protective overlays are installed /
+                ;; removed alongside, since they only make sense when
+                ;; `#…#' actually exists in the buffer.
+                (cond
+                 ((and (eq from 'hidden) (eq to 'compact))
+                  ;; Materialize `#preset-cmd#' at the start of the
+                  ;; editable region.  Place point past the closing
+                  ;; separator, preserving the user's original offset
+                  ;; within FILTER (so an empty FILTER lands the cursor
+                  ;; at the end of `#CMD#'; a FILTER like "abc" with
+                  ;; point at "c" keeps point at "c" in the new layout).
+                  (let* ((mbe (minibuffer-prompt-end))
+                         (filter-offset (max 0 (- (point) mbe)))
+                         (cmd-str (or preset-cmd ""))
+                         (cmd-text (concat (char-to-string initial-char)
+                                           cmd-str
+                                           (char-to-string initial-char))))
+                    (goto-char mbe)
+                    (insert cmd-text)
+                    (goto-char (+ mbe (length cmd-text) filter-offset))
+                    (let ((close-pos (+ mbe 1 (length cmd-str))))
+                      (setq separator-overlays
+                            (list (fzfa--async-protect-separator
+                                   mbe initial-char)
+                                  (fzfa--async-protect-separator
+                                   close-pos initial-char))))))
+                 ((eq to 'hidden)
+                  ;; Extract current CMD into `preset-cmd' and delete the
+                  ;; `#CMD#' prefix from the buffer.  Overlays go first
+                  ;; so their `modification-hooks' don't self-heal what
+                  ;; we're intentionally removing.  `delete-region's
+                  ;; default cursor behavior already does the right
+                  ;; thing: FILTER-side point shifts back; CMD-side or
+                  ;; separator-side point lands at start of FILTER.
+                  (let* ((mbe (minibuffer-prompt-end))
+                         (input (buffer-substring-no-properties
+                                 mbe (point-max)))
+                         (split (funcall splitter input style))
+                         (cmd (car split)))
+                    (setq preset-cmd cmd)
+                    (mapc #'delete-overlay separator-overlays)
+                    (setq separator-overlays nil)
+                    (delete-region mbe (min (point-max)
+                                            (+ mbe 2 (length cmd)))))))
+                (setq display-state to)
+                (funcall display-apply))))
            restart-timer retry-timer poll-timer ivy-push
            (refresh-overlay
             (lambda ()
@@ -1522,7 +1610,13 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                 (`(boundaries . ,_) (cons 0 0))
                 ('t
                  (let* ((input (fzfa--current-query str))
-                        (split (funcall splitter input style))
+                        ;; In hidden mode the buffer has no `#…#'; CMD
+                        ;; lives in `preset-cmd', and the whole input is
+                        ;; the FILTER half.  In compact/full the standard
+                        ;; configured splitter parses `#CMD#FILTER'.
+                        (split (if (eq display-state 'hidden)
+                                   (cons (or preset-cmd "") input)
+                                 (funcall splitter input style)))
                         (cmd (car split))
                         (query (cdr split)))
                    (cond
@@ -1593,7 +1687,9 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                (ivy-state-dynamic-collection ivy-last)))
                           (query (and (boundp 'ivy-text) ivy-text)))
                 (with-selected-window win
-                  (let* ((split  (funcall splitter query style))
+                  (let* ((split (if (eq display-state 'hidden)
+                                    (cons (or preset-cmd "") query)
+                                  (funcall splitter query style)))
                          (cmd    (car split))
                          (filter (cdr split)))
                     (cond
@@ -1669,21 +1765,17 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                  ;; relative candidates against the working directory the
                  ;; command actually ran in.
                  (setq-local default-directory directory)
-                 ;; Auto-insert the separator when no init-text was supplied;
-                 ;; otherwise completing-read seeded the buffer already.
-                 (when (and initial-char (null init-text))
+                 ;; Legacy auto-insert of a single opening separator when
+                 ;; the caller passed no init-text and no command but the
+                 ;; session started in compact/full so they intend to
+                 ;; type `#CMD#FILTER' freestyle.  Skip in hidden mode
+                 ;; (no `#…#' belongs in the editable region).
+                 (when (and initial-char (null init-text)
+                            (not (eq display-state 'hidden)))
                    (save-excursion
                      (goto-char (minibuffer-prompt-end))
                      (unless (equal initial-char (char-after))
                        (insert (char-to-string initial-char)))))
-                 (when init-point
-                   (let ((p init-point))
-                     (run-at-time
-                      0 nil
-                      (lambda ()
-                        (when-let* ((win (active-minibuffer-window)))
-                          (with-selected-window win
-                            (goto-char (+ (minibuffer-prompt-end) p))))))))
                  (fzfa--minibuffer-format-reset)
                  (when handler (fzfa--preview-install))
                  (cursor-intangible-mode 1)
@@ -1693,7 +1785,24 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                      (define-key map (kbd fzfa-async-display-key)
                                  display-cycle)
                      (use-local-map map)))
-                 (funcall display-apply))
+                 (funcall display-apply)
+                 ;; Install protective separator overlays only when the
+                 ;; session actually has `#…#' in the buffer (compact /
+                 ;; full).  Hidden mode keeps CMD in the closure and the
+                 ;; editable region is plain FILTER, so there's nothing
+                 ;; to protect.
+                 (when (and command initial-char (null initial-input)
+                            (memq display-state '(compact full)))
+                   (let* ((mbe (minibuffer-prompt-end))
+                          (close-pos (+ mbe 1 (length command))))
+                     (setq separator-overlays
+                           (list (fzfa--async-protect-separator
+                                  mbe initial-char)
+                                 (fzfa--async-protect-separator
+                                  close-pos initial-char)))))
+                 ;; Place point synchronously at the seeded text's end.
+                 (when init-point
+                   (goto-char (+ (minibuffer-prompt-end) init-point))))
              (let ((ivy-completing-read-dynamic-collection t)
                    (ivy-count-format
                     (when (bound-and-true-p ivy-mode) ""))
@@ -1710,6 +1819,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
          (when restart-timer (cancel-timer restart-timer))
          (remove-hook 'post-command-hook refresh-overlay)
          (when stats-overlay (delete-overlay stats-overlay))
+         (mapc #'delete-overlay separator-overlays)
          (funcall display-clear)
          (fzfa--defer-async-stop handle)
          (when handler (fzfa--preview-return selection)))
@@ -1829,32 +1939,6 @@ only spans are left alone."
        (t
         (mk prog-end cmd-end ""))))
     overlays))
-
-(defun fzfa--async-display-region-bounds (sep)
-  "Return (BEG . END) for the entire `#CMD#' region in the minibuffer.
-
-SEP is the separator character.  BEG points at the opening separator;
-END points just past the closing separator.  Returns nil when the
-minibuffer does not begin with SEP or no closing SEP is present."
-  (save-excursion
-    (goto-char (minibuffer-prompt-end))
-    (when (eq (char-after) sep)
-      (let ((beg (point)))
-        (forward-char 1)
-        (when (search-forward (char-to-string sep) nil t)
-          (cons beg (point)))))))
-
-(defun fzfa--async-display-make-hidden-overlays (region-beg region-end)
-  "Return overlays hiding the `#CMD#' region from REGION-BEG to REGION-END.
-
-The overlay renders the region with `display \"\"' so the user sees
-only the FILTER portion, and marks it `cursor-intangible' so point
-skips past on `C-a' or arrow-key navigation."
-  (let ((ov (make-overlay region-beg region-end nil t nil)))
-    (overlay-put ov 'display "")
-    (overlay-put ov 'cursor-intangible t)
-    (overlay-put ov 'fzfa-async-display t)
-    (list ov)))
 
 (defun fzfa--async-extract-args (cmd)
   "Run CMD in `:extract' mode and return its keyword args plist.
