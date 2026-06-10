@@ -19,7 +19,7 @@
 ;;
 ;; Strategy: Bulk-fetch every inbox message's date/sender/subject and
 ;; message-id via JXA into one cached list, present via
-;; `fzfa-sync-completing-read', open the selection in Mail.app by
+;; `fzfa-completing-read', open the selection in Mail.app by
 ;; `message id'.  The initial dump is slow for large inboxes (10–30s
 ;; depending on size), so it is cached for the session.  Run
 ;; `fzfa-mail-refresh' after new mail arrives.

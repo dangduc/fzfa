@@ -17,7 +17,7 @@
 ;; `osascript' (JXA) to dump the Music.app library and to play tracks.
 ;;
 ;; Strategy: dump the entire library once via JXA, present via
-;; `fzfa-sync-completing-read', play the selection by persistent ID.
+;; `fzfa-completing-read', play the selection by persistent ID.
 ;;
 ;; Commands:
 ;;   `fzfa-music'             Flat list of all tracks
@@ -130,7 +130,7 @@ metadata for the candidate currently being rendered.")
               (fzfa-music--dump-playlists)))))
 
 (defun fzfa-music--read (tracks group-key prompt)
-  "Read TRACKS via `fzfa-sync-completing-read'; return the chosen plist.
+  "Read TRACKS via `fzfa-completing-read'; return the chosen plist.
 PROMPT is shown in the minibuffer.
 GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
 - TRACKS are sorted by GROUP-KEY so consecutive same-key entries cluster.

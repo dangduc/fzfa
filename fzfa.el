@@ -287,7 +287,7 @@ function   Call the function with no arguments; Returns a directory string."
 Reset to nil to force a re-setup on the next entry-point call.")
 
 (defvar fzfa--multi-mode nil
-  "Dispatch flag for `fzfa-completing-read' / `fzfa-sync-completing-read'.
+  "Dispatch flag for `fzfa-completing-read'.
 - `:extract'         — throw `fzfa-extracted' with the call's keyword args.
 - (`:inject' . CAND) — return CAND directly without prompting.
 Bound by `fzfa-multi-read' to derive multi-source sources from
@@ -481,11 +481,10 @@ disable the fallback for that category."
   "Apply function for the active single-source session.
 
 Lambda taking a single CANDIDATE; invoked by `fzfa-apply-current'
-without exiting the session.  `let'-bound by
-`fzfa-completing-read' / `fzfa-sync-completing-read' from the
-constructor's `:apply' keyword \(falling back to `fzfa-apply-functions'
-by category).  Multi sessions look up `:apply' per-source via
-`fzfa--resolve-apply' instead.")
+without exiting the session.  `let'-bound by `fzfa-completing-read'
+from the constructor's `:apply' keyword (falling back to
+`fzfa-apply-functions' by category).  Multi sessions look up
+`:apply' per-source via `fzfa--resolve-apply' instead.")
 
 (defvar fzfa--session-resolve-paths nil
   "Whether to expand path candidates for the active single-source session.
@@ -1422,7 +1421,7 @@ only spans are left alone."
                             (buffer-substring-no-properties beg end)))
                   (let ((ov (make-overlay beg end nil t nil)))
                     (overlay-put ov 'display display)
-                    (overlay-put ov 'fzfa-async-display t)
+                    (overlay-put ov 'fzfa-display t)
                     (push ov overlays)))))
       (cond
        (last-pair
@@ -1556,66 +1555,98 @@ any path, `fzfa--separator-heal-hook' restores it."
                                       skip-executable-check
                                       preview
                                       apply)
-  "Run shell COMMAND with asynchronous `completing-read'.
+  "Run `completing-read' with fzf-native scoring over COMMAND or CANDIDATES.
 
-The minibuffer input is split into a shell-CMD part and an
-fzf-FILTER part on `fzfa-separator': the buffer text has
-shape \"<sep>CMD<sep>FILTER\".  Changing CMD restarts the
-subprocess; changing FILTER rescores in place via fzf-native.
+Exactly one of :COMMAND or :CANDIDATES selects the source kind:
+
+  :COMMAND     Shell command whose stdout lines become candidates.
+  :CANDIDATES  Static list, zero-arg function returning a list, or a
+               2-arg producer fn `(lambda (INPUT CALLBACK) ...)' that
+               populates a snapshot per-keystroke.  Lists and zero-arg
+               fns are auto-wrapped into constant producers.
+
+The minibuffer input is split into a CMD part and a FILTER part on
+`fzfa-separator': the buffer text has shape \"<sep>CMD<sep>FILTER\".
+Changing CMD restarts the subprocess (for COMMAND sources) or refires
+the producer (for CANDIDATES sources); changing FILTER rescores in
+place via fzf-native against the current snapshot.
 
 :DISPLAY controls how much of the CMD region is visible.  Press
 `fzfa-display-key' (default \">\") to cycle:
   hidden  — entire \"<sep>CMD<sep>\" prefix is invisible; only FILTER
-            appears editable.  This is the default for legacy async
-            callers.
+            appears editable.  Default for shell COMMAND sources.
   compact — flags within CMD collapse behind ` ... '; program name
             and the trailing argument slot remain visible.
   full    — whole \"<sep>CMD<sep>FILTER\" string is shown verbatim.
 
 :PROMPT                 Minibuffer prompt.  Derived from the first token of
-                        COMMAND (e.g. \"find: \" for \"find .\") when omitted.
+                        COMMAND (e.g. \"find: \" for \"find .\") when omitted;
+                        falls back to \"fzf > \" for CANDIDATES sources.
 :COMMAND                Shell command whose stdout lines become candidates.
                         Pre-inserted into the minibuffer as
-                        \"<sep>COMMAND<sep>\".
+                        \"<sep>COMMAND<sep>\".  Mutually exclusive with
+                        :CANDIDATES.
+:CANDIDATES             List, zero-arg fn, or 2-arg producer (see above).
+                        Mutually exclusive with :COMMAND.
 :DIRECTORY              Working directory for COMMAND.  Defaults to
                         `fzfa--default-dir' (respects
                         `fzfa-project-backend').
 :CATEGORY               Completion category symbol.  Defaults to
-                        `fzfa-file' for :COMMAND sources, `fzfa-misc' for
-                        :CANDIDATES sources.  Pass an explicit value to
-                        override.
-:GROUP                  Optional grouping function for completion metadata.
+                        `fzfa-file' for :COMMAND, `fzfa-misc' for
+                        :CANDIDATES.  Common explicit values: `fzfa-grep'
+                        for FILE:LINE:CONTENT, `fzfa-buffer' for
+                        buffer-name pickers, `fzfa-bookmark' for
+                        bookmarks, etc.
+:ANNOTATE               Optional (CANDIDATE) -> string function exposed as
+                        `annotation-function' completion metadata.
+                        Annotations render immediately after each candidate.
+:AFFIX                  Optional (CANDIDATES) -> ((CAND PREFIX SUFFIX) ...)
+                        function exposed as `affixation-function'.  Prefer
+                        this over :ANNOTATE when column alignment matters.
+:GROUP                  Optional (CANDIDATE TRANSFORM) -> string function
+                        exposed as `group-function' completion metadata.
+                        Renders section headers in vertico/icomplete.
+:HISTORY                Optional history variable symbol passed to
+                        `completing-read'.  Selected entries are pushed onto
+                        this list; under ivy the empty-FILTER candidate
+                        ordering also reflects this history's recency.
+:REQUIRE-MATCH          Forwarded to `completing-read'.  Defaults to nil
+                        for :COMMAND (free-form input — `fzfa-find'
+                        accepts a new path), t for :CANDIDATES (must
+                        pick a listed entry).  Pass an explicit nil or
+                        t to override.
+:DEFAULT                Forwarded to `completing-read'.  Returned when the
+                        user submits empty input; also seeded into history.
 :INITIAL-INPUT          Optional initial minibuffer text overriding the
                         auto-built \"<sep>COMMAND<sep>\".  Either a string
                         or (TEXT . POSITION) cons with 0-based cursor
                         offset.
-:RESOLVE-PATHS          When non-nil (the default), the returned
-                        candidate is passed through `expand-file-name'
-                        against :DIRECTORY before being handed back to the
-                        caller.  Lets file and grep commands stay agnostic
-                        of the caller's `default-directory'.  Pass nil for
-                        commands that return non-path output (e.g. shell
-                        output where the raw text matters).
+:RESOLVE-PATHS          When non-nil, the returned candidate is passed
+                        through `expand-file-name' against :DIRECTORY
+                        before returning.  Defaults to t for :COMMAND
+                        sources, nil for :CANDIDATES.  Pass an explicit
+                        t or nil to override.
 :DISPLAY                Initial display mode (`hidden', `compact', or
                         `full'); see above.
-:SKIP-EXECUTABLE-CHECK  When non-nil, skip the `executable-find' guard on
-                        the first token of COMMAND.
+:SKIP-EXECUTABLE-CHECK  When non-nil, skip the `executable-find' guard
+                        on the first token of COMMAND.  No-op for
+                        :CANDIDATES sources (no command to check).
 :PREVIEW                Per-call live-preview handler that bypasses the
                         `fzfa-preview-functions' registry lookup for
-                        CATEGORY.  See `fzfa-sync-completing-read'.
-:APPLY                  Lambda (CAND) -> any. Action to run without existing
-                        `completing-read' session.
-                        Can be invoked from `vertico' / `icomplete' / etc by:
-                          `fzfa-apply-key'
-                        Or from `ivy' by:
-                          `ivy-call'
-                        Or from `helm' by:
-                          `helm-execute-persistent-action'
-                        When omitted, falls back to the category
-                          default in `fzfa-apply-functions'.
+                        CATEGORY.  Pass a (CAND) -> any function for a
+                        simple preview-only handler, or a full handler
+                        plist with `:setup', `:preview', `:exit', `:return'
+                        slots.  Nil falls back to the registry.  Set
+                        `fzfa-preview-delay' to nil to disable previews.
+:APPLY                  Lambda (CAND) -> any.  Runs without exiting the
+                        session.  Invoked by `fzfa-apply-key' (under
+                        vertico / icomplete), `ivy-call' (ivy), or
+                        `helm-execute-persistent-action' (helm).  When
+                        omitted, falls back to the category default in
+                        `fzfa-apply-functions'.
 
 The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
-  DIR      — abbreviated working directory
+  DIR      — abbreviated working directory (omitted for CANDIDATES sources)
   IDX      — current selection index (omitted for frontends without one)
   FILTERED — candidates matching the current query
   TOTAL    — total candidates collected so far"
@@ -2527,27 +2558,28 @@ top.  Within a group, candidates stay in fzf order.  An empty query
 falls back to declared source order.
 
 Per-source plist keys:
-  :name      Group header (required).
-  :command   Async source: shell command string.
-             Mutually exclusive with :candidates.
-  :candidates  List of strings, a zero-arg function returning one,
-             or a 2-arg `(lambda (INPUT CALLBACK) ...)' producer.
-             Lists and zero-arg fns are wrapped as constant producers
-             via `fzfa--normalize-candidates'.  Mutually exclusive
-             with :command.
-  :directory Working directory for :command (default `default-directory').
-  :annotate  Optional (cand) -> string annotation function.
-  :action    Optional (cand) -> any.  Called with the selection.  When
-             omitted, the raw selection string is returned.
-  :history   Optional history variable symbol.  When set, the cleaned
-             selection (tofu suffix stripped) is pushed via
-             `add-to-history' on exit — mirroring the HIST push that
-             would have happened if the source's own `completing-read'
-             had run.  On empty input, the source's candidate slot is
-             additionally reordered by this history so recent picks
-             surface first.  Sync sources extracted from existing
-             `fzfa-*' commands inherit this from each source's
-             `fzfa-sync-completing-read' :history argument."
+  :name        Group header (required).
+  :command     Shell command string.  Mutually exclusive with
+               :candidates.
+  :candidates  List of strings, a zero-arg fn returning one, or a
+               2-arg `(lambda (INPUT CALLBACK) ...)' producer.  Lists
+               and zero-arg fns are wrapped as constant producers via
+               `fzfa--normalize-candidates'.  Mutually exclusive with
+               :command.
+  :directory   Working directory for :command (default
+               `default-directory').
+  :annotate    Optional (CAND) -> string annotation function.
+  :action      Optional (CAND) -> any.  Called with the selection.
+               When omitted, the raw selection string is returned.
+  :history     Optional history variable symbol.  When set, the cleaned
+               selection (tofu suffix stripped) is pushed via
+               `add-to-history' on exit — mirroring the HIST push the
+               source's own `completing-read' would have done.  On
+               empty input, the source's candidate slot is additionally
+               reordered by this history so recent picks surface first.
+               Static-list sources extracted from existing `fzfa-*'
+               commands inherit this from each source's
+               `fzfa-completing-read' :history argument."
   (cond
    ;; Composability: when this multi is being extracted by an outer
    ;; `fzfa-multi-read', throw our merged SOURCES so the
@@ -3151,7 +3183,7 @@ Each command is funcalled twice per multi session — once in
 `:extract' mode (capture keyword args, abort), once in `:inject' mode after
 the user picks (so the command's post-action runs).  OPTIONS is forwarded
 to `fzfa--multi-read'.  Commands whose body does not reach
-`fzfa-completing-read' or `fzfa-sync-completing-read' are skipped.
+`fzfa-completing-read' are skipped.
 Commands must be arg-less (no interactive `read-*' prompts in their body).
 
 Composes: if a command in COMMANDS itself calls `fzfa--multi-read'
@@ -3398,7 +3430,7 @@ render."
   "Install fzfa's registrations exactly once.
 
  e.g.
- `fzfa-completing-read',`fzfa-sync-completing-read',`fzfa-multi-read'."
+ `fzfa-completing-read', `fzfa-multi-read'."
   (unless fzfa--setup-done
     (setq fzfa--setup-done t)
     (when (fboundp 'fzf-native-ensure-loaded)

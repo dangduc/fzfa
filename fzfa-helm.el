@@ -630,10 +630,11 @@ Each `helm-pattern' change re-scores the full ITEMS list via
 
 (defun fzfa-helm--source-from-plist (plist)
   "Build a helm source from a fzfa source PLIST.
+
 PLIST has the shape produced by fzfa's `:extract' mode (and, for
 multi-source commands, by `fzfa-multi-read''s inner per-source
 plists).  Dispatches `:command' to `fzfa-helm-make-async-source'
-and `:items' to `fzfa-helm-make-sync-source'.
+and `:candidates' to `fzfa-helm-make-sync-source'.
 
 The plist's `:action' (typically the `:inject' lambda fzfa-multi-read
 installed) is wrapped to also `add-to-history' onto `:history' —
@@ -686,11 +687,12 @@ composes with `append':
           :buffer \"*helm mini+fzfa*\"))
 
 Mechanism: CMD is funcalled in fzfa's `:extract' mode to retrieve
-its keyword args (`:command', `:directory', `:items', `:history')
-without running.  The selection is routed back via fzfa's `:inject'
-mode so CMD's post-action (e.g. `find-file', grep jump) runs.  The
-HIST push that the inner `completing-read' would have done is
-mirrored via `add-to-history' wrapping the inject action.
+its keyword args (`:command', `:directory', `:candidates',
+`:history') without running.  The selection is routed back via
+fzfa's `:inject' mode so CMD's post-action (e.g. `find-file', grep
+jump) runs.  The HIST push that the inner `completing-read' would
+have done is mirrored via `add-to-history' wrapping the inject
+action.
 
 OVERRIDES is a keyword args plist merged on top of the extracted args
 — useful for renaming via :name, swapping :action, repointing
@@ -819,12 +821,17 @@ Returns the selected candidate string, or nil on cancel."
       (fzfa-helm--cancel-stranded-follow-timer))
     result))
 
-;;; Sync handler — dispatched from `fzfa-sync-completing-read'
+;;; Sync handler — `fzfa-completing-read' dispatch for :candidates sources
 
 (cl-defun fzfa-helm--sync-read (&key candidates prompt category annotate
                                      affix group history require-match
                                      default preview apply)
-  "Helm dispatch for `fzfa-sync-completing-read'.
+  "Helm dispatch for `fzfa-completing-read' static-list sources.
+
+Invoked when `:candidates' is set (list, zero-arg fn, or sync-firing
+2-arg producer fn).  Async-firing producers continue to `user-error'
+under helm — see `fzfa-completing-read'.
+
 CANDIDATES, PROMPT, CATEGORY, ANNOTATE, AFFIX, GROUP, HISTORY,
 REQUIRE-MATCH, DEFAULT, PREVIEW, and APPLY are forwarded from the
 caller.  APPLY (falling back to `fzfa-apply-functions' by category)
@@ -904,8 +911,8 @@ metadata."
 SOURCES is the same list of plists as the `completing-read' path.
 PROMPT is the prompt string shown in the helm session.
 Each `fzfa' source maps to a `helm' source:
-  :command  -> async (eager-start, no per-source polling timer)
-  :items    -> sync (fzf-native-score-all on each `helm-pattern' change)
+  :command     -> async (eager-start, no per-source polling timer)
+  :candidates  -> sync (fzf-native-score-all on each `helm-pattern' change)
 
 A SINGLE shared polling timer watches every async handle and calls
 `helm-force-update' at most once per `fzfa-input-throttle' seconds
