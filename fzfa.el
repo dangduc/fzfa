@@ -1300,6 +1300,200 @@ Priority: `fzfa-directory' >
            (projectile-project-root))))
       default-directory))
 
+;;; Split-style + display infrastructure
+
+(defcustom fzfa-async-split-style 'perl
+  "Splitting style for `fzfa-async-completing-read'.
+See `fzfa-async-split-styles-alist' for available styles."
+  :type '(choice (const :tag "Perl-style (#cmd#filter)" perl))
+  :group 'fzfa)
+
+(defcustom fzfa-shell-command-debounce 0.2
+  "Seconds of typing silence before a shell-command restart fires.
+Each keystroke that changes the command portion of the minibuffer
+reschedules a fresh restart timer; the producer process is not
+spawned until the user pauses for this long, so a burst of
+keystrokes ends with exactly one restart on the final cmd value."
+  :type 'float
+  :group 'fzfa)
+
+(defcustom fzfa-shell-command-throttle 0.5
+  "Minimum seconds between shell-command restarts."
+  :type 'float
+  :group 'fzfa)
+
+(defcustom fzfa-async-split-styles-alist
+  `((perl :initial ?# :function ,#'fzfa--async-split-perl))
+  "Splitting styles for `fzfa-async-completing-read'.
+Each entry is (SYMBOL . PLIST).  Recognized PLIST keys:
+  :function  (STR PLIST) -> (CMD . FILTER).  Required.
+             CMD is the `shell-command' portion (re-runs on change);
+             FILTER is passed to fzf-native for scoring.
+  :initial   Optional character inserted at minibuffer setup so the
+             user can start typing inside the delimited region.
+  :separator Optional character; consumed by separator-based splitters."
+  :type '(alist :key-type symbol :value-type plist)
+  :group 'fzfa)
+
+(defun fzfa--async-split-perl (str &optional _plist)
+  "Split STR into (CMD . FILTER) using a perl-style separator.
+If the first character of STR is punctuation it is the separator: text
+between the first and second occurrence is CMD; text after the second
+is FILTER.  With one separator only, the trailing text is CMD and
+FILTER is empty.  Without a leading separator, the whole STR is CMD."
+  (if (string-match-p "^[[:punct:]]" str)
+      (save-match-data
+        (let ((q (regexp-quote (substring str 0 1))))
+          (cond
+           ((string-match (concat "^" q "\\([^" q "]*\\)" q "\\(.*\\)") str)
+            (cons (match-string 1 str) (match-string 2 str)))
+           (t
+            (cons (substring str 1) "")))))
+    (cons str "")))
+
+(defun fzfa--async-split (input display-state command splitter style)
+  "Return (CMD . FILTER) for INPUT given the current session state.
+
+In `hidden' DISPLAY-STATE, CMD lives outside the buffer (in COMMAND,
+the closure variable in `fzfa-async-completing-read''s body or its
+helm/multi analogue), so the split is trivial: CMD = COMMAND, FILTER
+= INPUT.  In any other display state, the configured SPLITTER parses
+INPUT against STYLE (a plist from `fzfa-async-split-styles-alist').
+
+Frontend-agnostic — the table-lambda in completing-read sessions
+calls it with `(fzfa--current-query str)' as INPUT; helm's
+`:candidates' callback (once `>' support lands) calls it with
+`helm-pattern'.  Same body for both."
+  (if (eq display-state 'hidden)
+      (cons (or command "") input)
+    (funcall splitter input style)))
+
+(defcustom fzfa-async-display-key ">"
+  "Key string that toggles compact view of the CMD portion.
+When compact, only the program name and the quoted-argument slot
+\(if any) are visible; flags are hidden behind a `...' display.
+Press the key again to expand and edit the full command.  The
+session starts compact.  Set to nil to disable the feature entirely
+\(no binding, no initial compaction)."
+  :type '(choice (const :tag "Disabled" nil) string)
+  :group 'fzfa)
+
+(defun fzfa--async-display-cmd-bounds (sep)
+  "Return (CMD-BEG . CMD-END) for the CMD region in the current minibuffer.
+SEP is the separator character used by the active split style.  Returns
+nil when the minibuffer does not begin with SEP or no closing SEP is
+present yet."
+  (save-excursion
+    (goto-char (minibuffer-prompt-end))
+    (when (eq (char-after) sep)
+      (let ((beg (1+ (point))))
+        (goto-char beg)
+        (when (search-forward (char-to-string sep) nil t)
+          (cons beg (1- (point))))))))
+
+(defun fzfa--async-display-make-overlays (cmd-beg cmd-end)
+  "Return overlays compacting flag regions between CMD-BEG and CMD-END.
+Uses the *last* balanced `\\='…\\=' / \"…\" pair as anchor (so an
+earlier quoted flag value like `-flag=\\='val\\='' is ignored in favor
+of the trailing input slot): text from the end of the program name up
+to the opening quote renders as \" ... \", and any tail after the
+closing quote renders as \"\".  Without a quoted argument, everything
+after the program name is hidden with an empty display.  Whitespace-
+only spans are left alone."
+  (let* ((cmd-text (buffer-substring-no-properties cmd-beg cmd-end))
+         (prog-end (if (string-match "\\`[^ \t]+" cmd-text)
+                       (+ cmd-beg (match-end 0))
+                     cmd-end))
+         (last-pair
+          (save-match-data
+            (let ((pos 0) last)
+              (while (string-match "\\('[^']*'\\|\"[^\"]*\"\\)"
+                                   cmd-text pos)
+                (setq last (cons (match-beginning 0) (match-end 0))
+                      pos  (match-end 0)))
+              last)))
+         overlays)
+    (cl-flet ((mk (beg end display)
+                (when (and (< beg end)
+                           (string-match-p
+                            "[^ \t]"
+                            (buffer-substring-no-properties beg end)))
+                  (let ((ov (make-overlay beg end nil t nil)))
+                    (overlay-put ov 'display display)
+                    (overlay-put ov 'fzfa-async-display t)
+                    (push ov overlays)))))
+      (cond
+       (last-pair
+        (let ((qb (+ cmd-beg (car last-pair)))
+              (qe (+ cmd-beg (cdr last-pair))))
+          (mk prog-end qb " ... ")
+          (mk qe cmd-end "")))
+       (t
+        (mk prog-end cmd-end ""))))
+    overlays))
+
+(defun fzfa--async-display-next-state (state)
+  "Return the display state cycled one step forward.
+
+The cycle is `hidden' → `compact' → `full' → `hidden'.  Any unknown
+input falls back to `hidden' (defensive default for an unknown
+session state)."
+  (cl-case state
+    ((hidden) 'compact)
+    ((compact) 'full)
+    ((full) 'hidden)
+    (otherwise 'hidden)))
+
+(defun fzfa--async-display-materialize (cmd initial-char)
+  "Materialize `#CMD#' at the start of the editable region.
+
+Inserts INITIAL-CHAR + CMD + INITIAL-CHAR at `minibuffer-prompt-end'
+in the current buffer.  Preserves point's offset within FILTER —
+i.e. the distance from `minibuffer-prompt-end' before the call
+equals the distance from the start of the new FILTER region after.
+
+Installs two self-healing protective overlays on the separators and
+returns them as a two-element list `(OPEN-OVERLAY CLOSE-OVERLAY)'.
+
+Operates on `current-buffer'.  Inside an actual minibuffer
+`minibuffer-prompt-end' returns the position past the prompt's
+`field' boundary; in temp buffers it returns `(point-min)' so this
+helper is testable in isolation."
+  (let* ((mbe (minibuffer-prompt-end))
+         (filter-offset (max 0 (- (point) mbe)))
+         (cmd-str (or cmd ""))
+         (cmd-text (concat (char-to-string initial-char)
+                           cmd-str
+                           (char-to-string initial-char))))
+    (goto-char mbe)
+    (insert cmd-text)
+    (goto-char (+ mbe (length cmd-text) filter-offset))
+    (let ((close-pos (+ mbe 1 (length cmd-str))))
+      (list (fzfa--async-protect-separator mbe initial-char)
+            (fzfa--async-protect-separator close-pos initial-char)))))
+
+(defun fzfa--async-display-extract (splitter style separator-overlays)
+  "Parse `#CMD#FILTER' at start of editable region, delete `#CMD#'.
+
+Reads the buffer contents from `minibuffer-prompt-end' to
+`point-max', runs SPLITTER on it with STYLE, and uses the resulting
+CMD to delete the leading `#CMD#' prefix.
+
+Removes SEPARATOR-OVERLAYS first so their `modification-hooks'
+don't self-heal the very deletion we're about to perform.
+
+Returns the extracted CMD string.  The caller is responsible for
+storing it into the session's closure variable so the hidden-mode
+trivial-split picks it up on the next tick.
+
+Operates on `current-buffer'."
+  (let* ((mbe (minibuffer-prompt-end))
+         (input (buffer-substring-no-properties mbe (point-max)))
+         (split (funcall splitter input style))
+         (cmd (car split)))
+    (mapc #'delete-overlay separator-overlays)
+    (delete-region mbe (min (point-max) (+ mbe 2 (length cmd))))
+    cmd))
 ;;; Async `completing-read'
 
 (defun fzfa--async-separator-heal-hook (overlay is-after _beg _end
@@ -1783,200 +1977,6 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
          (when handler (fzfa--preview-return selection)))
        directory resolve-paths))))
 
-;;; Split-style + display infrastructure
-
-(defcustom fzfa-async-split-style 'perl
-  "Splitting style for `fzfa-async-completing-read'.
-See `fzfa-async-split-styles-alist' for available styles."
-  :type '(choice (const :tag "Perl-style (#cmd#filter)" perl))
-  :group 'fzfa)
-
-(defcustom fzfa-shell-command-debounce 0.2
-  "Seconds of typing silence before a shell-command restart fires.
-Each keystroke that changes the command portion of the minibuffer
-reschedules a fresh restart timer; the producer process is not
-spawned until the user pauses for this long, so a burst of
-keystrokes ends with exactly one restart on the final cmd value."
-  :type 'float
-  :group 'fzfa)
-
-(defcustom fzfa-shell-command-throttle 0.5
-  "Minimum seconds between shell-command restarts."
-  :type 'float
-  :group 'fzfa)
-
-(defcustom fzfa-async-split-styles-alist
-  `((perl :initial ?# :function ,#'fzfa--async-split-perl))
-  "Splitting styles for `fzfa-async-completing-read'.
-Each entry is (SYMBOL . PLIST).  Recognized PLIST keys:
-  :function  (STR PLIST) -> (CMD . FILTER).  Required.
-             CMD is the `shell-command' portion (re-runs on change);
-             FILTER is passed to fzf-native for scoring.
-  :initial   Optional character inserted at minibuffer setup so the
-             user can start typing inside the delimited region.
-  :separator Optional character; consumed by separator-based splitters."
-  :type '(alist :key-type symbol :value-type plist)
-  :group 'fzfa)
-
-(defun fzfa--async-split-perl (str &optional _plist)
-  "Split STR into (CMD . FILTER) using a perl-style separator.
-If the first character of STR is punctuation it is the separator: text
-between the first and second occurrence is CMD; text after the second
-is FILTER.  With one separator only, the trailing text is CMD and
-FILTER is empty.  Without a leading separator, the whole STR is CMD."
-  (if (string-match-p "^[[:punct:]]" str)
-      (save-match-data
-        (let ((q (regexp-quote (substring str 0 1))))
-          (cond
-           ((string-match (concat "^" q "\\([^" q "]*\\)" q "\\(.*\\)") str)
-            (cons (match-string 1 str) (match-string 2 str)))
-           (t
-            (cons (substring str 1) "")))))
-    (cons str "")))
-
-(defun fzfa--async-split (input display-state command splitter style)
-  "Return (CMD . FILTER) for INPUT given the current session state.
-
-In `hidden' DISPLAY-STATE, CMD lives outside the buffer (in COMMAND,
-the closure variable in `fzfa-async-completing-read''s body or its
-helm/multi analogue), so the split is trivial: CMD = COMMAND, FILTER
-= INPUT.  In any other display state, the configured SPLITTER parses
-INPUT against STYLE (a plist from `fzfa-async-split-styles-alist').
-
-Frontend-agnostic — the table-lambda in completing-read sessions
-calls it with `(fzfa--current-query str)' as INPUT; helm's
-`:candidates' callback (once `>' support lands) calls it with
-`helm-pattern'.  Same body for both."
-  (if (eq display-state 'hidden)
-      (cons (or command "") input)
-    (funcall splitter input style)))
-
-(defcustom fzfa-async-display-key ">"
-  "Key string that toggles compact view of the CMD portion.
-When compact, only the program name and the quoted-argument slot
-\(if any) are visible; flags are hidden behind a `...' display.
-Press the key again to expand and edit the full command.  The
-session starts compact.  Set to nil to disable the feature entirely
-\(no binding, no initial compaction)."
-  :type '(choice (const :tag "Disabled" nil) string)
-  :group 'fzfa)
-
-(defun fzfa--async-display-cmd-bounds (sep)
-  "Return (CMD-BEG . CMD-END) for the CMD region in the current minibuffer.
-SEP is the separator character used by the active split style.  Returns
-nil when the minibuffer does not begin with SEP or no closing SEP is
-present yet."
-  (save-excursion
-    (goto-char (minibuffer-prompt-end))
-    (when (eq (char-after) sep)
-      (let ((beg (1+ (point))))
-        (goto-char beg)
-        (when (search-forward (char-to-string sep) nil t)
-          (cons beg (1- (point))))))))
-
-(defun fzfa--async-display-make-overlays (cmd-beg cmd-end)
-  "Return overlays compacting flag regions between CMD-BEG and CMD-END.
-Uses the *last* balanced `\\='…\\=' / \"…\" pair as anchor (so an
-earlier quoted flag value like `-flag=\\='val\\='' is ignored in favor
-of the trailing input slot): text from the end of the program name up
-to the opening quote renders as \" ... \", and any tail after the
-closing quote renders as \"\".  Without a quoted argument, everything
-after the program name is hidden with an empty display.  Whitespace-
-only spans are left alone."
-  (let* ((cmd-text (buffer-substring-no-properties cmd-beg cmd-end))
-         (prog-end (if (string-match "\\`[^ \t]+" cmd-text)
-                       (+ cmd-beg (match-end 0))
-                     cmd-end))
-         (last-pair
-          (save-match-data
-            (let ((pos 0) last)
-              (while (string-match "\\('[^']*'\\|\"[^\"]*\"\\)"
-                                   cmd-text pos)
-                (setq last (cons (match-beginning 0) (match-end 0))
-                      pos  (match-end 0)))
-              last)))
-         overlays)
-    (cl-flet ((mk (beg end display)
-                (when (and (< beg end)
-                           (string-match-p
-                            "[^ \t]"
-                            (buffer-substring-no-properties beg end)))
-                  (let ((ov (make-overlay beg end nil t nil)))
-                    (overlay-put ov 'display display)
-                    (overlay-put ov 'fzfa-async-display t)
-                    (push ov overlays)))))
-      (cond
-       (last-pair
-        (let ((qb (+ cmd-beg (car last-pair)))
-              (qe (+ cmd-beg (cdr last-pair))))
-          (mk prog-end qb " ... ")
-          (mk qe cmd-end "")))
-       (t
-        (mk prog-end cmd-end ""))))
-    overlays))
-
-(defun fzfa--async-display-next-state (state)
-  "Return the display state cycled one step forward.
-
-The cycle is `hidden' → `compact' → `full' → `hidden'.  Any unknown
-input falls back to `hidden' (defensive default for an unknown
-session state)."
-  (cl-case state
-    ((hidden) 'compact)
-    ((compact) 'full)
-    ((full) 'hidden)
-    (otherwise 'hidden)))
-
-(defun fzfa--async-display-materialize (cmd initial-char)
-  "Materialize `#CMD#' at the start of the editable region.
-
-Inserts INITIAL-CHAR + CMD + INITIAL-CHAR at `minibuffer-prompt-end'
-in the current buffer.  Preserves point's offset within FILTER —
-i.e. the distance from `minibuffer-prompt-end' before the call
-equals the distance from the start of the new FILTER region after.
-
-Installs two self-healing protective overlays on the separators and
-returns them as a two-element list `(OPEN-OVERLAY CLOSE-OVERLAY)'.
-
-Operates on `current-buffer'.  Inside an actual minibuffer
-`minibuffer-prompt-end' returns the position past the prompt's
-`field' boundary; in temp buffers it returns `(point-min)' so this
-helper is testable in isolation."
-  (let* ((mbe (minibuffer-prompt-end))
-         (filter-offset (max 0 (- (point) mbe)))
-         (cmd-str (or cmd ""))
-         (cmd-text (concat (char-to-string initial-char)
-                           cmd-str
-                           (char-to-string initial-char))))
-    (goto-char mbe)
-    (insert cmd-text)
-    (goto-char (+ mbe (length cmd-text) filter-offset))
-    (let ((close-pos (+ mbe 1 (length cmd-str))))
-      (list (fzfa--async-protect-separator mbe initial-char)
-            (fzfa--async-protect-separator close-pos initial-char)))))
-
-(defun fzfa--async-display-extract (splitter style separator-overlays)
-  "Parse `#CMD#FILTER' at start of editable region, delete `#CMD#'.
-
-Reads the buffer contents from `minibuffer-prompt-end' to
-`point-max', runs SPLITTER on it with STYLE, and uses the resulting
-CMD to delete the leading `#CMD#' prefix.
-
-Removes SEPARATOR-OVERLAYS first so their `modification-hooks'
-don't self-heal the very deletion we're about to perform.
-
-Returns the extracted CMD string.  The caller is responsible for
-storing it into the session's closure variable so the hidden-mode
-trivial-split picks it up on the next tick.
-
-Operates on `current-buffer'."
-  (let* ((mbe (minibuffer-prompt-end))
-         (input (buffer-substring-no-properties mbe (point-max)))
-         (split (funcall splitter input style))
-         (cmd (car split)))
-    (mapc #'delete-overlay separator-overlays)
-    (delete-region mbe (min (point-max) (+ mbe 2 (length cmd))))
-    cmd))
 
 (defun fzfa--async-extract-args (cmd)
   "Run CMD in `:extract' mode and return its keyword args plist.
