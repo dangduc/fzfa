@@ -21,7 +21,7 @@ compile: autoloads
 
 autoloads:
 	$(EMACS) -Q --batch \
-	  --eval "(loaddefs-generate default-directory \"$(AUTOLOADS)\")"
+	  --eval "(loaddefs-generate default-directory \"$(AUTOLOADS)\" nil \"(add-to-list 'load-path (or (and load-file-name (file-name-directory load-file-name)) (car load-path)))\n\")"
 
 # Loads the fzf-native dynamic module before running tests.  Existing
 # tests are pure-Elisp helpers and would pass without it, but loading
