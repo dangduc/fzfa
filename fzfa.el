@@ -3125,6 +3125,7 @@ inner sources receive auto-derived keys from their own :name."
 
 (defcustom fzfa-find-any-commands
   '((fzfa-frames :narrow F)
+    (fzfa-tabs :narrow t)
     fzfa-imenu
     (fzfa-vc-modified-locally :narrow l)
     fzfa-vc-added-files
@@ -3145,6 +3146,7 @@ Each entry is either a bare command symbol or a list
 
 (defcustom fzfa-find-some-commands
   '((fzfa-frames :narrow F)
+    (fzfa-tabs :narrow t)
     fzfa-imenu
     (fzfa-vc-modified-locally :narrow l)
     fzfa-vc-added-files
