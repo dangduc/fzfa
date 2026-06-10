@@ -1464,9 +1464,11 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                        "Unknown fzfa-async split style: %s" style-sym)))
            (initial-char (plist-get style :initial))
            ;; Build initial input.  Hidden mode keeps `#CMD#' OUT of the
-           ;; minibuffer entirely — CMD lives in the `preset-cmd' closure
-           ;; variable, and the editable region is just FILTER.  Compact
-           ;; / full pre-seed `#CMD#' as before so the user can edit it.
+           ;; minibuffer entirely — CMD lives in the `command' closure
+           ;; variable (mutated in place by the display-cycle when the
+           ;; user edits inside `#CMD#'), and the editable region is
+           ;; just FILTER.  Compact / full pre-seed `#CMD#' as before
+           ;; so the user can edit it.
            (init-text
             (cond
              ((consp initial-input) (car initial-input))
@@ -1483,10 +1485,6 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
              ((consp initial-input) (cdr initial-input))
              (init-text (length init-text))
              (t nil)))
-           ;; Mutable CMD slot used by hidden-mode splitter.  Updated
-           ;; from the buffer when transitioning out of compact/full
-           ;; back to hidden (so user edits inside `#CMD#' carry over).
-           (preset-cmd command)
            (splitter (plist-get style :function))
            (limit (fzfa--candidate-limit))
            (selection nil)
@@ -1528,23 +1526,23 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                           ((full) 'hidden)
                           (t 'hidden))))
                 ;; Transitions that cross the hidden boundary mutate the
-                ;; buffer: hidden→compact materializes `#preset-cmd#' into
+                ;; buffer: hidden→compact materializes `#command#' into
                 ;; the editable region; full→hidden extracts the current
-                ;; `#cmd#' back into `preset-cmd' and deletes it from the
+                ;; `#cmd#' back into `command' and deletes it from the
                 ;; buffer.  Separator protective overlays are installed /
                 ;; removed alongside, since they only make sense when
                 ;; `#…#' actually exists in the buffer.
                 (cond
                  ((and (eq from 'hidden) (eq to 'compact))
-                  ;; Materialize `#preset-cmd#' at the start of the
-                  ;; editable region.  Place point past the closing
-                  ;; separator, preserving the user's original offset
-                  ;; within FILTER (so an empty FILTER lands the cursor
-                  ;; at the end of `#CMD#'; a FILTER like "abc" with
-                  ;; point at "c" keeps point at "c" in the new layout).
+                  ;; Materialize `#command#' at the start of the editable
+                  ;; region.  Place point past the closing separator,
+                  ;; preserving the user's original offset within FILTER
+                  ;; (so an empty FILTER lands the cursor at the end of
+                  ;; `#CMD#'; a FILTER like "abc" with point at "c"
+                  ;; keeps point at "c" in the new layout).
                   (let* ((mbe (minibuffer-prompt-end))
                          (filter-offset (max 0 (- (point) mbe)))
-                         (cmd-str (or preset-cmd ""))
+                         (cmd-str (or command ""))
                          (cmd-text (concat (char-to-string initial-char)
                                            cmd-str
                                            (char-to-string initial-char))))
@@ -1558,7 +1556,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                   (fzfa--async-protect-separator
                                    close-pos initial-char))))))
                  ((eq to 'hidden)
-                  ;; Extract current CMD into `preset-cmd' and delete the
+                  ;; Extract current CMD into `command' and delete the
                   ;; `#CMD#' prefix from the buffer.  Overlays go first
                   ;; so their `modification-hooks' don't self-heal what
                   ;; we're intentionally removing.  `delete-region's
@@ -1570,7 +1568,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                  mbe (point-max)))
                          (split (funcall splitter input style))
                          (cmd (car split)))
-                    (setq preset-cmd cmd)
+                    (setq command cmd)
                     (mapc #'delete-overlay separator-overlays)
                     (setq separator-overlays nil)
                     (delete-region mbe (min (point-max)
@@ -1611,11 +1609,11 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                 ('t
                  (let* ((input (fzfa--current-query str))
                         ;; In hidden mode the buffer has no `#…#'; CMD
-                        ;; lives in `preset-cmd', and the whole input is
+                        ;; lives in `command', and the whole input is
                         ;; the FILTER half.  In compact/full the standard
                         ;; configured splitter parses `#CMD#FILTER'.
                         (split (if (eq display-state 'hidden)
-                                   (cons (or preset-cmd "") input)
+                                   (cons (or command "") input)
                                  (funcall splitter input style)))
                         (cmd (car split))
                         (query (cdr split)))
@@ -1688,7 +1686,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                           (query (and (boundp 'ivy-text) ivy-text)))
                 (with-selected-window win
                   (let* ((split (if (eq display-state 'hidden)
-                                    (cons (or preset-cmd "") query)
+                                    (cons (or command "") query)
                                   (funcall splitter query style)))
                          (cmd    (car split))
                          (filter (cdr split)))
