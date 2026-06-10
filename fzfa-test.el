@@ -873,75 +873,72 @@ inside `fzfa-multi-read' (`:extract')."
   (should (commandp 'fzfa-smart-grep)))
 
 ;;; fzfa--async-split
-
-(defun fzfa-test--perl-style ()
-  "Perl style descriptor matching the default
-`fzfa-async-split-styles-alist' entry."
-  (list :initial ?# :function #'fzfa--async-split-perl))
+;;
+;; Tests bind `fzfa-async-separator' to ?# for readable ASCII fixtures;
+;; the splitter is generic and works for any character.
 
 (ert-deftest fzfa-async-split-hidden-empty-input ()
   "Hidden mode + empty input returns (COMMAND . \"\")."
-  (let ((style (fzfa-test--perl-style)))
-    (should (equal (fzfa--async-split "" 'hidden "find ." nil style)
+  (let ((fzfa-async-separator ?#))
+    (should (equal (fzfa--async-split "" 'hidden "find .")
                    '("find ." . "")))))
 
 (ert-deftest fzfa-async-split-hidden-with-filter ()
   "Hidden mode treats the whole INPUT as FILTER and CMD = COMMAND."
-  (let ((style (fzfa-test--perl-style)))
-    (should (equal (fzfa--async-split "foo" 'hidden "find ." nil style)
+  (let ((fzfa-async-separator ?#))
+    (should (equal (fzfa--async-split "foo" 'hidden "find .")
                    '("find ." . "foo")))))
 
 (ert-deftest fzfa-async-split-hidden-nil-command ()
   "Hidden mode + nil COMMAND coerces CMD to the empty string."
-  (let ((style (fzfa-test--perl-style)))
-    (should (equal (fzfa--async-split "foo" 'hidden nil nil style)
+  (let ((fzfa-async-separator ?#))
+    (should (equal (fzfa--async-split "foo" 'hidden nil)
                    '("" . "foo")))))
 
 (ert-deftest fzfa-async-split-hidden-empty-string-command ()
   "Hidden mode + empty-string COMMAND keeps CMD as empty string."
-  (let ((style (fzfa-test--perl-style)))
-    (should (equal (fzfa--async-split "foo" 'hidden "" nil style)
+  (let ((fzfa-async-separator ?#))
+    (should (equal (fzfa--async-split "foo" 'hidden "")
                    '("" . "foo")))))
 
 (ert-deftest fzfa-async-split-compact-delegates-to-splitter ()
-  "Compact mode ignores COMMAND and delegates to SPLITTER."
-  (let ((style (fzfa-test--perl-style)))
-    (should (equal (fzfa--async-split "#find .#foo" 'compact "ignored"
-                                       #'fzfa--async-split-perl style)
+  "Compact mode ignores COMMAND and delegates to the splitter."
+  (let ((fzfa-async-separator ?#))
+    (should (equal (fzfa--async-split "#find .#foo" 'compact "ignored")
                    '("find ." . "foo")))))
 
 (ert-deftest fzfa-async-split-full-delegates-to-splitter ()
-  "Full mode behaves identically to compact (configured splitter)."
-  (let ((style (fzfa-test--perl-style)))
-    (should (equal (fzfa--async-split "#find .#foo" 'full "ignored"
-                                       #'fzfa--async-split-perl style)
-                   (fzfa--async-split "#find .#foo" 'compact "ignored"
-                                       #'fzfa--async-split-perl style)))))
+  "Full mode behaves identically to compact."
+  (let ((fzfa-async-separator ?#))
+    (should (equal (fzfa--async-split "#find .#foo" 'full "ignored")
+                   (fzfa--async-split "#find .#foo" 'compact "ignored")))))
 
 (ert-deftest fzfa-async-split-compact-no-leading-separator ()
-  "Compact mode + input without a leading separator → splitter returns
-the whole string as CMD and empty FILTER (delegation behavior)."
-  (let ((style (fzfa-test--perl-style)))
-    (should (equal (fzfa--async-split "plain-text" 'compact "ignored"
-                                       #'fzfa--async-split-perl style)
+  "Compact mode + input without a leading separator → whole string as CMD."
+  (let ((fzfa-async-separator ?#))
+    (should (equal (fzfa--async-split "plain-text" 'compact "ignored")
                    '("plain-text" . "")))))
 
 (ert-deftest fzfa-async-split-compact-empty-cmd-region ()
   "Compact mode + `##filter' (empty CMD region) → (\"\" . \"filter\")."
-  (let ((style (fzfa-test--perl-style)))
-    (should (equal (fzfa--async-split "##bar" 'compact "ignored"
-                                       #'fzfa--async-split-perl style)
+  (let ((fzfa-async-separator ?#))
+    (should (equal (fzfa--async-split "##bar" 'compact "ignored")
                    '("" . "bar")))))
 
 (ert-deftest fzfa-async-split-hidden-state-takes-priority ()
-  "Hidden mode short-circuits *before* SPLITTER runs.
-INPUT that looks like a `#CMD#FILTER' shape is NOT parsed when the
-session is hidden — the whole INPUT (including the literal `#'
+  "Hidden mode short-circuits *before* the splitter runs.
+INPUT that looks like a separator-delimited shape is NOT parsed when
+the session is hidden — the whole INPUT (including literal separator
 characters) is the FILTER."
-  (let ((style (fzfa-test--perl-style)))
-    (should (equal (fzfa--async-split "#fake#filter" 'hidden "real"
-                                       #'fzfa--async-split-perl style)
+  (let ((fzfa-async-separator ?#))
+    (should (equal (fzfa--async-split "#fake#filter" 'hidden "real")
                    '("real" . "#fake#filter")))))
+
+(ert-deftest fzfa-async-split-honors-custom-separator ()
+  "Splitter follows whatever character `fzfa-async-separator' is set to."
+  (let ((fzfa-async-separator ?▌))
+    (should (equal (fzfa--async-split "▌find .▌foo" 'compact "ignored")
+                   '("find ." . "foo")))))
 
 ;;; fzfa--async-display-next-state
 
@@ -1002,19 +999,17 @@ characters) is the FILTER."
   "Extract returns CMD and deletes the `#CMD#' prefix from the buffer."
   (with-temp-buffer
     (insert "#find .#filter")
-    (let* ((style (fzfa-test--perl-style))
-           (cmd (fzfa--async-display-extract
-                  #'fzfa--async-split-perl style nil)))
-      (should (equal cmd "find .")) ; extracted CMD
-      (should (equal (buffer-string) "filter"))))) ; only FILTER survives
+    (let* ((fzfa-async-separator ?#)
+           (cmd (fzfa--async-display-extract nil)))
+      (should (equal cmd "find ."))
+      (should (equal (buffer-string) "filter")))))
 
 (ert-deftest fzfa-async-display-extract-empty-cmd ()
   "Extract handles `##filter' (empty CMD region)."
   (with-temp-buffer
     (insert "##filter")
-    (let* ((style (fzfa-test--perl-style))
-           (cmd (fzfa--async-display-extract
-                  #'fzfa--async-split-perl style nil)))
+    (let* ((fzfa-async-separator ?#)
+           (cmd (fzfa--async-display-extract nil)))
       (should (equal cmd ""))
       (should (equal (buffer-string) "filter")))))
 
@@ -1023,27 +1018,22 @@ characters) is the FILTER."
 \(Their `modification-hooks' would otherwise self-heal the deletion.)"
   (with-temp-buffer
     (insert "#find .#abc")
-    (let* ((style (fzfa-test--perl-style))
+    (let* ((fzfa-async-separator ?#)
            (overlays
-            ;; Build dummy overlays carrying the same heal hook the real
-            ;; ones do; if extract fails to delete them first, the heal
-            ;; hook re-inserts the deleted `#' and buffer ends up wrong.
             (list (fzfa--async-protect-separator 1 ?#)
                   (fzfa--async-protect-separator 8 ?#))))
       (should (= (length (overlays-in 1 9)) 2))
-      (fzfa--async-display-extract #'fzfa--async-split-perl style overlays)
-      ;; Buffer is correctly reduced; deleted overlays don't self-heal.
+      (fzfa--async-display-extract overlays)
       (should (equal (buffer-string) "abc")))))
 
 (ert-deftest fzfa-async-display-materialize-extract-roundtrip ()
   "Materialize then extract restores the original buffer + cmd."
   (with-temp-buffer
     (insert "abc")
-    (let ((overlays (fzfa--async-display-materialize "find ." ?#))
-          (style (fzfa-test--perl-style)))
+    (let* ((fzfa-async-separator ?#)
+           (overlays (fzfa--async-display-materialize "find ." ?#)))
       (should (equal (buffer-string) "#find .#abc"))
-      (let ((cmd (fzfa--async-display-extract
-                  #'fzfa--async-split-perl style overlays)))
+      (let ((cmd (fzfa--async-display-extract overlays)))
         (should (equal cmd "find ."))
         (should (equal (buffer-string) "abc"))))))
 

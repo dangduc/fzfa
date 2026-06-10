@@ -313,29 +313,6 @@ Highlighting is applied by the C layer (see `fzfa-highlight')."
 
 ;;; Frontend abstraction
 
-(defvar fzfa-async-helm-handler nil
-  "Function called by `fzfa-async-completing-read' under `helm-mode'.
-Receives the same keyword args (:prompt :command :directory
-:skip-executable-check) and returns the selected candidate string,
-or nil on cancel.  Populated by `fzfa-helm.el' on load.  When nil,
-the helm dispatch is skipped and fzfa runs through `completing-read'.")
-
-(defvar fzfa-sync-helm-handler nil
-  "Function called by `fzfa-sync-completing-read' under `helm-mode'.
-Receives the same keyword args (:candidates :prompt :category
-:annotate :affix :group :history :require-match :default :preview)
-and returns the selected candidate string, or nil on cancel.
-Populated by `fzfa-helm.el' on load.  When nil, the sync path runs
-through `completing-read' (where helm-mode's advice picks it up but
-ignores the `display-sort-function' metadata, so per-history ordering
-is lost).")
-
-(defvar fzfa-multi-helm-handler nil
-  "Function called by `fzfa--multi-read' under `helm-mode'.
-Receives the SOURCES list as the first argument and :prompt as a
-keyword.  Returns the action's return value, or nil.  When nil,
-fzfa signals a `user-error' under `helm-mode'.")
-
 (defun fzfa--frontend-index ()
   "Return the active completion UI's selection index (0-based), or nil.
 Returns nil for frontends without a selection index (e.g. icomplete)."
@@ -1302,10 +1279,19 @@ Priority: `fzfa-directory' >
 
 ;;; Split-style + display infrastructure
 
-(defcustom fzfa-async-split-style 'perl
-  "Splitting style for `fzfa-async-completing-read'.
-See `fzfa-async-split-styles-alist' for available styles."
-  :type '(choice (const :tag "Perl-style (#cmd#filter)" perl))
+(defcustom fzfa-async-separator ?※
+  "Character delimiting the CMD region in async sessions.
+
+In `compact' and `full' display, the minibuffer text has the shape
+\"<sep>CMD<sep>FILTER\".  The two separators are pinned by self-
+healing overlays — deleting one re-inserts it — so this is a pure
+display choice.  Same character is used on both sides, so anything
+symmetric reads well.
+
+Suggested values:
+  ?※ U+203B REFERENCE MARK
+  ?#  ASCII hash (works in any terminal/font)"
+  :type 'character
   :group 'fzfa)
 
 (defcustom fzfa-shell-command-debounce 0.2
@@ -1322,51 +1308,39 @@ keystrokes ends with exactly one restart on the final cmd value."
   :type 'float
   :group 'fzfa)
 
-(defcustom fzfa-async-split-styles-alist
-  `((perl :initial ?# :function ,#'fzfa--async-split-perl))
-  "Splitting styles for `fzfa-async-completing-read'.
-Each entry is (SYMBOL . PLIST).  Recognized PLIST keys:
-  :function  (STR PLIST) -> (CMD . FILTER).  Required.
-             CMD is the `shell-command' portion (re-runs on change);
-             FILTER is passed to fzf-native for scoring.
-  :initial   Optional character inserted at minibuffer setup so the
-             user can start typing inside the delimited region.
-  :separator Optional character; consumed by separator-based splitters."
-  :type '(alist :key-type symbol :value-type plist)
-  :group 'fzfa)
+(defun fzfa--async-split-input (str)
+  "Split STR (\"<sep>CMD<sep>FILTER\" shape) into (CMD . FILTER).
 
-(defun fzfa--async-split-perl (str &optional _plist)
-  "Split STR into (CMD . FILTER) using a perl-style separator.
-If the first character of STR is punctuation it is the separator: text
-between the first and second occurrence is CMD; text after the second
-is FILTER.  With one separator only, the trailing text is CMD and
-FILTER is empty.  Without a leading separator, the whole STR is CMD."
-  (if (string-match-p "^[[:punct:]]" str)
-      (save-match-data
-        (let ((q (regexp-quote (substring str 0 1))))
-          (cond
-           ((string-match (concat "^" q "\\([^" q "]*\\)" q "\\(.*\\)") str)
-            (cons (match-string 1 str) (match-string 2 str)))
-           (t
-            (cons (substring str 1) "")))))
-    (cons str "")))
+SEP is `fzfa-async-separator'.  When STR doesn't start with SEP, the
+whole STR is CMD and FILTER is empty.  With one SEP only, the
+trailing text is CMD and FILTER is empty."
+  (let ((sep (char-to-string fzfa-async-separator)))
+    (cond
+     ((not (string-prefix-p sep str)) (cons str ""))
+     (t
+      (let* ((tail (substring str 1))
+             (close (string-match (regexp-quote sep) tail)))
+        (if close
+            (cons (substring tail 0 close)
+                  (substring tail (1+ close)))
+          (cons tail "")))))))
 
-(defun fzfa--async-split (input display-state command splitter style)
+(defun fzfa--async-split (input display-state command)
   "Return (CMD . FILTER) for INPUT given the current session state.
 
 In `hidden' DISPLAY-STATE, CMD lives outside the buffer (in COMMAND,
 the closure variable in `fzfa-async-completing-read''s body or its
 helm/multi analogue), so the split is trivial: CMD = COMMAND, FILTER
-= INPUT.  In any other display state, the configured SPLITTER parses
-INPUT against STYLE (a plist from `fzfa-async-split-styles-alist').
+= INPUT.  In any other display state, `fzfa--async-split-input'
+parses INPUT against `fzfa-async-separator'.
 
 Frontend-agnostic — the table-lambda in completing-read sessions
 calls it with `(fzfa--current-query str)' as INPUT; helm's
-`:candidates' callback (once `>' support lands) calls it with
-`helm-pattern'.  Same body for both."
+`:candidates' callback calls it with `helm-pattern'.  Same body for
+both."
   (if (eq display-state 'hidden)
       (cons (or command "") input)
-    (funcall splitter input style)))
+    (fzfa--async-split-input input)))
 
 (defcustom fzfa-async-display-key ">"
   "Key string that toggles compact view of the CMD portion.
@@ -1445,7 +1419,7 @@ session state)."
     (otherwise 'hidden)))
 
 (defun fzfa--async-display-materialize (cmd initial-char)
-  "Materialize `#CMD#' at the start of the editable region.
+  "Materialize \"<sep>CMD<sep>\" at the start of the editable region.
 
 Inserts INITIAL-CHAR + CMD + INITIAL-CHAR at `minibuffer-prompt-end'
 in the current buffer.  Preserves point's offset within FILTER —
@@ -1472,12 +1446,12 @@ helper is testable in isolation."
       (list (fzfa--async-protect-separator mbe initial-char)
             (fzfa--async-protect-separator close-pos initial-char)))))
 
-(defun fzfa--async-display-extract (splitter style separator-overlays)
-  "Parse `#CMD#FILTER' at start of editable region, delete `#CMD#'.
+(defun fzfa--async-display-extract (separator-overlays)
+  "Parse \"<sep>CMD<sep>FILTER\" at start of editable region, delete the prefix.
 
 Reads the buffer contents from `minibuffer-prompt-end' to
-`point-max', runs SPLITTER on it with STYLE, and uses the resulting
-CMD to delete the leading `#CMD#' prefix.
+`point-max', runs `fzfa--async-split-input' on it, and uses the
+resulting CMD to delete the leading \"<sep>CMD<sep>\" prefix.
 
 Removes SEPARATOR-OVERLAYS first so their `modification-hooks'
 don't self-heal the very deletion we're about to perform.
@@ -1489,7 +1463,7 @@ trivial-split picks it up on the next tick.
 Operates on `current-buffer'."
   (let* ((mbe (minibuffer-prompt-end))
          (input (buffer-substring-no-properties mbe (point-max)))
-         (split (funcall splitter input style))
+         (split (fzfa--async-split-input input))
          (cmd (car split)))
     (mapc #'delete-overlay separator-overlays)
     (delete-region mbe (min (point-max) (+ mbe 2 (length cmd))))
@@ -1545,30 +1519,30 @@ any path, `fzfa--async-separator-heal-hook' restores it."
                                       initial-input
                                       (resolve-paths t)
                                       (display 'hidden)
-                                      (split-style nil)
                                       skip-executable-check
                                       preview
                                       apply)
   "Run shell COMMAND with asynchronous `completing-read'.
 
 The minibuffer input is split into a shell-CMD part and an
-fzf-FILTER part via `fzfa-async-split-style' (or :SPLIT-STYLE).
-With the default `perl' style the buffer text has shape
-\"#CMD#FILTER\".  Changing CMD restarts the subprocess; changing
-FILTER rescores in place via fzf-native.
+fzf-FILTER part on `fzfa-async-separator': the buffer text has
+shape \"<sep>CMD<sep>FILTER\".  Changing CMD restarts the
+subprocess; changing FILTER rescores in place via fzf-native.
 
 :DISPLAY controls how much of the CMD region is visible.  Press
 `fzfa-async-display-key' (default \">\") to cycle:
-  hidden  — entire `#CMD#' prefix is invisible; only FILTER appears
-            editable.  This is the default for legacy async callers.
+  hidden  — entire \"<sep>CMD<sep>\" prefix is invisible; only FILTER
+            appears editable.  This is the default for legacy async
+            callers.
   compact — flags within CMD collapse behind ` ... '; program name
             and the trailing argument slot remain visible.
-  full    — whole `#CMD#FILTER' string is shown verbatim.
+  full    — whole \"<sep>CMD<sep>FILTER\" string is shown verbatim.
 
 :PROMPT                 Minibuffer prompt.  Derived from the first token of
                         COMMAND (e.g. \"find: \" for \"find .\") when omitted.
 :COMMAND                Shell command whose stdout lines become candidates.
-                        Pre-inserted into the minibuffer as `#COMMAND#'.
+                        Pre-inserted into the minibuffer as
+                        \"<sep>COMMAND<sep>\".
 :DIRECTORY              Working directory for COMMAND.  Defaults to
                         `fzfa--default-dir' (respects
                         `fzfa-project-backend').
@@ -1578,8 +1552,9 @@ FILTER rescores in place via fzf-native.
                         candidates, `fzfa-misc' for non-file output, etc.
 :GROUP                  Optional grouping function for completion metadata.
 :INITIAL-INPUT          Optional initial minibuffer text overriding the
-                        auto-built `#COMMAND#'.  Either a string or
-                        (TEXT . POSITION) cons with 0-based cursor offset.
+                        auto-built \"<sep>COMMAND<sep>\".  Either a string
+                        or (TEXT . POSITION) cons with 0-based cursor
+                        offset.
 :RESOLVE-PATHS          When non-nil (the default), the returned
                         candidate is passed through `expand-file-name'
                         against :DIRECTORY before being handed back to the
@@ -1589,7 +1564,6 @@ FILTER rescores in place via fzf-native.
                         output where the raw text matters).
 :DISPLAY                Initial display mode (`hidden', `compact', or
                         `full'); see above.
-:SPLIT-STYLE            Override `fzfa-async-split-style' for this call.
 :SKIP-EXECUTABLE-CHECK  When non-nil, skip the `executable-find' guard on
                         the first token of COMMAND.
 :PREVIEW                Per-call live-preview handler that bypasses the
@@ -1626,7 +1600,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                    :directory directory :category category :group group
                    :initial-input initial-input
                    :resolve-paths resolve-paths
-                   :display display :split-style split-style
+                   :display display
                    :preview preview)))
      ((eq (car-safe fzfa--multi-mode) :inject)
       ;; One-shot consume: mutate the outer action's `let' cell so the
@@ -1636,13 +1610,13 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
         (setq fzfa--multi-mode nil)
         (cl-return-from fzfa-async-completing-read
           (fzfa--maybe-expand cand directory resolve-paths)))))
-    (when (and (bound-and-true-p helm-mode) fzfa-async-helm-handler)
+    (when (and (bound-and-true-p helm-mode) (fboundp 'fzfa-helm--async-read))
       (cl-return-from fzfa-async-completing-read
         (fzfa--maybe-expand
-         (funcall fzfa-async-helm-handler
-                  :prompt prompt :command command :directory directory
-                  :skip-executable-check skip-executable-check
-                  :category category :preview preview :apply apply)
+         (fzfa-helm--async-read
+          :prompt prompt :command command :directory directory
+          :skip-executable-check skip-executable-check
+          :category category :preview preview :apply apply)
          directory resolve-paths)))
     (let* ((completion-styles '(fzfa))
            (dir (expand-file-name directory))
@@ -1652,17 +1626,13 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
            (fzfa--session-apply
             (or apply (plist-get (alist-get category fzfa-apply-functions) :apply)))
            (fzfa--session-resolve-paths resolve-paths)
-           (style-sym (or split-style fzfa-async-split-style 'perl))
-           (style (or (alist-get style-sym fzfa-async-split-styles-alist)
-                      (user-error
-                       "Unknown fzfa-async split style: %s" style-sym)))
-           (initial-char (plist-get style :initial))
-           ;; Build initial input.  Hidden mode keeps `#CMD#' OUT of the
-           ;; minibuffer entirely — CMD lives in the `command' closure
-           ;; variable (mutated in place by the display-cycle when the
-           ;; user edits inside `#CMD#'), and the editable region is
-           ;; just FILTER.  Compact / full pre-seed `#CMD#' as before
-           ;; so the user can edit it.
+           (initial-char fzfa-async-separator)
+           ;; Build initial input.  Hidden mode keeps the CMD region OUT
+           ;; of the minibuffer entirely — CMD lives in the `command'
+           ;; closure variable (mutated in place by the display-cycle
+           ;; when the user edits inside it), and the editable region is
+           ;; just FILTER.  Compact / full pre-seed "<sep>CMD<sep>" so
+           ;; the user can edit it.
            (init-text
             (cond
              ((consp initial-input) (car initial-input))
@@ -1679,7 +1649,6 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
              ((consp initial-input) (cdr initial-input))
              (init-text (length init-text))
              (t nil)))
-           (splitter (plist-get style :function))
            (limit (fzfa--candidate-limit))
            (selection nil)
            (handle nil)
@@ -1702,7 +1671,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
             (lambda ()
               ;; Only compact mode installs an overlay (flags collapse).
               ;; Hidden and full are pure buffer states — hidden has no
-              ;; `#CMD#' to hide; full shows it verbatim.
+              ;; CMD region to hide; full shows it verbatim.
               (funcall display-clear)
               (when (eq display-state 'compact)
                 (when-let* ((bounds (fzfa--async-display-cmd-bounds
@@ -1731,7 +1700,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                          command initial-char)))
                  ((eq to 'hidden)
                   (setq command (fzfa--async-display-extract
-                                 splitter style separator-overlays))
+                                 separator-overlays))
                   (setq separator-overlays nil)))
                 (setq display-state to)
                 (funcall display-apply))))
@@ -1769,7 +1738,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                 ('t
                  (let* ((input (fzfa--current-query str))
                         (split (fzfa--async-split
-                                input display-state command splitter style))
+                                input display-state command))
                         (cmd (car split))
                         (query (cdr split)))
                    (cond
@@ -1841,7 +1810,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                           (query (and (boundp 'ivy-text) ivy-text)))
                 (with-selected-window win
                   (let* ((split (fzfa--async-split
-                                 query display-state command splitter style))
+                                 query display-state command))
                          (cmd    (car split))
                          (filter (cdr split)))
                     (cond
@@ -1889,7 +1858,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
        ((and command (not (string-empty-p command)))
         (funcall do-restart command))
        (init-text
-        (let ((cmd (car (funcall splitter init-text style))))
+        (let ((cmd (car (fzfa--async-split-input init-text))))
           (when (and cmd (not (string-empty-p cmd)))
             (funcall do-restart cmd)))))
       (setq poll-timer
@@ -1920,8 +1889,9 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                  ;; Legacy auto-insert of a single opening separator when
                  ;; the caller passed no init-text and no command but the
                  ;; session started in compact/full so they intend to
-                 ;; type `#CMD#FILTER' freestyle.  Skip in hidden mode
-                 ;; (no `#…#' belongs in the editable region).
+                 ;; type "<sep>CMD<sep>FILTER" freestyle.  Skip in hidden
+                 ;; mode (no separator-delimited region belongs in the
+                 ;; editable area).
                  (when (and initial-char (null init-text)
                             (not (eq display-state 'hidden)))
                    (save-excursion
@@ -1977,7 +1947,6 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
          (when handler (fzfa--preview-return selection)))
        directory resolve-paths))))
 
-
 (defun fzfa--async-extract-args (cmd)
   "Run CMD in `:extract' mode and return its keyword args plist.
 Returns nil if CMD does not flow through a fzfa `completing-read'."
@@ -1985,7 +1954,6 @@ Returns nil if CMD does not flow through a fzfa `completing-read'."
     (let ((fzfa--multi-mode :extract))
       (funcall cmd))
     nil))
-
 
 ;;; Smart dispatch
 
@@ -2122,13 +2090,13 @@ PATH and whose command symbol is bound: %s."
     (let ((cand (cdr fzfa--multi-mode)))
       (setq fzfa--multi-mode nil)
       (cl-return-from fzfa-sync-completing-read cand))))
-  (when (and (bound-and-true-p helm-mode) fzfa-sync-helm-handler)
+  (when (and (bound-and-true-p helm-mode) (fboundp 'fzfa-helm--sync-read))
     (cl-return-from fzfa-sync-completing-read
-      (funcall fzfa-sync-helm-handler
-               :candidates candidates :prompt prompt :category category
-               :annotate annotate :affix affix :group group
-               :history history :require-match require-match
-               :default default :preview preview :apply apply)))
+      (fzfa-helm--sync-read
+       :candidates candidates :prompt prompt :category category
+       :annotate annotate :affix affix :group group
+       :history history :require-match require-match
+       :default default :preview preview :apply apply)))
   (let* ((completion-styles '(fzfa))
          (ivy-completing-read-dynamic-collection t) ;; Don't let `ivy' filter.
          (handler (fzfa--preview-handler preview category))
@@ -2487,9 +2455,9 @@ Per-source plist keys:
       (setq fzfa--multi-mode nil)
       (cl-return-from fzfa--multi-read cand))))
   (when (bound-and-true-p helm-mode)
-    (if fzfa-multi-helm-handler
+    (if (fboundp 'fzfa-helm--multi-read)
         (cl-return-from fzfa--multi-read
-          (funcall fzfa-multi-helm-handler sources :prompt prompt))
+          (fzfa-helm--multi-read sources :prompt prompt))
       (user-error "Fzfa--multi-read does not yet support helm-mode")))
   (let* ((n            (length sources))
          (sources-v    (vconcat sources))
@@ -3295,13 +3263,9 @@ render."
 
 (defun fzfa--ensure-setup ()
   "Install fzfa's registrations exactly once.
-Idempotent: subsequent calls are a flag check.  Called from every
-public entry point.
 
  e.g.
- `fzfa-async-completing-read',
- `fzfa-sync-completing-read',
- `fzfa-multi-read'."
+ `fzfa-async-completing-read',`fzfa-sync-completing-read',`fzfa-multi-read'."
   (unless fzfa--setup-done
     (setq fzfa--setup-done t)
     (when (fboundp 'fzf-native-ensure-loaded)

@@ -176,10 +176,13 @@ See [[*Cross-frontend integration]] for design and implementation.
 (static collections, history rings, etc.) into a single picker, with
 per-source narrowing, preview, and apply (~helm~ persistent actions / ~ivy~-call).
 
-~consult--multi~ is sync only; ivy/counsel has no multi-source
-primitive (~counsel-buffer-or-recentf~ concatenates two lists into a
-flat collection, no per-source semantics); helm has native
-multi-source but re-shells per keystroke on async sources, which
+~consult~ supports mixed async + sync multi-source via ~consult--multi~,
+but ~consult-buffer~ and its variants are the only core callers and use
+only ~:items~ (sync) sources.  Third-party packages (consult-omni,
+consult-web) exercise the async-in-multi path.
+~ivy/counsel~ has no multi-source primitive (~counsel-buffer-or-recentf~ concatenates two lists into a
+flat collection, no per-source semantics);
+~helm~ has native multi-source but re-shells per keystroke on async sources, which
 limits the candidate counts it can handle.  See [[*Multi-source][Multi-source]] for
 the comparison.
 
@@ -481,7 +484,7 @@ against the same query as the user types:
 |------------------------------+----------------------------------------------------------------|
 | ~fzfa~ (~fzfa-multi-read~)   | yes — any combination of ~:items~ and ~:command~ sources       |
 | ~helm~ (~helm :sources~)     | yes — ~candidates~ + ~candidates-process~ sources side by side |
-| ~consult~ (~consult--multi~) | sync only; async pipeline is single-source                     |
+| ~consult~ (~consult--multi~) | supported; no built-in commands uses it                        |
 | ~ivy~ / ~counsel~            | no multi-source mechanism                                      |
 
 * Extensions
@@ -863,11 +866,9 @@ case and ~fzfa~ handles the async ~completing-read~ cases.
 ** helm
 
 Helm support lives in ~fzfa-helm.el~, loaded as part of
-~fzfa-extensions~ (which includes ~helm~ by default).  Loading the
-file alone is a no-op; ~fzfa-helm-setup~ — called from ~fzfa-setup~ —
-defers handler registration via ~(with-eval-after-load 'helm …)~ so
-the four handler defvars get populated only when helm itself is
-actually loaded.
+~fzfa-extensions~ (which includes ~helm~ by default).  Once loaded,
+~fzfa.el~'s dispatch sites pick up the helm entry points via ~fboundp~,
+gated on ~helm-mode~ — no extra registration step.
 
 #+HTML: <video src="https://github.com/user-attachments/assets/856a2ed4-82a0-406b-a43b-ebbeb6c90ca4" controls style="max-width: 100%; height: auto;"></video>
 
@@ -875,11 +876,11 @@ When ~helm-mode~ is active, each ~fzfa~ entry point dispatches through
 a handler that bypasses ~completing-read~ entirely and runs
 ~(helm :sources …)~ directly:
 
-| Entry point                  | Handler var               |
-|------------------------------+---------------------------|
-| ~fzfa-async-completing-read~ | ~fzfa-async-helm-handler~ |
-| ~fzfa-sync-completing-read~  | ~fzfa-sync-helm-handler~  |
-| ~fzfa--multi-read~           | ~fzfa-multi-helm-handler~ |
+| Entry point                  | Handler                  |
+|------------------------------+--------------------------|
+| ~fzfa-async-completing-read~ | ~fzfa-helm--async-read~  |
+| ~fzfa-sync-completing-read~  | ~fzfa-helm--sync-read~   |
+| ~fzfa--multi-read~           | ~fzfa-helm--multi-read~  |
 
 Each handler builds a ~helm-source-sync~ source with ~:match-dynamic t~
 (helm asks for filtered candidates on each input change rather than
@@ -941,7 +942,7 @@ history push) still fires.
 If every source in your picker is itself an ~fzfa-*~ command,
 ~fzfa-multi-read~ is the better tool: one definition works across
 ~helm~ / ~ivy~ / ~vertico~ / ~icomplete~ from a single call, and under
-~helm-mode~ it dispatches through ~fzfa-multi-helm-handler~ with the
+~helm-mode~ it dispatches through ~fzfa-helm--multi-read~ with the
 shared polling timer and per-source caps.  Reach for
 ~fzfa-helm-source-from-command~ only when you specifically want fzfa
 sources mixed with non-fzfa helm sources (e.g. adding to ~helm-mini~).
@@ -1429,9 +1430,10 @@ covered in [[*Smart fuzzy matching][Smart fuzzy matching]]:
 
 - *helm* has native multi-source (helm-mini-style: stream from N
   producer processes concurrently, each filtered/scored live).
-- *vertico/consult* has =consult--multi=, but it's sync only — which
-  potentially limits the scope of what you can do with a multi source
-  function.  =consult-buffer= shows the shape of what's possible.
+- *vertico/consult* has =consult--multi=, which can mix sync and async
+  sources (the dispatcher upgrades to an async pipeline when any source
+  declares =:async=).  All core commands using it (=consult-buffer= and
+  variants) are sync only; Third party packages are examples. (e.g. ~consult-omni~)
 - *ivy/counsel* has no multi-source primitive.
   =counsel-buffer-or-recentf= and friends concatenate two lists into
   a flat collection — no per-source narrowing, filtering, or

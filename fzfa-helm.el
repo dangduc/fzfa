@@ -11,13 +11,10 @@
 ;;; Commentary:
 
 ;; Helm frontend for `fzfa'.  Loaded automatically when `helm' is in
-;; `fzfa-extensions' and `fzfa-setup' has been called.  Loading this
-;; file does NOT activate helm dispatch on its own — that happens in
-;; `fzfa-helm-setup', which registers the three handler defvars in
-;; `fzfa.el' (`fzfa-async-helm-handler', `fzfa-sync-helm-handler',
-;; `fzfa-multi-helm-handler') and defers
-;; the registration via `with-eval-after-load' on `helm' so it kicks
-;; in only when helm is actually loaded.
+;; `fzfa-extensions' and `fzfa-setup' has been called.  Once loaded,
+;; the three internal entry points (`fzfa-helm--async-read',
+;; `fzfa-helm--sync-read', `fzfa-helm--multi-read') are picked up by
+;; `fzfa.el's dispatch sites via `fboundp', gated on `helm-mode'.
 ;;
 ;; Public source constructors for building helm commands directly:
 ;;
@@ -340,22 +337,14 @@ selection move (default) or on `helm-execute-persistent-action'.
 Display cycling: `fzfa-async-display-key' (default `>') is bound in
 the source's keymap and cycles `hidden' → `compact' → `full' →
 `hidden' using the shared `fzfa--async-display-{materialize,extract}'
-helpers.  Editing the `#CMD#' region in compact / full debounce-
-restarts the subprocess with the new command.  Same UX as the
-completing-read path.
+helpers.  Editing the CMD region in compact / full debounce-restarts
+the subprocess with the new command.  Same UX as the completing-read
+path.
 
 Internal — used by both `fzfa-helm-make-async-source' (single-source)
 and `fzfa-helm--multi-read' (batch with bulk-stop)."
   (let* ((dir (expand-file-name (or directory default-directory)))
-         ;; Splitter setup mirrors `fzfa-async-completing-read'.  The
-         ;; style is resolved once at session-start; the per-tick
-         ;; dispatch is via `fzfa--async-split'.
-         (style-sym (or fzfa-async-split-style 'perl))
-         (style (or (alist-get style-sym fzfa-async-split-styles-alist)
-                    (user-error
-                     "Unknown fzfa-async split style: %s" style-sym)))
-         (splitter (plist-get style :function))
-         (initial-char (plist-get style :initial))
+         (initial-char fzfa-async-separator)
          (handle (fzf-native-async-start command dir))
          ;; Display-state machinery.  `command' is the cl-defun arg —
          ;; mutated in place by `display-cycle' when the user edits and
@@ -387,8 +376,8 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
          (display-apply
           (lambda ()
             ;; Only `compact' installs an overlay (flags collapse to
-            ;; `…').  `hidden' has no `#CMD#' in the buffer and `full'
-            ;; shows the cmd verbatim — both no-op.  Mirrors the
+            ;; `…').  `hidden' has no CMD region in the buffer and
+            ;; `full' shows the cmd verbatim — both no-op.  Mirrors the
             ;; `display-apply' closure in the completing-read body.
             (funcall display-clear)
             (when (eq display-state 'compact)
@@ -409,7 +398,7 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
                        command initial-char)))
                ((eq to 'hidden)
                 (setq command (fzfa--async-display-extract
-                               splitter style separator-overlays))
+                               separator-overlays))
                 (setq separator-overlays nil)))
               (setq display-state to)
               (funcall display-apply)
@@ -465,8 +454,7 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
               (unless stopped
                 (pcase-let* ((`(,cmd . ,filter)
                               (fzfa--async-split
-                               (or helm-pattern "") display-state command
-                               splitter style)))
+                               (or helm-pattern "") display-state command)))
                   (when (not (equal cmd current-cmd))
                     ;; Debounce-then-restart, mirroring the completing-
                     ;; read path's `do-restart' scheduling.  Floor on the
@@ -739,7 +727,7 @@ Errors if CMD is not an extract-capable fzfa command."
                      :directory directory :history history
                      :action action))))))))
 
-;;; Async handler — registered as `fzfa-async-helm-handler'
+;;; Async handler — dispatched from `fzfa-async-completing-read'
 
 (cl-defun fzfa-helm--async-read (&key prompt command directory
                                       skip-executable-check
@@ -820,7 +808,7 @@ Returns the selected candidate string, or nil on cancel."
       (fzfa-helm--cancel-stranded-follow-timer))
     result))
 
-;;; Sync handler — registered as `fzfa-sync-helm-handler'
+;;; Sync handler — dispatched from `fzfa-sync-completing-read'
 
 (cl-defun fzfa-helm--sync-read (&key candidates prompt category annotate
                                      affix group history require-match
@@ -897,7 +885,7 @@ metadata."
       (fzfa-helm--cancel-stranded-follow-timer))
     result))
 
-;;; Multi handler — registered as `fzfa-multi-helm-handler'
+;;; Multi handler — dispatched from `fzfa--multi-read'
 
 (cl-defun fzfa-helm--multi-read (sources &key prompt)
   "Helm dispatch for `fzfa--multi-read'.
@@ -1291,21 +1279,6 @@ for fuzzy-multi-source UX."
                                       nil))))))
       (fzfa-helm--cancel-stranded-follow-timer))
     result))
-
-;;; Setup — registers the four handler defvars after `helm' loads
-
-(defun fzfa-helm-setup ()
-  "Wire fzfa's helm dispatch into the current session.
-
-Invoked by `fzfa-setup' when `helm' is listed in `fzfa-extensions'.
-The actual `setq's are deferred via `with-eval-after-load' on
-`helm', so calling this when helm is not (yet) installed is a no-op
-that auto-activates if helm shows up later in the session.  Safe
-to call multiple times — `setq' is idempotent."
-  (with-eval-after-load 'helm
-    (setq fzfa-async-helm-handler #'fzfa-helm--async-read)
-    (setq fzfa-sync-helm-handler  #'fzfa-helm--sync-read)
-    (setq fzfa-multi-helm-handler #'fzfa-helm--multi-read)))
 
 (provide 'fzfa-helm)
 ;;; fzfa-helm.el ends here
