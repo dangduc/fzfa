@@ -76,30 +76,6 @@ Default is `fzfa-helm-multi-source-candidate-limit' × 10."
   :type 'integer
   :group 'fzfa)
 
-(defcustom fzfa-helm-kill-buffer-on-exit t
-  "Whether to kill the helm session buffer on fzfa-helm exit.
-
-`helm' by default `bury's its session buffer on exit
-\(`helm-cleanup' in `helm-core.el:~4348') rather than killing it, so
-that `helm-resume' can later restore the session.  Buried buffers
-linger in `buffer-list', though, and end up as candidates for any
-subsequent `fzfa-buffer'-backed picker \(`fzfa-buffer',
-`fzfa-find-any', etc.).  Previewing a stale fzfa-helm buffer there
-re-renders the prior picker's content in the origin window —
-disorienting mid-session.
-
-When this is non-nil (the default), each fzfa-helm handler
-\(`fzfa-helm--async-read', `fzfa-helm--sync-read',
-`fzfa-helm--multi-read') explicitly kills its session buffer in
-`unwind-protect' cleanup — no leftovers in `buffer-list', no stale
-candidates downstream.
-
-Set to nil to defer to helm's default bury behavior — useful if you
-rely on `helm-resume' for fzfa sessions, though async producers
-don't restore well across resume anyway."
-  :type 'boolean
-  :group 'fzfa)
-
 (defcustom fzfa-helm-apply-follow t
   "Whether helm should auto-fire `:apply' on every selection move.
 When non-nil (the default), bridged fzfa sources that declare an
@@ -114,13 +90,6 @@ explicit `helm-execute-persistent-action'.  Useful for sources whose
 shouldn't fire on every arrow-key press."
   :type 'boolean
   :group 'fzfa)
-
-(defun fzfa-helm--maybe-kill-session-buffer (name)
-  "Kill the helm session buffer NAME when `fzfa-helm-kill-buffer-on-exit'.
-No-op when the buffer doesn't exist or the defcustom is nil.  Each
-fzfa-helm handler calls this in its `unwind-protect' cleanup."
-  (when (and fzfa-helm-kill-buffer-on-exit (get-buffer name))
-    (kill-buffer name)))
 
 (defun fzfa-helm--wrap-apply (apply-fn dir origin-window origin-buffer)
   "Return APPLY-FN wrapped so each fire runs against a stable baseline.
@@ -848,8 +817,7 @@ Returns the selected candidate string, or nil on cancel."
       (when handler
         (fzfa--preview-call :exit)
         (fzfa--preview-return result))
-      (fzfa-helm--cancel-stranded-follow-timer)
-      (fzfa-helm--maybe-kill-session-buffer "*helm fzfa*"))
+      (fzfa-helm--cancel-stranded-follow-timer))
     result))
 
 ;;; Sync handler — registered as `fzfa-sync-helm-handler'
@@ -926,8 +894,7 @@ metadata."
       (when handler
         (fzfa--preview-call :exit)
         (fzfa--preview-return result))
-      (fzfa-helm--cancel-stranded-follow-timer)
-      (fzfa-helm--maybe-kill-session-buffer "*helm fzfa sync*"))
+      (fzfa-helm--cancel-stranded-follow-timer))
     result))
 
 ;;; Multi handler — registered as `fzfa-multi-helm-handler'
@@ -1322,8 +1289,7 @@ for fuzzy-multi-source UX."
               (fzfa--preview-return (if (eql i result-src-idx)
                                         result-cand
                                       nil))))))
-      (fzfa-helm--cancel-stranded-follow-timer)
-      (fzfa-helm--maybe-kill-session-buffer "*helm fzfa multi*"))
+      (fzfa-helm--cancel-stranded-follow-timer))
     result))
 
 ;;; Setup — registers the four handler defvars after `helm' loads
