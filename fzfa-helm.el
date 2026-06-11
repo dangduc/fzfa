@@ -92,6 +92,17 @@ shouldn't fire on every arrow-key press."
   (require 'helm)
   (require 'helm-source))
 
+;;;###autoload
+(defun fzfa-helm-setup ()
+  "Wire fzfa's helm integration into the current session.
+
+Called by `fzfa--ensure-setup' when `helm' is in `fzfa-extensions'.
+The body is intentionally empty — invoking it through the autoload
+stub loads this file, which is the wiring.  The dispatch sites in
+`fzfa.el' (`fzfa-helm--completing-read', `fzfa-helm--multi-read')
+become `fboundp' once the file is loaded and pick up
+`helm-mode' automatically.")
+
 (defun fzfa-helm--wrap-apply (apply-fn dir origin-window origin-buffer)
   "Return APPLY-FN wrapped so each fire runs against a stable baseline.
 
