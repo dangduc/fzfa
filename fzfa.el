@@ -4,7 +4,7 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "29.1") (fzf-native "1.5"))
+;; Package-Requires: ((emacs "29.1") (fzf-native "1.6"))
 ;; Keywords: matching, completion, fzf, fuzzy, fussy
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
@@ -1301,39 +1301,17 @@ keeps fzfa functional on older fzf-native builds."
              (fzf-native-async-result-fresh-p handle query))))
 
 (defun fzfa--defer-async-stop (handles)
-  "Schedule `fzf-native-async-stop' on HANDLES off the synchronous unwind path.
+  "Stop each of HANDLES via `fzf-native-async-stop'.
 
 HANDLES may be a single async handle, a list, or a vector; nil values
-\(including nil HANDLES) are ignored.  Stops are chained one-per-idle-tick
-so redisplay can run between them; the closure retains the live-handle
-list so it survives the caller's unwind.
-
-The C-side destroy does pthread_join on the scoring thread
-\(uninterruptible snapshot/score work for huge pools) and frees the
-candidate arena — easily hundreds of ms for a `find ~'-scale session.
-None of it is needed before minibuffer dismissal, so deferring this
-lets ESC return instantly.  An idle timer (rather than `run-at-time' 0)
-ensures the join is wedged between user keystrokes only when the user
-has actually paused — keeping the pthread_join out of the user's typing
-rhythm in trade for holding the arena slightly longer.
-
-For multi sessions with N async sources, joining all N in one idle tick
-freezes Emacs for the sum of their join times.  Popping one handle per
-tick yields the main thread between joins so the user sees a responsive
-UI even when several large pools are tearing down."
-  (let ((live (cond
-               ((null handles) nil)
-               ((vectorp handles)
-                (cl-loop for h across handles when h collect h))
-               ((listp handles) (delq nil (copy-sequence handles)))
-               (t (list handles)))))
-    (when live
-      (letrec ((step (lambda ()
-                       (when live
-                         (fzf-native-async-stop (pop live))
-                         (when live
-                           (run-with-idle-timer 0 nil step))))))
-        (run-with-idle-timer 0 nil step)))))
+\(including nil HANDLES) are ignored."
+  (cond
+   ((null handles))
+   ((vectorp handles)
+    (cl-loop for h across handles when h do (fzf-native-async-stop h)))
+   ((listp handles)
+    (dolist (h handles) (when h (fzf-native-async-stop h))))
+   (t (fzf-native-async-stop handles))))
 
 ;;; History
 
