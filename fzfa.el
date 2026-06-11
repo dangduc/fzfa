@@ -1080,24 +1080,33 @@ reuses it instead of re-loading from disk."
 
 ;;; Completing-read helpers
 
-(defun fzfa--minibuffer-format-reset ()
-  "Disable frontend count formats in the active minibuffer.
+(defun fzfa--minibuffer-format-reset (&optional suppress-format)
+  "Set up the active minibuffer for an fzfa session.
 
-Called from a `minibuffer-with-setup-hook' lambda so that `vertico''s
-`vertico-count-format' and icomplete's `icomplete-matches-format' don't
-overwrite fzfa's own stats overlay / pre-prompt text.  Ivy is handled
-separately via `ivy-count-format' bound at the call site.  No-ops when
-the target package isn't loaded.
+Always installs `fzfa-apply-key' and (under icomplete) pins
+`resize-mini-windows' to `grow-only'.
 
-Under icomplete, also pin `resize-mini-windows' to `grow-only'.  The
-auto-resize logic that fires on every redisplay treats the empty-input
-state as needing only 1 line — ignoring `after-string' on the
-zero-length `icomplete-overlay' — so a timer-driven refresh would grow
-the mini-window only for it to collapse on the next redisplay tick."
-  (when (boundp 'vertico-count-format)
-    (setq-local vertico-count-format nil))
-  (when (boundp 'icomplete-matches-format)
-    (setq-local icomplete-matches-format nil))
+When SUPPRESS-FORMAT is non-nil, also disables `vertico''s
+`vertico-count-format' and icomplete's `icomplete-matches-format' so
+they don't overwrite fzfa's own stats overlay / pre-prompt text.  Ivy's
+analogous `ivy-count-format' is bound at the call site under the same
+gating.  Pass nil to leave the frontend's native count rendering intact
+\(useful for sync `:candidates' sources where fzfa doesn't install a
+stats overlay — vertico shows its native \"N/M PROMPT\", ivy its
+configured `ivy-count-format', icomplete its match list, etc.).
+
+Under icomplete, the `grow-only' pin works around the empty-input state
+hitting a zero-length-overlay resize blind spot: the overlay's
+multi-line `after-string' isn't counted, so any redisplay collapses the
+pane to 1 line.  Toggle the resize policy based on input state —
+`grow-only' (plus an explicit fit) when empty so the pane stays
+visible, user's original value otherwise so narrowing can shrink
+naturally.  Covers initial entry and backspace-to-empty alike."
+  (when suppress-format
+    (when (boundp 'vertico-count-format)
+      (setq-local vertico-count-format nil))
+    (when (boundp 'icomplete-matches-format)
+      (setq-local icomplete-matches-format nil)))
   (fzfa--minibuffer-install-apply-key)
   (when (bound-and-true-p icomplete-mode)
     ;; Empty-input state hits the zero-length-overlay resize blind spot:
@@ -1150,6 +1159,67 @@ FILTERED and TOTAL are integer candidate counts, comma-formatted."
           (if idx (format "%d/" (1+ idx)) "")
           (fzfa--commas filtered)
           (fzfa--commas total)))
+
+(defun fzfa-format-prompt (data)
+  "Default value of `fzfa-prompt-function'.
+
+`:command' sources render \"PROMPT DIR IDX/[FILTERED](TOTAL)\".
+`:multi' sources render the same with the active narrow name in place
+of DIR (when a narrow is active).
+`:candidates' sources return nil, so the bare PROMPT shows with no
+stats overlay — sync, in-memory pools don't surface meaningful totals.
+
+DATA is the plist documented at `fzfa-prompt-function'."
+  (pcase (plist-get data :source-kind)
+    (:candidates nil)
+    (:command
+     (fzfa--format-stats
+      (concat (plist-get data :prompt) (plist-get data :directory) " ")
+      (plist-get data :index)
+      (plist-get data :filtered)
+      (plist-get data :total)))
+    (:multi
+     (let* ((prompt (plist-get data :prompt))
+            (narrow (plist-get data :narrow-name))
+            (prefix (if narrow
+                        (concat prompt
+                                (propertize (format "{%s} " narrow)
+                                            'face 'minibuffer-prompt))
+                      prompt)))
+       (fzfa--format-stats prefix
+                           (plist-get data :index)
+                           (plist-get data :filtered)
+                           (plist-get data :total))))))
+
+(defcustom fzfa-prompt-function #'fzfa-format-prompt
+  "Function that renders the fzfa prompt-overlay text.
+
+Called with a single plist DATA argument on every overlay refresh
+\(roughly per keystroke under vertico/icomplete; from
+`ivy-pre-prompt-function' under ivy).  Should return a string to display
+in place of the minibuffer prompt, or nil to skip decoration (the bare
+prompt passed to `completing-read' shows through unchanged — ivy renders
+just its own prompt).
+
+DATA plist keys:
+  :source-kind   `:command', `:candidates', or `:multi'.  Branch on
+                 this to render async sources differently from in-memory
+                 ones.
+  :prompt        Base prompt string passed to `completing-read'.
+                 Returning this verbatim is equivalent to nil.
+  :directory     Abbreviated working directory.  Always present for
+                 single-source sessions; nil for `:multi' (sources may
+                 each have their own dir).
+  :command       Shell command string for `:command' sources, nil
+                 otherwise.
+  :index         Current selection index (0-based), or nil under
+                 frontends without a selection cursor (e.g. icomplete).
+  :filtered      Candidates matching the current query.
+  :total         Total candidates collected so far.
+  :narrow-name   Name of the currently-narrowed source (`:multi' only),
+                 or nil."
+  :type 'function
+  :group 'fzfa)
 
 (defun fzfa--normalize-candidates (cands)
   "Normalize CANDS to the (lambda (INPUT CALLBACK) ...) producer shape.
@@ -1868,6 +1938,26 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
            (last-total 0)
            (last-exhibit-scheduled 0.0)
            (last-restart-time 0.0)
+           ;; Probe `fzfa-prompt-function' once with the initial empty-state
+           ;; data plist.  A non-nil return signals "I'm taking over the
+           ;; prompt area" — suppress vertico/icomplete/ivy's native count
+           ;; rendering so it doesn't double-render alongside ours.  Nil
+           ;; signals "let the frontend's native UI through unchanged",
+           ;; which is the default for sync `:candidates' (vertico shows
+           ;; \"N/M PROMPT\", ivy its configured count, etc.).
+           (wants-decoration
+            (and (funcall fzfa-prompt-function
+                          (list :source-kind (if command
+                                                 :command
+                                               :candidates)
+                                :prompt prompt
+                                :directory dir-abbrev
+                                :command command
+                                :index nil
+                                :filtered 0
+                                :total 0
+                                :narrow-name nil))
+                 t))
            (stats-overlay nil)
            (separator-overlays nil)
            (display-overlays nil)
@@ -1920,9 +2010,17 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                 (with-selected-window (active-minibuffer-window)
                   (overlay-put
                    stats-overlay 'display
-                   (fzfa--format-stats (concat prompt dir-abbrev " ")
-                                       (fzfa--frontend-index)
-                                       last-filtered last-total))))
+                   (funcall fzfa-prompt-function
+                            (list :source-kind (if command
+                                                   :command
+                                                 :candidates)
+                                  :prompt prompt
+                                  :directory dir-abbrev
+                                  :command command
+                                  :index (fzfa--frontend-index)
+                                  :filtered last-filtered
+                                  :total last-total
+                                  :narrow-name nil)))))
               (fzfa--insert-prompt-if-ivy)))
            ;; Producer-mode session state.  Snapshot is the latest list
            ;; delivered by PRODUCER's callback; token discards stale
@@ -2207,7 +2305,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                      (goto-char (minibuffer-prompt-end))
                      (unless (equal initial-char (char-after))
                        (insert (char-to-string initial-char)))))
-                 (fzfa--minibuffer-format-reset)
+                 (fzfa--minibuffer-format-reset wants-decoration)
                  (when handler (fzfa--preview-install))
                  (cursor-intangible-mode 1)
                  (when fzfa-display-key
@@ -2236,13 +2334,25 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                    (goto-char (+ (minibuffer-prompt-end) init-point))))
              (let ((ivy-completing-read-dynamic-collection t)
                    (ivy-count-format
-                    (when (bound-and-true-p ivy-mode) ""))
+                    (if (and (bound-and-true-p ivy-mode) wants-decoration)
+                        ""
+                      ivy-count-format))
                    (ivy-pre-prompt-function
-                    (when (bound-and-true-p ivy-mode)
+                    (when (and (bound-and-true-p ivy-mode) wants-decoration)
                       (lambda ()
-                        (fzfa--format-stats (concat prompt dir-abbrev " ")
-                                            (fzfa--frontend-index)
-                                            last-filtered last-total)))))
+                        (or (funcall
+                             fzfa-prompt-function
+                             (list :source-kind (if command
+                                                    :command
+                                                  :candidates)
+                                   :prompt prompt
+                                   :directory dir-abbrev
+                                   :command command
+                                   :index (fzfa--frontend-index)
+                                   :filtered last-filtered
+                                   :total last-total
+                                   :narrow-name nil))
+                            "")))))
                (setq selection
                      (completing-read prompt table nil require-match
                                       init-text history default))))
@@ -2725,6 +2835,18 @@ Per-source plist keys:
          (limit        (fzfa--candidate-limit))
          (cand->src    (make-hash-table :test 'equal :size 1024))
          (last-exhibit 0.0)
+         ;; See the single-source `wants-decoration' probe for the rule.
+         (wants-decoration
+          (and (funcall fzfa-prompt-function
+                        (list :source-kind :multi
+                              :prompt prompt
+                              :directory nil
+                              :command nil
+                              :index nil
+                              :filtered 0
+                              :total 0
+                              :narrow-name nil))
+               t))
          (stats-overlay nil)
          ;; Captured by `minibuffer-exit-hook' from the propertized text
          ;; in the minibuffer before `completing-read' returns and strips
@@ -2749,20 +2871,21 @@ Per-source plist keys:
               (with-selected-window (active-minibuffer-window)
                 (overlay-put
                  stats-overlay 'display
-                 (fzfa--format-stats
-                  (if narrow-idx
-                      (concat prompt
-                              (propertize
-                               (format "{%s} "
-                                       (or (plist-get
-                                            (aref sources-v narrow-idx)
-                                            :name)
-                                           "?"))
-                               'face 'minibuffer-prompt))
-                    prompt)
-                  (fzfa--frontend-index)
-                  (cl-loop for x across filtered sum x)
-                  (cl-loop for x across totals sum x)))))
+                 (funcall
+                  fzfa-prompt-function
+                  (list :source-kind :multi
+                        :prompt prompt
+                        :directory nil
+                        :command nil
+                        :index (fzfa--frontend-index)
+                        :filtered (cl-loop for x across filtered sum x)
+                        :total (cl-loop for x across totals sum x)
+                        :narrow-name
+                        (and narrow-idx
+                             (or (plist-get
+                                  (aref sources-v narrow-idx)
+                                  :name)
+                                 "?")))))))
             (fzfa--insert-prompt-if-ivy)))
          ;; Ivy push closure: ivy doesn't re-call the collection on
          ;; timer ticks (push model), so async sources would stay
@@ -3004,7 +3127,7 @@ Per-source plist keys:
           (setq result
                 (minibuffer-with-setup-hook
                     (lambda ()
-                      (fzfa--minibuffer-format-reset)
+                      (fzfa--minibuffer-format-reset wants-decoration)
                       (when router (fzfa--preview-install))
                       ;; Capture source idx from the propertized minibuffer
                       ;; text before completing-read returns and strips text
@@ -3041,7 +3164,9 @@ Per-source plist keys:
                   (let ((fzfa--multi-active-sources sources-v)
                         (ivy-completing-read-dynamic-collection t)
                         (ivy-count-format
-                         (when (bound-and-true-p ivy-mode) ""))
+                         (if (and (bound-and-true-p ivy-mode) wants-decoration)
+                             ""
+                           ivy-count-format))
                         (ivy--actions-list
                          (if (bound-and-true-p ivy-mode)
                              (plist-put (cl-copy-list
@@ -3049,23 +3174,27 @@ Per-source plist keys:
                                         t ivy-multi-actions)
                            ivy--actions-list))
                         (ivy-pre-prompt-function
-                         (when (bound-and-true-p ivy-mode)
+                         (when (and (bound-and-true-p ivy-mode) wants-decoration)
                            (lambda ()
-                             (fzfa--format-stats
-                              (if narrow-idx
-                                  (concat prompt
-                                          (propertize
-                                           (format "{%s} "
-                                                   (or (plist-get
-                                                        (aref sources-v
-                                                              narrow-idx)
-                                                        :name)
-                                                       "?"))
-                                           'face 'minibuffer-prompt))
-                                prompt)
-                              (fzfa--frontend-index)
-                              (cl-loop for x across filtered sum x)
-                              (cl-loop for x across totals sum x))))))
+                             (or (funcall
+                                  fzfa-prompt-function
+                                  (list :source-kind :multi
+                                        :prompt prompt
+                                        :directory nil
+                                        :command nil
+                                        :index (fzfa--frontend-index)
+                                        :filtered (cl-loop for x across filtered
+                                                           sum x)
+                                        :total (cl-loop for x across totals
+                                                        sum x)
+                                        :narrow-name
+                                        (and narrow-idx
+                                             (or (plist-get
+                                                  (aref sources-v
+                                                        narrow-idx)
+                                                  :name)
+                                                 "?"))))
+                                 "")))))
                     (completing-read
                      prompt
                      (lambda (str _pred action)
