@@ -1089,7 +1089,7 @@ even when their extension is excluded from `fzfa-extensions'."
                                 :display 'compact)))
     (should (fzfa-source-p src))
     (should (equal (fzfa-source-command src) "rg foo"))
-    (should (equal (fzfa-source-directory src) "/tmp/"))
+    (should (equal (fzfa-source-directory src) (expand-file-name "/tmp/")))
     (should (eq (fzfa-source-history src) 'my-history))
     (should (eq (fzfa-source-display-state src) 'compact))
     (should (null (fzfa-source-handle src)))
@@ -1109,7 +1109,7 @@ even when their extension is excluded from `fzfa-extensions'."
     (should (fzfa-source-p src))
     (should (equal (fzfa-source-name src) "my-src"))
     (should (equal (fzfa-source-command src) "fd ."))
-    (should (equal (fzfa-source-directory src) "/tmp/"))
+    (should (equal (fzfa-source-directory src) (expand-file-name "/tmp/")))
     (should (eq (fzfa-source-history src) 'my-hist))
     (should (eq (fzfa-source-display-state src) 'full))
     ;; Spec preserved for closures that need non-hot keys.
@@ -1136,7 +1136,7 @@ even when their extension is excluded from `fzfa-extensions'."
   "Constructor falls back to `default-directory' when none provided."
   (let* ((default-directory "/tmp/")
          (src (fzfa-make-source :command "ls")))
-    (should (equal (fzfa-source-directory src) "/tmp/"))))
+    (should (equal (fzfa-source-directory src) (expand-file-name "/tmp/")))))
 
 (ert-deftest fzfa-source-display-clear-removes-overlays ()
   "`fzfa-source--display-clear' deletes display-overlays and clears slot."
