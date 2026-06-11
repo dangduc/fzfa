@@ -164,6 +164,7 @@ before the idle delay elapses -> timer fires post-cleanup ->
 (declare-function helm-force-update "helm-core")
 (declare-function helm-goto-source "helm-core")
 (declare-function helm-set-source-filter "helm-core")
+(declare-function helm-get-selection "helm-core")
 (declare-function fzfa--format-narrow-hint "fzfa")
 (defvar helm-map)
 (defvar fzfa-multi-narrow-key)
@@ -225,11 +226,14 @@ This wrapper closes over a private `preview-timer' + `preview-last'
 pair (per-closure, so each `helm' source in a multi gets its own
 debounce state) and:
 
-- Skips dispatch when the candidate equals the previously-previewed
-  one (`helm' sometimes re-fires persistent-action on no-op moves).
-- Cancels any pending timer before scheduling a new one so fast
-  scrolling repeatedly resets the debounce — net effect: preview
-  fires only after the user pauses for `fzfa-preview-delay'.
+- Reuses any pending timer rather than cancel-and-reschedule.  The
+  candidate passed in is ignored — the timer's callback re-reads the
+  CURRENT selection via `helm-get-selection' at fire time, so reuse
+  never previews a stale candidate.  Mirrors `fzfa--preview-install'
+  (fzfa.el:870) and gives identical idle-respecting semantics across
+  the two paths.
+- Skips dispatch when the freshly-read candidate equals the
+  previously-previewed one (no-op moves under `:follow 1').
 - Bypasses the debounce when `fzfa-preview-delay' is 0 or less,
   firing immediately (matches the vertico path's escape hatch).
 
@@ -242,25 +246,31 @@ binding (sync/async paths bind it themselves at the handler
 level for the whole helm session)."
   (let ((preview-timer nil)
         (preview-last 'unset))
-    (lambda (cand)
-      (unless (equal cand preview-last)
-        (when (timerp preview-timer)
-          (cancel-timer preview-timer))
-        (if (<= (or fzfa-preview-delay 0) 0)
-            (progn
-              (setq preview-last cand)
-              (let ((fzfa--preview-session
-                     (or session-cell fzfa--preview-session)))
-                (fzfa--preview-call :preview cand)))
-          (setq preview-timer
-                (run-with-idle-timer
-                 fzfa-preview-delay nil
-                 (lambda ()
-                   (setq preview-timer nil
-                         preview-last cand)
-                   (let ((fzfa--preview-session
-                          (or session-cell fzfa--preview-session)))
-                     (fzfa--preview-call :preview cand))))))))))
+    (lambda (_cand)
+      (cond
+       ((<= (or fzfa-preview-delay 0) 0)
+        ;; Immediate path — no debounce.  Re-read current selection
+        ;; for parity with the idle path.
+        (when-let* ((cur (and (bound-and-true-p helm-alive-p)
+                              (helm-get-selection))))
+          (unless (equal cur preview-last)
+            (setq preview-last cur)
+            (let ((fzfa--preview-session
+                   (or session-cell fzfa--preview-session)))
+              (fzfa--preview-call :preview cur)))))
+       ((not (timerp preview-timer))
+        (setq preview-timer
+              (run-with-idle-timer
+               fzfa-preview-delay nil
+               (lambda ()
+                 (setq preview-timer nil)
+                 (when-let* (((bound-and-true-p helm-alive-p))
+                             (cur (helm-get-selection)))
+                   (unless (equal cur preview-last)
+                     (setq preview-last cur)
+                     (let ((fzfa--preview-session
+                            (or session-cell fzfa--preview-session)))
+                       (fzfa--preview-call :preview cur))))))))))))
 
 ;;; Display transformer — preserves text properties and optionally annotates
 
