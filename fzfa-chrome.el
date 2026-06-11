@@ -46,12 +46,15 @@
 ;;
 ;;   `fzfa-chrome-history'           Open URL with `browse-url' (default)
 ;;   `fzfa-chrome-history-copy-url'  Copy the URL to the kill ring
-;;   `fzfa-chrome-history-refresh'   Drop the cached history list
 ;;
-;; History reads Chrome's `History' SQLite database directly via
-;; `sqlite3'.  Chrome holds an exclusive lock on the file while running,
-;; so the DB is copied to a tempfile before querying — same pattern as
-;; password lookup below.
+;; History streams from Chrome's `History' SQLite database via an
+;; embedded Python helper spawned as a subprocess, so candidates appear
+;; incrementally without blocking Emacs — and so the same shape extends
+;; cleanly to a multi-source picker over Chrome/Firefox/Safari/etc. with
+;; `fzfa''s existing multi-source machinery.  Chrome holds an exclusive
+;; lock on the file while running, so the helper copies it to a tempfile
+;; before querying.  Requires `python3' on PATH — system-provided on
+;; macOS and most Linux distros, no third-party packages needed.
 ;;
 ;; Password commands (embark category `fzfa-chrome-pass'):
 ;;
@@ -79,6 +82,7 @@
      (when-let* ((appdata (getenv "LOCALAPPDATA")))
        (concat appdata "/Google/Chrome/User Data/Default/Bookmarks"))))
   "Path to Chrome's Bookmarks JSON file.
+
 Override to point at a non-Default profile or a different Chromium
 browser (Brave, Edge, Vivaldi, Arc)."
   :type '(choice (file :tag "Bookmarks file")
@@ -90,6 +94,7 @@ browser (Brave, Edge, Vivaldi, Arc)."
 
 (defun fzfa-chrome--walk (node folder-path)
   "Collect tab-encoded candidate strings for url nodes under NODE.
+
 FOLDER-PATH accumulates the breadcrumb of containing folders.  Each
 emitted line has fields: FOLDER\\tNAME\\tURL\\tID.  Folder nodes recurse;
 url nodes emit one row."
@@ -132,6 +137,7 @@ url nodes emit one row."
 
 (defun fzfa-chrome--group (cand transform)
   "Group fn for `fzfa-chrome-bookmark' candidate CAND.
+
 TRANSFORM nil returns the constant group key (suppresses headers
 beyond the first); TRANSFORM t returns the cleaned per-row display
 without the trailing ID field."
@@ -168,6 +174,7 @@ without the trailing ID field."
 ;;;###autoload
 (defun fzfa-chrome-edit (cand)
   "Open Chrome's bookmark editor on CAND.
+
 Navigates to `chrome://bookmarks/?id=N' (the URL scheme only Chrome
 understands), so the request is dispatched to Chrome explicitly
 rather than via `browse-url' — which might pick Safari/Firefox.
@@ -200,7 +207,6 @@ Composed with `embark-general-map' via `embark-keymap-alist'."
   "e" #'fzfa-chrome-edit
   "w" #'fzfa-chrome-bookmark-copy-url)
 
-
 ;;; History
 
 (defcustom fzfa-chrome-history-file
@@ -217,67 +223,81 @@ Override to point at a non-Default profile or another Chromium browser."
   :group 'fzfa)
 
 (defcustom fzfa-chrome-history-limit 5000
-  "Maximum number of history rows to load, ordered by most recent visit."
+  "Maximum number of history rows streamed, ordered by most recent visit."
   :type 'integer
   :group 'fzfa)
 
-(defvar fzfa-chrome-history--cache nil
-  "Cached history candidates (tab-encoded TITLE\\tURL strings).")
+(defcustom fzfa-chrome-history-python (executable-find "python3")
+  "Path to `python3', used to run the streaming history helper."
+  :type '(choice (file :tag "python3 executable") (const nil))
+  :group 'fzfa)
 
-(defun fzfa-chrome-history--copy-db ()
-  "Copy the History DB to a tempfile, returning its path.
-Chrome holds an exclusive lock while running, so queries operate on a copy."
+(defconst fzfa-chrome-history--py
+  "import sys, os, shutil, tempfile, sqlite3
+src = sys.argv[1]
+limit = int(sys.argv[2]) if len(sys.argv) > 2 else 5000
+fd, tmp = tempfile.mkstemp(prefix='fzfa-chrome-history-', suffix='.sqlite')
+os.close(fd)
+try:
+    shutil.copyfile(src, tmp)
+    con = sqlite3.connect(tmp)
+    cur = con.execute(
+        \"SELECT REPLACE(REPLACE(REPLACE(\"
+        \"IFNULL(title,''),char(9),' '),\"
+        \"char(10),' '),char(13),' '), url FROM urls \"
+        \"WHERE url IS NOT NULL AND url <> '' \"
+        \"ORDER BY last_visit_time DESC LIMIT ?\",
+        (limit,))
+    out = sys.stdout
+    for title, url in cur:
+        out.write(title + '\\t' + url + '\\n')
+    out.flush()
+    con.close()
+finally:
+    try: os.remove(tmp)
+    except OSError: pass
+"
+  "Python helper that streams Chrome history rows.
+Reads the History DB path from argv[1] and the row limit from
+argv[2]; writes TAB-separated TITLE\\tURL lines to stdout.  Chrome
+locks the live DB, so the helper copies it to a tempfile first.")
+
+(defvar fzfa-chrome-history--py-path nil
+  "Cached path to the materialized Python helper script.")
+
+(defun fzfa-chrome-history--py-script ()
+  "Write the Python helper to a tempfile (if not cached) and return its path."
+  (unless (and fzfa-chrome-history--py-path
+               (file-readable-p fzfa-chrome-history--py-path))
+    (let ((path (make-temp-file "fzfa-chrome-history-" nil ".py")))
+      (with-temp-file path
+        (insert fzfa-chrome-history--py))
+      (setq fzfa-chrome-history--py-path path)))
+  fzfa-chrome-history--py-path)
+
+(defun fzfa-chrome-history--command ()
+  "Return the shell command string that streams TITLE\\tURL lines on stdout."
   (unless fzfa-chrome-history-file
     (user-error
      (concat "Fzfa-chrome-history: no default DB path for `%s'; "
              "set `fzfa-chrome-history-file'")
      system-type))
-  (let ((src (expand-file-name fzfa-chrome-history-file))
-        (dst (make-temp-file "fzfa-chrome-history-" nil ".sqlite")))
+  (unless fzfa-chrome-history-python
+    (user-error
+     (concat "Fzfa-chrome-history: python3 not found; "
+             "set `fzfa-chrome-history-python'")))
+  (let ((src (expand-file-name fzfa-chrome-history-file)))
     (unless (file-readable-p src)
       (user-error "Fzfa-chrome-history: cannot read %s" src))
-    (copy-file src dst t)
-    dst))
-
-(defun fzfa-chrome-history--load ()
-  "Return list of tab-encoded TITLE\\tURL strings, newest visits first."
-  (unless (executable-find "sqlite3")
-    (user-error "Fzfa-chrome-history: sqlite3 not found on PATH"))
-  (let ((tmp (fzfa-chrome-history--copy-db))
-        (rows '()))
-    (unwind-protect
-        (with-temp-buffer
-          (let ((exit (call-process
-                       "sqlite3" nil t nil "-separator" "\t" tmp
-                       (format
-                        (concat
-                         "SELECT REPLACE(REPLACE(REPLACE("
-                         "IFNULL(title,''),char(9),' '),"
-                         "char(10),' '),char(13),' '), url "
-                         "FROM urls "
-                         "WHERE url IS NOT NULL AND url <> '' "
-                         "ORDER BY last_visit_time DESC LIMIT %d")
-                        fzfa-chrome-history-limit))))
-            (unless (zerop exit)
-              (user-error "Fzfa-chrome-history: sqlite3 failed: %s"
-                          (string-trim (buffer-string)))))
-          (goto-char (point-min))
-          (while (not (eobp))
-            (let ((line (buffer-substring-no-properties
-                         (line-beginning-position) (line-end-position))))
-              (unless (string-empty-p line)
-                (push line rows)))
-            (forward-line 1)))
-      (ignore-errors (delete-file tmp)))
-    (nreverse rows)))
-
-(defun fzfa-chrome-history--candidates ()
-  "Return cached history candidates, loading from disk on first use."
-  (or fzfa-chrome-history--cache
-      (setq fzfa-chrome-history--cache (fzfa-chrome-history--load))))
+    (format "%s %s %s %d"
+            (shell-quote-argument fzfa-chrome-history-python)
+            (shell-quote-argument (fzfa-chrome-history--py-script))
+            (shell-quote-argument src)
+            fzfa-chrome-history-limit)))
 
 (defun fzfa-chrome-history--group (cand transform)
   "Group fn for `fzfa-chrome-history' candidate CAND.
+
 TRANSFORM nil returns the constant group key (suppresses headers
 beyond the first); TRANSFORM t returns the per-row display."
   (let ((fields (split-string cand "\t")))
@@ -288,19 +308,15 @@ beyond the first); TRANSFORM t returns the per-row display."
       "")))
 
 (defun fzfa-chrome-history--pick (prompt)
-  "Fuzzy-select a history entry with PROMPT; return raw tab-encoded candidate."
-  (fzfa-completing-read
-   :candidates (fzfa-chrome-history--candidates)
-   :prompt    prompt
-   :category  'fzfa-chrome-history
-   :group     #'fzfa-chrome-history--group))
+  "Fuzzy-select a history entry with PROMPT; return raw tab-encoded candidate.
 
-;;;###autoload
-(defun fzfa-chrome-history-refresh ()
-  "Invalidate the cached history list so the next call re-reads from disk."
-  (interactive)
-  (setq fzfa-chrome-history--cache nil)
-  (message "Chrome history cache cleared"))
+Streams candidates asynchronously from a Python helper."
+  (fzfa-completing-read
+   :command       (fzfa-chrome-history--command)
+   :prompt        prompt
+   :category      'fzfa-chrome-history
+   :group         #'fzfa-chrome-history--group
+   :resolve-paths nil))
 
 ;;;###autoload
 (defun fzfa-chrome-history (cand)
@@ -404,6 +420,7 @@ password from $CHROME_PWD; writes plaintext bytes to stdout.")
 
 (defun fzfa-chrome-pass--copy-db ()
   "Copy the Login Data DB to a tempfile, returning its path.
+
 Chrome holds an exclusive lock while running, so queries operate on a copy."
   (unless fzfa-chrome-pass-database
     (user-error
@@ -449,6 +466,7 @@ Chrome holds an exclusive lock while running, so queries operate on a copy."
 
 (defun fzfa-chrome-pass--group (cand transform)
   "Group fn for `fzfa-chrome-pass' candidate CAND.
+
 TRANSFORM nil suppresses headers; TRANSFORM t formats the row for
 display without revealing the encrypted blob."
   (let ((fields (split-string cand "\t")))
@@ -508,6 +526,7 @@ display without revealing the encrypted blob."
 ;;;###autoload
 (defun fzfa-chrome-pass-copy (&optional cand)
   "Copy the password of Chrome login CAND to the kill ring.
+
 When CAND is nil (e.g. called interactively), prompt for one."
   (interactive)
   (when-let* ((cand (or cand
@@ -541,17 +560,19 @@ When CAND is nil (e.g. called interactively), prompt for one."
 
 (defvar-keymap fzfa-chrome-pass-map
   :doc "Embark keymap for `fzfa-chrome-pass' candidates.
+
 Composed with `embark-general-map' via `embark-keymap-alist'."
   "c" #'fzfa-chrome-pass-copy
   "u" #'fzfa-chrome-pass-copy-username
   "b" #'fzfa-chrome-pass-url)
 
-
 ;;; Setup
 
 ;;;###autoload
 (defun fzfa-chrome-setup ()
-  "Register `fzfa-chrome-bookmark', `fzfa-chrome-history', and
+  "Setup chrome.
+
+Register `fzfa-chrome-bookmark', `fzfa-chrome-history', and
 `fzfa-chrome-pass' categories."
   (add-to-list 'completion-category-overrides
                '(fzfa-chrome-bookmark (styles fzfa)))
