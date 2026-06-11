@@ -543,32 +543,6 @@ setup hook) + `fzfa--session-resolve-paths'."
 
 (defvar fzfa--preview-session)
 
-(defun fzfa--promote-from-preview (cand buffer)
-  "Drop BUFFER from CAND's source preview opener kill-list, if any.
-
-Preview opens files via `fzfa--temporary-files', which tracks the
-buffers it created and kills them on `:return'.  When an apply visit
-reuses one of those buffers (via `find-buffer-visiting'), this call
-removes it from the kill-list so it survives session cleanup.
-
-Multi sessions store the per-source cells on the router handler
-itself via `:multi-cells'; route through the cell matching CAND's
-source idx.  Single sessions read the opener directly from the outer
-session.  No-op for sessions without a preview opener (multi sources
-without preview, buffer category, etc.)."
-  (let* ((handler (car-safe fzfa--preview-session))
-         (cell (when-let* ((cells (and handler
-                                       (plist-get handler :multi-cells)))
-                           (table (fzfa-preview-get :multi-cand->src))
-                           (idx (fzfa--multi-source-idx cand table)))
-                 (aref cells idx))))
-    (if cell
-        (let ((fzfa--preview-session cell))
-          (when-let* ((opener (fzfa-preview-get :opener)))
-            (funcall opener buffer)))
-      (when-let* ((opener (fzfa-preview-get :opener)))
-        (funcall opener buffer)))))
-
 (defun fzfa--pin-window-buffer (window buffer)
   "Ensure WINDOW stays on BUFFER once the active minibuffer session exits.
 
@@ -611,11 +585,8 @@ to an absolute path (when the session was created with
 apply lambda inside the origin window so file/buffer visits land there
 and the picker keeps focus.
 
-Two post-apply concerns, each delegated to its own helper:
-- `fzfa--promote-from-preview' saves a reused preview buffer from the
-  session's ephemeral cleanup.
-- `fzfa--pin-window-buffer' makes the visit survive the minibuffer
-  unwind path's implicit window-state restoration.
+`fzfa--pin-window-buffer' makes the visit survive the minibuffer
+unwind path's implicit window-state restoration.
 
 Silently no-ops when no `:apply' is defined for the source/session."
   (interactive)
@@ -626,7 +597,6 @@ Silently no-ops when no `:apply' is defined for the source/session."
     (condition-case err
         (with-selected-window origin
           (funcall apply resolved)
-          (fzfa--promote-from-preview cand (current-buffer))
           (fzfa--pin-window-buffer origin (current-buffer))
           (run-hooks 'fzfa-after-apply-hook))
       (error (message "fzfa-apply: %s" (error-message-string err))))))
@@ -671,6 +641,23 @@ Set to 0 to disable file preview entirely without dropping the
   :type '(choice (const :tag "No cap" nil)
                  (integer :tag "Bytes"))
   :group 'fzfa)
+
+(defcustom fzfa-preview-excluded-files
+  '("\\`/[^/|:]+:"   ;; tramp-shaped paths (e.g. /ssh:host:/path)
+    "\\.gpg\\'")      ;; gpg-encrypted (would prompt for passphrase)
+  "Regexps matched against candidate paths; matches are not previewed.
+
+The tramp regex bails on `/method:host:' paths before
+`expand-file-name' would consult `file-name-handler-alist' and
+autoload tramp.  The `.gpg' entry avoids `epa-file-handler' firing
+during preview, which would prompt for a passphrase."
+  :type '(repeat regexp)
+  :group 'fzfa)
+
+(defun fzfa--preview-excluded-p (path)
+  "Non-nil if PATH matches any entry in `fzfa-preview-excluded-files'."
+  (and path (seq-find (lambda (re) (string-match-p re path))
+                      fzfa-preview-excluded-files)))
 
 (defcustom fzfa-preview-functions
   '((fzfa-buffer   :preview fzfa--buffer-preview)
@@ -824,21 +811,72 @@ stashed state and the captured `default-directory'."
 
 ;;; Built-in preview handlers
 
+(defun fzfa--filter-find-file-hook (orig &rest hooks)
+  "Advice for `run-hooks': filter `vc-refresh-*' from `find-file-hook'.
+
+Active only while `fzfa-with-quiet-find-file' is on the stack.
+Mutating both the default and current value via `cl-letf' so nested
+`run-hooks' calls (the load path is not a single direct invocation)
+see the same filtered list."
+  (if (memq 'find-file-hook hooks)
+      (cl-letf* (((default-value 'find-file-hook)
+                  (cl-remove-if
+                   (lambda (h)
+                     (and (symbolp h)
+                          (string-prefix-p "vc-refresh-" (symbol-name h))))
+                   (default-value 'find-file-hook)))
+                 (find-file-hook (default-value 'find-file-hook)))
+        (apply orig hooks))
+    (apply orig hooks)))
+
 (defmacro fzfa-with-quiet-find-file (&rest body)
-  "Run BODY with file-loading prompts suppressed.
+  "Run BODY with file-loading prompts and `vc-refresh-*' hooks suppressed.
 
 `find-file-noselect' can trigger minibuffer prompts via file-local
 variables, `find-file-hook', or warnings — inside an active completion
 those signal \"Command attempted to use minibuffer while in minibuffer\".
 Custom `:preview' handlers that load files should wrap the call in this
-macro."
+macro.
+
+`delay-mode-hooks' is bound so user-extension mode hooks (e.g.
+`eglot-ensure' on `prog-mode-hook') don't spawn LSP servers during
+preview.  Major mode structural setup still happens.
+
+`run-hooks' is advised to drop any `vc-refresh-*' symbol from
+`find-file-hook' while BODY runs.  Advice is installed and removed
+under `unwind-protect' so a non-local exit can't strand the filter."
   (declare (indent 0) (debug t))
   `(let ((enable-local-variables :safe)
          (enable-local-eval nil)
          (enable-dir-local-variables nil)
          (non-essential t)
-         (inhibit-message t))
-     ,@body))
+         (inhibit-message t)
+         (delay-mode-hooks t))
+     (advice-add 'run-hooks :around #'fzfa--filter-find-file-hook)
+     (unwind-protect
+         (progn ,@body)
+       (advice-remove 'run-hooks #'fzfa--filter-find-file-hook))))
+
+(defun fzfa--disassociate (buf)
+  "Schedule BUF to be disassociated from its file on the next command.
+
+Setting `buffer-file-name' to nil makes the buffer invisible to
+`find-buffer-visiting' / `get-file-buffer', so the post-selection
+action on the candidate opens a fresh, fully-hooked buffer via
+`find-file' instead of reusing the partial-init preview buffer.
+
+Disassociation is delayed to `pre-command-hook' rather than done
+immediately because some major modes (pdf-view-mode, doc-view-mode)
+read `buffer-file-name' during their own setup."
+  (let ((hook (make-symbol "fzfa--disassociate-hook")))
+    (fset hook
+          (lambda ()
+            (when (buffer-live-p buf)
+              (with-current-buffer buf
+                (remove-hook 'pre-command-hook hook)
+                (setq-local buffer-read-only t
+                            buffer-file-name nil)))))
+    (add-hook 'pre-command-hook hook)))
 
 (defun fzfa-preview-show (buffer &optional pos)
   "Show BUFFER (optionally moved to POS) in the originating window.
@@ -920,40 +958,41 @@ is missing or the target cannot be resolved."
     (fzfa-preview-show buf)))
 
 (defun fzfa--temporary-files ()
-  "Return an opener closure that owns ephemeral preview buffers.
+  "Return an opener closure for ephemeral preview buffers.
 
-The closure has three call forms:
+The closure has two call forms:
 
-  (FN PATH)  → return a buffer for PATH.  Uses an existing
-               file-visiting buffer when one is already loaded;
-               otherwise creates one and remembers it as ephemeral.
-  (FN BUF)   → promote BUF: it is no longer considered ephemeral
-               and will not be killed on cleanup.
-  (FN)       → kill every still-ephemeral buffer.  Idempotent.
+  (FN PATH) → return a buffer for PATH for preview, or nil if PATH
+              matches `fzfa-preview-excluded-files'.  Reuses an
+              already-open user buffer, or a buffer this session
+              previously opened for preview.
+  (FN)      → kill every still-ephemeral preview buffer.  Idempotent.
 
-Intended pattern: stash the opener via `fzfa-preview-put :opener'
-during `:setup', call it with paths during `:preview', and on
-`:return' promote the chosen file's buffer (if any) then call with
-no args to reap the rest."
-  (let (ephemerals)
-    (lambda (&optional arg)
+Preview buffers are disassociated from their file on the next
+command (`buffer-file-name' set to nil) so the post-selection
+`find-file' on the candidate opens a fresh, fully-hooked buffer
+rather than reusing the partial-init preview buffer.
+`font-lock-ensure' is called so previews are fontified even
+though `delay-mode-hooks' suppresses `global-font-lock-mode'."
+  (let (ephemerals)  ;; alist of (PATH . BUF)
+    (lambda (&optional path)
       (cond
-       ((null arg)
-        (dolist (b ephemerals)
+       ((null path)
+        (pcase-dolist (`(,_ . ,b) ephemerals)
           (when (buffer-live-p b) (kill-buffer b)))
         (setq ephemerals nil))
-       ((bufferp arg)
-        (setq ephemerals (delq arg ephemerals)))
-       ((stringp arg)
-        ;; `find-buffer-visiting' matches by truename, so it handles
-        ;; Windows DOS short paths and Unix symlinks uniformly —
-        ;; unlike `get-file-buffer', which is a literal string match.
-        (let ((path (expand-file-name arg)))
-          (or (find-buffer-visiting path)
-              (let ((buf (fzfa-with-quiet-find-file
-                           (find-file-noselect path 'nowarn))))
-                (push buf ephemerals)
-                buf))))))))
+       ((stringp path)
+        (unless (fzfa--preview-excluded-p path)
+          (let ((p (expand-file-name path)))
+            (or (find-buffer-visiting p)
+                (cdr (assoc p ephemerals))
+                (let ((buf (fzfa-with-quiet-find-file
+                             (find-file-noselect p 'nowarn))))
+                  (with-current-buffer buf
+                    (ignore-errors (font-lock-ensure)))
+                  (push (cons p buf) ephemerals)
+                  (fzfa--disassociate buf)
+                  buf)))))))))
 
 (defun fzfa--file-preview-setup ()
   "Initialize a fresh `fzfa--temporary-files' opener for this session."
@@ -2336,8 +2375,7 @@ registered handler (preview wiring then no-ops); otherwise returns a
 plist with `:setup' / `:preview' / `:exit' / `:return' slots plus a
 `:multi-cells' slot exposing the per-source session cell vector —
 callers stash this in the outer preview session so per-candidate
-dispatch outside the router (e.g. `fzfa--promote-from-preview' on a
-\\[fzfa-apply-current] apply) can reach the right source's `:opener'.
+dispatch outside the router can reach the right source's `:opener'.
 
 For each source, a fresh handler plist is resolved via
 `fzfa--preview-handler' using the source's own `:preview' override
@@ -2864,10 +2902,9 @@ Per-source plist keys:
          (router      (fzfa--multi-build-router sources-v cand->src))
          (fzfa--preview-session
           (and router
-               ;; Stash the candidate→source-idx table so
-               ;; `fzfa--promote-from-preview' can route to the right
-               ;; source's `:opener' on C-z apply.  Cells are exposed
-               ;; via `:multi-cells' on ROUTER itself.
+               ;; Stash the candidate→source-idx table for per-candidate
+               ;; routing outside the router; cells exposed via
+               ;; `:multi-cells' on ROUTER itself.
                (list router :multi-cand->src cand->src)))
          retry-timer timer result)
     (dotimes (i n)

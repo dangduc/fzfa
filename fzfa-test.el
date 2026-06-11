@@ -579,22 +579,6 @@ when the inner sources arrive without `:narrow'."
       (when (buffer-live-p pre-loaded) (kill-buffer pre-loaded))
       (delete-file tmpfile))))
 
-(ert-deftest fzfa-temporary-files-promotes-buffer ()
-  "Promoted buffers survive cleanup; siblings are still killed."
-  (let ((f1 (make-temp-file "fzfa-tmpfiles-test"))
-        (f2 (make-temp-file "fzfa-tmpfiles-test")))
-    (unwind-protect
-        (let* ((opener (fzfa--temporary-files))
-               (b1 (funcall opener f1))
-               (b2 (funcall opener f2)))
-          (funcall opener b1)            ; promote b1
-          (funcall opener)               ; cleanup
-          (should (buffer-live-p b1))
-          (should-not (buffer-live-p b2))
-          (kill-buffer b1))
-      (delete-file f1)
-      (delete-file f2))))
-
 (ert-deftest fzfa-file-preview-skips-oversize ()
   "Preview is a no-op when the file exceeds `fzfa-preview-file-size-limit'."
   (let ((tmpfile (make-temp-file "fzfa-file-preview-test")))
