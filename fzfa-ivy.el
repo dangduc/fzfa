@@ -43,6 +43,7 @@
 (defvar ivy--old-cands)
 (defvar ivy-re-builders-alist)
 (defvar ivy-last)
+(declare-function ivy-state-action "ivy")
 (declare-function ivy-state-caller "ivy")
 (declare-function ivy-state-current "ivy")
 (declare-function ivy-state-dynamic-collection "ivy")
@@ -86,21 +87,47 @@ Multi-source: `fzfa--multi-active-sources' is let-bound by
   (or (bound-and-true-p fzfa--session-apply)
       (bound-and-true-p fzfa--multi-active-sources)))
 
+(defun fzfa-ivy--current-action-fn ()
+  "Return the function ivy would invoke on the current `ivy-call'.
+Returns nil when ivy state is unavailable."
+  (when (bound-and-true-p ivy-last)
+    (ignore-errors
+      (let ((act (ivy-state-action ivy-last)))
+        (cond
+         ((functionp act) act)
+         ((and (consp act) (integerp (car act)))
+          ;; Shape: (IDX (key fn desc) (key fn desc) ...)
+          ;; IDX picks one of the action triples; the fn is the second
+          ;; element of that triple.
+          (nth 1 (nth (car act) act))))))))
+
 (defun fzfa-ivy--call-advice (orig &rest args)
   "`:around' advice on `ivy-call' for `fzfa' sessions.
 
-In `fzfa' sessions, replace `ivy''s identity action with our `:apply'
-dispatch — the source plist's (or constructor's) `:apply' is invoked
-on the current candidate without exiting.  All other sessions pass
+In `fzfa' sessions, replace `ivy''s identity default action with our
+`:apply' dispatch — the source plist's (or constructor's) `:apply' is
+invoked on the current candidate without exiting.  All other sessions
+\(and any non-identity action chosen via `ivy-dispatching-call', like
+the per-source narrow actions that `fzfa--multi-read' installs) pass
 through unchanged via (apply ORIG ARGS)."
   ;; Gated on an active minibuffer so the final `ivy-call' that `ivy-read'
   ;; issues after exit — the call whose return value
   ;; `ivy-completing-read' captures as the selection — passes through
   ;; untouched.  Without that gate, sync sessions return nil and the
   ;; caller's `find-file' / `switch-to-buffer' never runs.
-  (if (and (active-minibuffer-window) (fzfa-ivy--session-p))
-      (fzfa-apply-current)
-    (apply orig args)))
+  ;;
+  ;; Also gated on the current action being the identity default.
+  ;; `ivy-dispatching-call' mutates `ivy-state-action' to point at the
+  ;; chosen action triple before invoking `ivy-call'; if we replaced
+  ;; that with `fzfa-apply-current' the user's selection would be
+  ;; silently dropped — exactly what happens with the per-source narrow
+  ;; actions in `fzfa--multi-read'.
+  (let ((current (fzfa-ivy--current-action-fn)))
+    (if (and (active-minibuffer-window)
+             (fzfa-ivy--session-p)
+             (or (null current) (eq current 'identity)))
+        (fzfa-apply-current)
+      (apply orig args))))
 
 (defun fzfa-ivy--restrict-to-matches-backfill (&rest _)
   "Backfill `ivy--old-cands' from `ivy--all-candidates' in dynamic sessions.
