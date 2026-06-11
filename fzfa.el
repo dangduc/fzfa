@@ -1791,7 +1791,7 @@ to eager-start via `fzf-native-async-start' or to defer."
     (fzfa-source-create
      :spec spec
      :name name
-     :directory (and directory (expand-file-name directory))
+     :directory (expand-file-name (or directory default-directory))
      :history history
      :handle nil
      :command command
@@ -2802,33 +2802,31 @@ the property set by `fzf-native-score-all'.  Returns 0 on empty input."
         0))
    (t (or (get-text-property 0 'completion-score (car results)) 0))))
 
-(defun fzfa--multi-candidates-fetch (idx query cands-fn
-					 snapshots tokens inputs totals
-					 cand->src)
-  "Refetch source IDX's PRODUCER for QUERY iff QUERY changed.
+(defun fzfa--multi-candidates-fetch (source idx query cand->src)
+  "Refetch SOURCE's producer for QUERY iff QUERY changed.
 
-SNAPSHOTS, TOKENS, INPUTS, TOTALS are the per-source vectors
-maintained by `fzfa--multi-read'.  CAND->SRC is the candidate-to-
-source hash so cands-fn-delivered strings can be tagged via
-`fzfa--multi-tag'.  The callback closes over IDX, TOKENS,
-SNAPSHOTS, TOTALS, CAND->SRC and discards stale arrivals via the
-token check.
+IDX is the source's index in the multi-read session — used by
+`fzfa--multi-tag' to stamp the candidate→source mapping.
+CAND->SRC is the candidate→source-idx hash table.
+
+Reads/writes SOURCE's prod-input, prod-token, snapshot, total
+slots.  The callback closes over SOURCE, IDX, and CAND->SRC and
+discards stale arrivals via the prod-token check.
 
 Returns non-nil iff a fetch was actually issued."
-  (unless (equal query (aref inputs idx))
-    (aset inputs idx query)
-    (cl-incf (aref tokens idx))
-    (let ((my-token (aref tokens idx)))
-      (funcall cands-fn (or query "")
+  (unless (equal query (fzfa-source-prod-input source))
+    (setf (fzfa-source-prod-input source) query)
+    (let ((my-token (cl-incf (fzfa-source-prod-token source))))
+      (funcall (fzfa-source-cands-fn source) (or query "")
                (lambda (cands)
-                 (when (= my-token (aref tokens idx))
+                 (when (= my-token (fzfa-source-prod-token source))
                    (let ((tagged
                           (mapcar
                            (lambda (s)
                              (fzfa--multi-tag (copy-sequence s) idx cand->src))
                            (or cands '()))))
-                     (aset snapshots idx tagged)
-                     (aset totals idx (length tagged)))))))
+                     (setf (fzfa-source-snapshot source) tagged
+                           (fzfa-source-total source) (length tagged)))))))
     t))
 
 (defun fzfa--multi-narrow->string (k)
@@ -2998,24 +2996,19 @@ Per-source plist keys:
         (cl-return-from fzfa--multi-read
           (fzfa-helm--multi-read sources :prompt prompt))
       (user-error "Fzfa--multi-read does not yet support helm-mode")))
-  (let* ((n            (length sources))
-         (sources-v    (vconcat sources))
-         (handles      (make-vector n nil))
-         ;; Producer sources: per-source snapshot list, fn closure,
-         ;; the last input the producer was called with (track so we
-         ;; refetch on change), and a monotonic token for stale-
-         ;; callback discard.  Static-list sources land here too —
-         ;; `fzfa--normalize-candidates' wraps them into a constant
-         ;; producer at source iteration.
-         (cands-fns    (make-vector n nil))
-         (snapshots    (make-vector n nil))
-         (prod-tokens  (make-vector n 0))
-         (prod-inputs  (make-vector n :unfetched))
-         (last-results (make-vector n nil))
-         (rank         (make-vector n 0))
-         (totals       (make-vector n 0))
-         (filtered     (make-vector n 0))
-         (last-gen     (make-vector n -1))
+  (let* ((specs        sources)              ; cl-defun arg renamed
+         (n            (length specs))
+         (specs-v      (vconcat specs))      ; plist vector (helper callsites)
+         ;; All per-source runtime state — handle, current-cmd, snapshot,
+         ;; prod-token, prod-input, last-result, rank, total, filtered,
+         ;; last-gen — lives on each struct.  Shared helpers
+         ;; (`fzfa-source--restart', `fzfa--multi-candidates-fetch', etc.)
+         ;; mutate slots via setf; this loop replaces the 10 parallel
+         ;; vectors with one.
+         (sources      (vconcat
+                        (mapcar (lambda (spec)
+                                  (fzfa-make-source :spec spec))
+                                specs)))
          (limit        (fzfa--candidate-limit))
          (cand->src    (make-hash-table :test 'equal :size 1024))
          (last-exhibit 0.0)
@@ -3037,9 +3030,9 @@ Per-source plist keys:
          ;; properties.  Reliable per-instance source dispatch even when
          ;; the same string appears in multiple sources.
          (selected-idx nil)
-         ;; Index into sources-v of the currently-narrowed source, or nil
-         ;; for "all sources".  Mutated by `narrow-handler' on a narrow
-         ;; key press and read by the candidate function in `'t' below.
+         ;; Index into specs-v / sources of the currently-narrowed source,
+         ;; or nil for "all sources".  Mutated by `narrow-handler' on a
+         ;; narrow key press and read by the candidate function in `'t' below.
          (narrow-idx nil)
          ;; When the narrow menu is on screen (during the
          ;; `narrow-handler''s `read-char') we must NOT overwrite the
@@ -3062,12 +3055,14 @@ Per-source plist keys:
                         :directory nil
                         :command nil
                         :index (fzfa--frontend-index)
-                        :filtered (cl-loop for x across filtered sum x)
-                        :total (cl-loop for x across totals sum x)
+                        :filtered (cl-loop for s across sources
+                                           sum (fzfa-source-filtered s))
+                        :total (cl-loop for s across sources
+                                        sum (fzfa-source-total s))
                         :narrow-name
                         (and narrow-idx
                              (or (plist-get
-                                  (aref sources-v narrow-idx)
+                                  (aref specs-v narrow-idx)
                                   :name)
                                  "?")))))))
             (fzfa--insert-prompt-if-ivy)))
@@ -3094,55 +3089,57 @@ Per-source plist keys:
               (with-selected-window win
                 (let ((interrupted nil))
                   (dotimes (i n)
-                    (if (and narrow-idx (/= narrow-idx i))
-                        (progn
-                          (aset last-results i nil)
-                          (aset filtered i 0)
-                          (aset rank i 0))
-                      (let* ((h     (aref handles i))
-                             (prod  (aref cands-fns i))
-                             (out
-                              (cond
-                               (h (while-no-input
-                                    (fzf-native-async-candidates
-                                     h query limit)))
-                               (prod
-                                (fzfa--multi-candidates-fetch
-                                 i query prod snapshots prod-tokens
-                                 prod-inputs totals cand->src)
-                                (let ((snap (aref snapshots i)))
-                                  (cond
-                                   ((null snap) '())
-                                   ((string-empty-p query) snap)
-                                   (t (while-no-input
-                                        (fzfa--bridge-defcustoms
-                                         #'fzf-native-score-all
-                                         snap query)))))))))
-                        (cond
-                         ((eq out t) (setq interrupted t))
-                         ((and h (not (fzfa--final-p out h query)))
-                          (when-let* ((s (fzf-native-async-stats h)))
-                            (aset totals i (cdr s))))
-                         (t
-                          ;; Re-tag returned candidates.  Async handles
-                          ;; emit fresh strings each call; producer-path
-                          ;; output may also lose text properties through
-                          ;; the fzf-native scorer.  Tagging is idempotent
-                          ;; on content (TOFU suffix stays as content),
-                          ;; so this is safe to do for both kinds.
-                          (when (or h prod)
-                            (setq out
-                                  (mapcar
-                                   (lambda (c)
-                                     (fzfa--multi-tag c i cand->src))
-                                   out)))
-                          (aset last-results i out)
-                          (aset rank i (fzfa--multi-rank out query h))
+                    (let ((src (aref sources i)))
+                      (if (and narrow-idx (/= narrow-idx i))
+                          (progn
+                            (setf (fzfa-source-last-result src) nil
+                                  (fzfa-source-filtered src) 0
+                                  (fzfa-source-rank src) 0))
+                        (let* ((h     (fzfa-source-handle src))
+                               (prod  (fzfa-source-cands-fn src))
+                               (out
+                                (cond
+                                 (h (while-no-input
+                                      (fzf-native-async-candidates
+                                       h query limit)))
+                                 (prod
+                                  (fzfa--multi-candidates-fetch
+                                   src i query cand->src)
+                                  (let ((snap (fzfa-source-snapshot src)))
+                                    (cond
+                                     ((null snap) '())
+                                     ((string-empty-p query) snap)
+                                     (t (while-no-input
+                                          (fzfa--bridge-defcustoms
+                                           #'fzf-native-score-all
+                                           snap query)))))))))
                           (cond
-                           (h (when-let* ((s (fzf-native-async-stats h)))
-                                (aset filtered i (car s))
-                                (aset totals   i (cdr s))))
-                           (t (aset filtered i (length out)))))))))
+                           ((eq out t) (setq interrupted t))
+                           ((and h (not (fzfa--final-p out h query)))
+                            (when-let* ((stats (fzf-native-async-stats h)))
+                              (setf (fzfa-source-total src) (cdr stats))))
+                           (t
+                            ;; Re-tag returned candidates.  Async handles
+                            ;; emit fresh strings each call; producer-path
+                            ;; output may also lose text properties through
+                            ;; the fzf-native scorer.  Tagging is idempotent
+                            ;; on content (TOFU suffix stays as content),
+                            ;; so this is safe to do for both kinds.
+                            (when (or h prod)
+                              (setq out
+                                    (mapcar
+                                     (lambda (c)
+                                       (fzfa--multi-tag c i cand->src))
+                                     out)))
+                            (setf (fzfa-source-last-result src) out
+                                  (fzfa-source-rank src)
+                                  (fzfa--multi-rank out query h))
+                            (cond
+                             (h (when-let* ((stats (fzf-native-async-stats h)))
+                                  (setf (fzfa-source-filtered src) (car stats)
+                                        (fzfa-source-total src) (cdr stats))))
+                             (t (setf (fzfa-source-filtered src)
+                                      (length out))))))))))
                   (unless interrupted
                     (let* ((order (number-sequence 0 (1- n)))
                            (empty-q (string-empty-p query))
@@ -3151,16 +3148,16 @@ Per-source plist keys:
                                 order
                               (sort order
                                     (lambda (a b)
-                                      (> (aref rank a) (aref rank b))))))
+                                      (> (fzfa-source-rank (aref sources a))
+                                         (fzfa-source-rank (aref sources b)))))))
                            (cands
                             (apply #'append
                                    (mapcar
                                     (lambda (i)
-                                      (let* ((slot (aref last-results i))
+                                      (let* ((src (aref sources i))
+                                             (slot (fzfa-source-last-result src))
                                              (hist (and empty-q
-                                                        (plist-get
-                                                         (aref sources-v i)
-                                                         :history))))
+                                                        (fzfa-source-history src))))
                                         (if hist
                                             (fzfa--history-rank slot hist)
                                           slot)))
@@ -3184,10 +3181,10 @@ Per-source plist keys:
           (when (bound-and-true-p ivy-mode)
             (let (acts)
               (dotimes (i n)
-                (when-let* ((src    (aref sources-v i))
-                            (narrow (plist-get src :narrow)))
+                (when-let* ((spec    (aref specs-v i))
+                            (narrow (plist-get spec :narrow)))
                   (let ((idx i)
-                        (name (or (plist-get src :name) "?")))
+                        (name (or (plist-get spec :name) "?")))
                     (push (list narrow
                                 (lambda (_cand)
                                   (setq narrow-idx idx)
@@ -3229,19 +3226,19 @@ Per-source plist keys:
                       (with-selected-window (active-minibuffer-window)
                         (overlay-put stats-overlay 'display
                                      (concat (fzfa--format-narrow-hint
-                                              sources-v narrow-idx nil
+                                              specs-v narrow-idx nil
                                               fzfa-multi-narrow-key)
                                              " "))
                         (redisplay)))
                     (let* ((c (read-char))
                            (target
                             (cl-position-if
-                             (lambda (src)
-                               (when-let* ((k (plist-get src :narrow)))
+                             (lambda (spec)
+                               (when-let* ((k (plist-get spec :narrow)))
                                  (and (stringp k)
                                       (= (length k) 1)
                                       (= (string-to-char k) c))))
-                             sources-v)))
+                             specs-v)))
                       (cond
                        ((and prefix-event (eql c prefix-event))
                         (setq narrow-idx nil))
@@ -3262,7 +3259,7 @@ Per-source plist keys:
                       (when (bound-and-true-p ivy-mode)
                         (ivy--exhibit))))
                 (setq menu-active nil)))))
-         (router      (fzfa--multi-build-router sources-v cand->src))
+         (router      (fzfa--multi-build-router specs-v cand->src))
          (fzfa--preview-session
           (and router
                ;; Stash the candidate→source-idx table for per-candidate
@@ -3270,22 +3267,16 @@ Per-source plist keys:
                ;; `:multi-cells' on ROUTER itself.
                (list router :multi-cand->src cand->src)))
          retry-timer timer result)
+    ;; Eager-start fzf-native handles for command sources.  Producer-fn
+    ;; sources (`cands-fn' slot) need no eager work — first dispatch
+    ;; tick fires the initial fetch via `fzfa--multi-candidates-fetch'.
     (dotimes (i n)
-      (let* ((src      (aref sources-v i))
-             (cmd      (plist-get src :command))
-             (cands-fn (fzfa--normalize-candidates
-                        (plist-get src :candidates))))
-        (cond
-         (cmd
-          (aset handles i
+      (let* ((src (aref sources i))
+             (cmd (plist-get (fzfa-source-spec src) :command)))
+        (when cmd
+          (setf (fzfa-source-handle src)
                 (fzf-native-async-start
-                 cmd
-                 (expand-file-name
-                  (or (plist-get src :directory) default-directory)))))
-         (cands-fn
-          ;; Record the producer fn; first dispatch tick fires the
-          ;; initial fetch via `fzfa--multi-candidates-fetch'.
-          (aset cands-fns i cands-fn)))))
+                 cmd (fzfa-source-directory src))))))
     (unwind-protect
         (progn
           (setq timer
@@ -3295,11 +3286,12 @@ Per-source plist keys:
                    (when (active-minibuffer-window)
                      (let (bumped)
                        (dotimes (i n)
-                         (when-let* ((h (aref handles i))
-                                     (g (fzf-native-async-generation h)))
-                           (when (/= g (aref last-gen i))
-                             (aset last-gen i g)
-                             (setq bumped t))))
+                         (let ((src (aref sources i)))
+                           (when-let* ((h (fzfa-source-handle src))
+                                       (g (fzf-native-async-generation h)))
+                             (when (/= g (fzfa-source-last-gen src))
+                               (setf (fzfa-source-last-gen src) g)
+                               (setq bumped t)))))
                        (when (and bumped (not (input-pending-p))
                                   (>= (- (float-time) last-exhibit)
                                       fzfa-input-throttle))
@@ -3345,7 +3337,7 @@ Per-source plist keys:
                                           #'ivy-dispatching-call
                                         narrow-handler))
                           (use-local-map map))))
-                  (let ((fzfa--multi-active-sources sources-v)
+                  (let ((fzfa--multi-active-sources specs-v)
                         (ivy-completing-read-dynamic-collection t)
                         (ivy-count-format
                          (if (and (bound-and-true-p ivy-mode) wants-decoration)
@@ -3367,14 +3359,14 @@ Per-source plist keys:
                                         :directory nil
                                         :command nil
                                         :index (fzfa--frontend-index)
-                                        :filtered (cl-loop for x across filtered
-                                                           sum x)
-                                        :total (cl-loop for x across totals
-                                                        sum x)
+                                        :filtered (cl-loop for s across sources
+                                                           sum (fzfa-source-filtered s))
+                                        :total (cl-loop for s across sources
+                                                        sum (fzfa-source-total s))
                                         :narrow-name
                                         (and narrow-idx
                                              (or (plist-get
-                                                  (aref sources-v
+                                                  (aref specs-v
                                                         narrow-idx)
                                                   :name)
                                                  "?"))))
@@ -3389,7 +3381,7 @@ Per-source plist keys:
                            :group
                            (lambda (cand transform)
                              (let* ((src (fzfa--multi-source-of
-                                          cand sources-v cand->src))
+                                          cand specs-v cand->src))
                                     (g   (plist-get src :group)))
                                (if transform
                                    ;; Per-source :group transform — lets a
@@ -3430,7 +3422,7 @@ Per-source plist keys:
                                      (mapcar
                                       (lambda (c)
                                         (let* ((src (fzfa--multi-source-of
-                                                     c sources-v cand->src))
+                                                     c specs-v cand->src))
                                                (g (and src
                                                        (plist-get src :group))))
                                           (or (and g (funcall
@@ -3443,7 +3435,7 @@ Per-source plist keys:
                                (cl-mapcar
                                 (lambda (cand _display)
                                   (let* ((src (fzfa--multi-source-of
-                                               cand sources-v cand->src))
+                                               cand specs-v cand->src))
                                          (ann (and src
                                                    (plist-get src :annotate)))
                                          (s   (and ann (funcall
@@ -3465,68 +3457,68 @@ Per-source plist keys:
                           (let ((query (fzfa--current-query str))
                                 (interrupted nil))
                             (dotimes (i n)
-                              (if (and narrow-idx (/= narrow-idx i))
-                                  ;; Source filtered out by narrow — drop
-                                  ;; its prior results and zero its filtered
-                                  ;; count so the overlay reflects the
-                                  ;; narrowed pool.  `totals' is preserved
-                                  ;; so re-widening shows the full size.
-                                  (progn
-                                    (aset last-results i nil)
-                                    (aset filtered i 0)
-                                    (aset rank i 0))
-                                (let* ((h     (aref handles i))
-                                       (prod  (aref cands-fns i))
-                                       (out
-                                        (cond
-                                         (h (while-no-input
-                                              (fzf-native-async-candidates
-                                               h query limit)))
-                                         (prod
-                                          (fzfa--multi-candidates-fetch
-                                           i query prod snapshots prod-tokens
-                                           prod-inputs totals cand->src)
-                                          (let ((snap (aref snapshots i)))
-                                            (cond
-                                             ((null snap) '())
-                                             ((string-empty-p query) snap)
-                                             (t (while-no-input
-                                                  (fzfa--bridge-defcustoms
-                                                   #'fzf-native-score-all
-                                                   snap query)))))))))
-                                  (cond
-                                   ((eq out t) (setq interrupted t))
-                                   ;; Async source whose result is not yet
-                                   ;; final — keep the prior per-source slot;
-                                   ;; refresh `totals' so the overlay still
-                                   ;; reflects the live pool.
-                                   ((and h (not (fzfa--final-p
-                                                 out h query)))
-                                    (when-let* ((s (fzf-native-async-stats h)))
-                                      (aset totals i (cdr s))))
-                                   (t
-                                    ;; Re-tag returned candidates.  Async
-                                    ;; handles emit fresh strings each
-                                    ;; call; producer-path output may also
-                                    ;; lose text properties through the
-                                    ;; fzf-native scorer.  Idempotent on
-                                    ;; content (TOFU suffix stays as
-                                    ;; content), safe for both kinds.
-                                    ;; out may be nil (zero matches) — ok.
-                                    (when (or h prod)
-                                      (setq out
-                                            (mapcar
-                                             (lambda (c)
-                                               (fzfa--multi-tag c i cand->src))
-                                             out)))
-                                    (aset last-results i out)
-                                    (aset rank i
-                                          (fzfa--multi-rank out query h))
+                              (let ((src (aref sources i)))
+                                (if (and narrow-idx (/= narrow-idx i))
+                                    ;; Source filtered out by narrow — drop
+                                    ;; its prior results and zero its filtered
+                                    ;; count so the overlay reflects the
+                                    ;; narrowed pool.  `total' is preserved
+                                    ;; so re-widening shows the full size.
+                                    (setf (fzfa-source-last-result src) nil
+                                          (fzfa-source-filtered src) 0
+                                          (fzfa-source-rank src) 0)
+                                  (let* ((h     (fzfa-source-handle src))
+                                         (prod  (fzfa-source-cands-fn src))
+                                         (out
+                                          (cond
+                                           (h (while-no-input
+                                                (fzf-native-async-candidates
+                                                 h query limit)))
+                                           (prod
+                                            (fzfa--multi-candidates-fetch
+                                             src i query cand->src)
+                                            (let ((snap (fzfa-source-snapshot src)))
+                                              (cond
+                                               ((null snap) '())
+                                               ((string-empty-p query) snap)
+                                               (t (while-no-input
+                                                    (fzfa--bridge-defcustoms
+                                                     #'fzf-native-score-all
+                                                     snap query)))))))))
                                     (cond
-                                     (h (when-let* ((s (fzf-native-async-stats h)))
-                                          (aset filtered i (car s))
-                                          (aset totals   i (cdr s))))
-                                     (t (aset filtered i (length out)))))))))
+                                     ((eq out t) (setq interrupted t))
+                                     ;; Async source whose result is not yet
+                                     ;; final — keep the prior per-source slot;
+                                     ;; refresh `total' so the overlay still
+                                     ;; reflects the live pool.
+                                     ((and h (not (fzfa--final-p
+                                                   out h query)))
+                                      (when-let* ((stats (fzf-native-async-stats h)))
+                                        (setf (fzfa-source-total src) (cdr stats))))
+                                     (t
+                                      ;; Re-tag returned candidates.  Async
+                                      ;; handles emit fresh strings each
+                                      ;; call; producer-path output may also
+                                      ;; lose text properties through the
+                                      ;; fzf-native scorer.  Idempotent on
+                                      ;; content (TOFU suffix stays as
+                                      ;; content), safe for both kinds.
+                                      ;; out may be nil (zero matches) — ok.
+                                      (when (or h prod)
+                                        (setq out
+                                              (mapcar
+                                               (lambda (c)
+                                                 (fzfa--multi-tag c i cand->src))
+                                               out)))
+                                      (setf (fzfa-source-last-result src) out
+                                            (fzfa-source-rank src)
+                                            (fzfa--multi-rank out query h))
+                                      (cond
+                                       (h (when-let* ((stats (fzf-native-async-stats h)))
+                                            (setf (fzfa-source-filtered src) (car stats)
+                                                  (fzfa-source-total src) (cdr stats))))
+                                       (t (setf (fzfa-source-filtered src)
+                                                (length out))))))))))
                             (when interrupted
                               (when retry-timer (cancel-timer retry-timer))
                               (setq retry-timer
@@ -3551,19 +3543,18 @@ Per-source plist keys:
                                         order
                                       (sort order
                                             (lambda (a b)
-                                              (> (aref rank a)
-                                                 (aref rank b)))))))
+                                              (> (fzfa-source-rank (aref sources a))
+                                                 (fzfa-source-rank (aref sources b))))))))
                               (apply #'append
                                      (mapcar
                                       (lambda (i)
-                                        (let* ((slot (aref last-results i))
+                                        (let* ((src (aref sources i))
+                                               (slot (fzfa-source-last-result src))
                                                ;; Per-source recency only on
                                                ;; empty input — when scoring
                                                ;; ran, fzf order wins.
                                                (hist (and empty-q
-                                                          (plist-get
-                                                           (aref sources-v i)
-                                                           :history))))
+                                                          (fzfa-source-history src))))
                                           (if hist
                                               (fzfa--history-rank slot hist)
                                             slot)))
@@ -3574,12 +3565,12 @@ Per-source plist keys:
       (when retry-timer (cancel-timer retry-timer))
       (remove-hook 'post-command-hook refresh-overlay)
       (when stats-overlay (delete-overlay stats-overlay))
-      (fzfa--defer-async-stop handles)
+      (mapc #'fzfa-source--stop sources)
       (when router (fzfa--preview-return result)))
     (when result
-      (let* ((src    (or (and selected-idx (aref sources-v selected-idx))
+      (let* ((src    (or (and selected-idx (aref specs-v selected-idx))
                          (fzfa--multi-source-of
-                          result sources-v cand->src)))
+                          result specs-v cand->src)))
              (action (and src (plist-get src :action)))
              (clean  (fzfa--tofu-hide result))
              (hist   (and src (plist-get src :history))))
