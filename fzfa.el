@@ -227,49 +227,105 @@ Read at session start; changing it does not affect running sessions."
   :type 'integer
   :group 'fzfa)
 
+;;;###autoload
+(defconst fzfa--extension-registry
+  '((ag        . "ag (the_silver_searcher)")
+    (chrome    . "Chrome bookmarks + passwords")
+    (company   . "company-mode completions")
+    (eglot     . "Eglot workspace symbols")
+    (emacs     . "Emacs built-in sources")
+    (embark    . "Embark actions")
+    (evil      . "Evil-mode marks + registers")
+    (fd        . "fd (find alternative)")
+    (find      . "POSIX find")
+    (firefox   . "Firefox bookmarks")
+    (flymake   . "Flymake diagnostics")
+    (git       . "Git")
+    (grep      . "POSIX grep")
+    (helm      . "Helm frontend")
+    (hg        . "Mercurial (hg)")
+    (hungry    . "Hungry (buffer-derived dirs)")
+    (imenu     . "Imenu (buffer index)")
+    (info      . "Info manuals")
+    (ivy       . "Ivy frontend")
+    (locate    . "locate")
+    (mail      . "macOS Mail.app")
+    (make      . "make / ninja targets")
+    (music     . "macOS Music.app")
+    (notmuch   . "notmuch mail search")
+    (org       . "Org-mode headings")
+    (pass      . "password-store (pass)")
+    (project   . "project.el")
+    (regexp    . "Regexp (buffer-line picker)")
+    (rg        . "ripgrep (rg)")
+    (safari    . "Safari bookmarks + history (macOS)")
+    (shell     . "Shell command + history")
+    (spotlight . "macOS Spotlight (mdfind)")
+    (ugrep     . "ugrep")
+    (vc        . "vc.el")
+    (vertico   . "Vertico"))
+  "Single source of truth for fzfa extensions.
+Each entry is (SYMBOL . DESCRIPTION).  Adding a new extension is a
+one-line change here — the default value and `:type' of
+`fzfa-extensions', plus the prune set in `fzfa-sync-autoloads',
+all derive from this alist.")
+
+;;;###autoload
 (defcustom fzfa-extensions
-  '(ag chrome company eglot emacs embark evil fd find firefox flymake git grep
-       helm hg hungry imenu info ivy locate mail make music notmuch org pass
-       project regexp rg safari shell spotlight ugrep vertico vc)
+  (mapcar #'car fzfa--extension-registry)
   "List of fzfa extensions to load from `fzfa-setup'.
-Each SYMBOL causes `fzfa-setup' to `require' the feature
-`fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
-  :type '(set (const :tag "ag (the_silver_searcher)" ag)
-              (const :tag "Chrome bookmarks + passwords" chrome)
-              (const :tag "company-mode completions" company)
-              (const :tag "Eglot workspace symbols" eglot)
-              (const :tag "Emacs built-in sources" emacs)
-              (const :tag "Embark actions" embark)
-              (const :tag "Evil-mode marks + registers" evil)
-              (const :tag "fd (find alternative)" fd)
-              (const :tag "POSIX find" find)
-              (const :tag "Firefox bookmarks" firefox)
-              (const :tag "Flymake diagnostics" flymake)
-              (const :tag "Git" git)
-              (const :tag "POSIX grep" grep)
-              (const :tag "Helm frontend" helm)
-              (const :tag "Mercurial (hg)" hg)
-              (const :tag "Hungry (buffer-derived dirs)" hungry)
-              (const :tag "Imenu (buffer index)" imenu)
-              (const :tag "Info manuals" info)
-              (const :tag "Ivy frontend" ivy)
-              (const :tag "locate" locate)
-              (const :tag "macOS Mail.app" mail)
-              (const :tag "make / ninja targets" make)
-              (const :tag "macOS Music.app" music)
-              (const :tag "notmuch mail search" notmuch)
-              (const :tag "Org-mode headings" org)
-              (const :tag "password-store (pass)" pass)
-              (const :tag "project.el" project)
-              (const :tag "Regexp (buffer-line picker)" regexp)
-              (const :tag "ripgrep (rg)" rg)
-              (const :tag "Safari bookmarks + history (macOS)" safari)
-              (const :tag "Shell command + history" shell)
-              (const :tag "macOS Spotlight (mdfind)" spotlight)
-              (const :tag "ugrep" ugrep)
-              (const :tag "vc.el" vc)
-              (const :tag "Vertico" vertico))
+Each SYMBOL causes `fzfa-setup' to call `fzfa-SYMBOL-setup' if
+defined.  The autoloaded commands inside each extension remain
+callable regardless of this list.
+
+To also hide commands from excluded extensions from `M-x',
+`where-is', `describe-command', call `fzfa-sync-autoloads'
+after setting this variable — typically in a
+`use-package' `:init' clause.  See its docstring for the pattern."
+  :type `(set ,@(mapcar (lambda (cell)
+                          `(const :tag ,(cdr cell) ,(car cell)))
+                        fzfa--extension-registry))
   :group 'fzfa)
+
+;;;###autoload
+(defun fzfa-sync-autoloads ()
+  "Unbind autoload stubs for extensions not in `fzfa-extensions'.
+
+Iterates `fzfa--extension-registry'; for every extension EXT not
+present in `fzfa-extensions', `fmakunbound's any symbol whose name
+matches `fzfa-EXT' or `fzfa-EXT-...' — but only when the symbol's
+current function binding is still an autoload stub (`autoloadp').
+Already-loaded functions and non-fzfa symbols are left alone.
+
+Idempotent.  Intended for the `:init' clause of a `use-package'
+block — runs after `fzfa-autoloads.el' has been loaded by
+`package-activate' but before any fzfa command can be invoked, so
+excluded extensions never appear in `M-x', `where-is',
+`describe-command', even on a cold start:
+
+  (use-package fzfa
+    :defer t
+    :init
+    (setq fzfa-extensions \\='(ag rg vertico embark))
+    (fzfa-sync-autoloads))
+
+If `fzfa-extensions' is changed at runtime after this has run,
+call this function again to prune newly-excluded extensions.  Note
+that this function can only prune; it cannot resurrect stubs for
+extensions added back to the list.  Re-evaluate `fzfa-autoloads.el'
+or restart Emacs for that case."
+  (interactive)
+  (pcase-dolist (`(,ext . ,_) fzfa--extension-registry)
+    (unless (memq ext fzfa-extensions)
+      (let ((prefix (format "fzfa-%s" ext)))
+        (mapatoms
+         (lambda (sym)
+           (let ((name (symbol-name sym)))
+             (when (and (fboundp sym)
+                        (autoloadp (symbol-function sym))
+                        (or (string= name prefix)
+                            (string-prefix-p (concat prefix "-") name)))
+               (fmakunbound sym)))))))))
 
 (defcustom fzfa-project-backend 'project
   "How to resolve the root directory for fzfa commands.
@@ -3515,7 +3571,6 @@ render."
 
     (when fzfa-extensions
       (dolist (ext fzfa-extensions)
-        (require (intern (format "fzfa-%s" ext)))
         (let ((setup-fn (intern (format "fzfa-%s-setup" ext))))
           (when (fboundp setup-fn) (funcall setup-fn)))))))
 

@@ -1021,5 +1021,48 @@ characters) is the FILTER."
         (should (equal cmd "find ."))
         (should (equal (buffer-string) "abc"))))))
 
+;;; fzfa-sync-autoloads
+
+(ert-deftest fzfa-sync-autoloads-prunes-excluded-extensions ()
+  "Autoload stubs for extensions not in `fzfa-extensions' get unbound,
+included extensions are left alone."
+  (let ((syms '(fzfa-syncauttest1 fzfa-syncauttest1-foo
+                fzfa-syncauttest2 fzfa-syncauttest2-bar))
+        (registry '((syncauttest1 . "test 1")
+                    (syncauttest2 . "test 2"))))
+    (unwind-protect
+        (progn
+          (dolist (s syms) (autoload s "fzfa-test-nonexistent"))
+          (dolist (s syms) (should (autoloadp (symbol-function s))))
+          (let ((fzfa--extension-registry registry)
+                (fzfa-extensions '(syncauttest1)))
+            (fzfa-sync-autoloads))
+          ;; Included extension: stubs preserved.
+          (should (autoloadp (symbol-function 'fzfa-syncauttest1)))
+          (should (autoloadp (symbol-function 'fzfa-syncauttest1-foo)))
+          ;; Excluded extension: stubs unbound.
+          (should-not (fboundp 'fzfa-syncauttest2))
+          (should-not (fboundp 'fzfa-syncauttest2-bar)))
+      (dolist (s syms) (when (intern-soft s) (unintern s nil))))))
+
+(ert-deftest fzfa-sync-autoloads-skips-loaded-functions ()
+  "Already-loaded (non-autoload) bindings are not touched by the prune,
+even when their extension is excluded from `fzfa-extensions'."
+  (let ((syms '(fzfa-syncauttest3 fzfa-syncauttest3-loaded))
+        (registry '((syncauttest3 . "test 3"))))
+    (unwind-protect
+        (progn
+          (autoload 'fzfa-syncauttest3 "fzfa-test-nonexistent")
+          (defalias 'fzfa-syncauttest3-loaded (lambda () "loaded"))
+          (let ((fzfa--extension-registry registry)
+                (fzfa-extensions '()))
+            (fzfa-sync-autoloads))
+          ;; Autoload stub: pruned.
+          (should-not (fboundp 'fzfa-syncauttest3))
+          ;; Concrete function: preserved.
+          (should (fboundp 'fzfa-syncauttest3-loaded))
+          (should-not (autoloadp (symbol-function 'fzfa-syncauttest3-loaded))))
+      (dolist (s syms) (when (intern-soft s) (unintern s nil))))))
+
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here

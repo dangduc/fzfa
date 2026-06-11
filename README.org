@@ -70,6 +70,8 @@ This is conceptually similar to what ~consult~ does with
    [[*Editing the shell command mid-session]] below.
 4. applies this approach to every ~fzfa-*~ command so the pipeline
    incongruence is avoided.
+5. each command runs with an empty query to gather candidates,
+   so they can be easily composed into a bigger multi-source command
 
 ** Smart fuzzy matching
 ~fzfa~ uses ~fzf~'s matching algorithm under the hood with ~fzf-native~.
@@ -494,13 +496,9 @@ against the same query as the user types:
 
 * Extensions
 
-Optional integrations ship as sibling files (~fzfa-pass.el~,
-~fzfa-notmuch.el~, etc.) and are opt-in via ~fzfa-extensions~
-— a list of short symbols that the lazy setup walks: for each ~SYMBOL~
-it ~require~ s ~fzfa-SYMBOL~ and calls ~fzfa-SYMBOL-setup~ if
-defined.  Extension loading happens the first time you invoke any
-fzfa command (or up front if you call ~fzfa-setup~
-explicitly).
+Optional integrations are located in extension files (~fzfa-pass.el~,
+~fzfa-notmuch.el~, etc.) and are opt-in via ~fzfa-extensions~ — a
+list of short symbols.
 
 | Symbol      | Library          | Soft dependency                                  | Commands                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 |-------------+------------------+--------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -532,22 +530,44 @@ Default value of ~fzfa-extensions~:
  project regexp rg safari shell spotlight ugrep vertico vc)
 #+end_src
 
-Each loads without its soft dependency present — the dependency is
-only required when you invoke one of the extension's commands.  Soft
-dependencies are not declared in ~Package-Requires~ — install them
-yourself if you use the extension:
+To modify which extensions are enabled, modify ~fzfa-extensions~:
 
-#+begin_src emacs-lisp :tangle yes
-  (use-package password-store)
-#+end_src
+** Opt-in extensions and ~fzfa-sync-autoloads~
 
-To disable extension loading entirely:
+Removing an extension from ~fzfa-extensions~ skips its
+~-setup~ call but leaves the extension's commands autoloaded —
+they still appear in commands like ~M-x~.
+
+To hide excluded extensions, call ~fzfa-sync-autoloads~ after setting
+~fzfa-extensions~ — typically from ~:init~ so the prune happens before
+any ~fzfa~ command can be invoked:
 
 #+begin_src emacs-lisp :tangle yes
   (use-package fzfa
     :vc (:url "https://github.com/jojojames/fzfa" :rev :newest)
-    :custom (fzfa-extensions nil))
+    :defer t
+    :init
+    (setq fzfa-extensions '(ag rg vertico embark))
+    (fzfa-sync-autoloads))
 #+end_src
+
+~fzfa-sync-autoloads~ walks ~fzfa--extension-registry~ and
+unbinds autoloads for any extension not present in ~fzfa-extensions~.
+
+Quick example — drop ~firefox~ from the default list:
+
+#+begin_src emacs-lisp :tangle yes
+  (use-package fzfa
+    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest)
+    :defer t
+    :init
+    (setq fzfa-extensions (delq 'firefox (default-value 'fzfa-extensions)))
+    (fzfa-sync-autoloads))
+#+end_src
+
+After ~:init~ runs: ~M-x fzfa-firefox-~ no longer completes,
+~(fboundp 'fzfa-firefox-bookmarks)~ returns ~nil~, every other
+extension stays untouched.
 
 * Editing the shell command mid-session
 
@@ -1107,24 +1127,24 @@ whatever your frontend already uses for this concept:
 | vertico / icomplete | ~C-M-m~ | ~fzfa-apply-key~ (configurable defcustom) |
 * Customization
 
-| Variable                       |                  Default | Description                                                                   |
+| Variable                       | Default                  | Description                                                                   |
 |--------------------------------+--------------------------+-------------------------------------------------------------------------------|
-| ~fzfa-max-candidates~          |                    10000 | Max candidates returned to Elisp (see note below).                            |
-| ~fzfa-refresh-delay~           |                     0.05 | Seconds between generation polls.                                             |
-| ~fzfa-input-debounce~          |                      0.1 | Idle seconds to retry after an interrupted scoring.                           |
-| ~fzfa-input-throttle~          |                      0.2 | Min seconds between UI refreshes driven by new data.                          |
-| ~fzfa-preview-delay~           |                      0.8 | Idle seconds before live-preview fires (nil = disabled; see note below).      |
-| ~fzfa-preview-functions~       |  (buffer, file, grep, …) | Category → preview handler plist (see note below).                            |
-| ~fzfa-preview-file-size-limit~ |                    1 MiB | Skip file preview when the file exceeds this size (nil/0 disables; see note). |
-| ~fzfa-directory~               |                    ~nil~ | Per-call directory override; supersedes project backend (see note below).     |
-| ~fzfa-project-backend~         |                ~project~ | How to resolve the root directory (see note below).                           |
-| ~fzfa-highlight~               |                      200 | C-side match highlighting; nil/t/N (see note below).                          |
-| ~fzfa-max-line-length~         |                      256 | Per-line character limit; nil/+N/-N (see note below).                         |
-| ~fzfa-cache-size~              |                       40 | Per-session LRU cache entries (see note below).                               |
-| ~fzfa-case-mode~               |                  ~smart~ | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.                             |
-| ~fzfa-fuzzy~                   |                      ~t~ | Fuzzy match (~t~) or exact/substring match (~nil~).                           |
-| ~fzfa-multi-narrow-key~        |                      ~<~ | Prefix key for narrowing in multi-source sessions; nil disables.              |
-| ~fzfa-extensions~              | (see *Extensions* below) | Extensions to ~require~ during setup.                                         |
+| ~fzfa-max-candidates~          | 10000                    | Max candidates returned to Elisp (see note below).                            |
+| ~fzfa-refresh-delay~           | 0.05                     | Seconds between generation polls.                                             |
+| ~fzfa-input-debounce~          | 0.1                      | Idle seconds to retry after an interrupted scoring.                           |
+| ~fzfa-input-throttle~          | 0.2                      | Min seconds between UI refreshes driven by new data.                          |
+| ~fzfa-preview-delay~           | 0.8                      | Idle seconds before live-preview fires (nil = disabled; see note below).      |
+| ~fzfa-preview-functions~       | (buffer, file, grep, …)  | Category → preview handler plist (see note below).                            |
+| ~fzfa-preview-file-size-limit~ | 1 MiB                    | Skip file preview when the file exceeds this size (nil/0 disables; see note). |
+| ~fzfa-directory~               | ~nil~                    | Per-call directory override; supersedes project backend (see note below).     |
+| ~fzfa-project-backend~         | ~project~                | How to resolve the root directory (see note below).                           |
+| ~fzfa-highlight~               | 200                      | C-side match highlighting; nil/t/N (see note below).                          |
+| ~fzfa-max-line-length~         | 256                      | Per-line character limit; nil/+N/-N (see note below).                         |
+| ~fzfa-cache-size~              | 40                       | Per-session LRU cache entries (see note below).                               |
+| ~fzfa-case-mode~               | ~smart~                  | Case sensitivity: ~smart~ / ~ignore~ / ~respect~.                             |
+| ~fzfa-fuzzy~                   | ~t~                      | Fuzzy match (~t~) or exact/substring match (~nil~).                           |
+| ~fzfa-multi-narrow-key~        | ~<~                      | Prefix key for narrowing in multi-source sessions; nil disables.              |
+| ~fzfa-extensions~              | (see *Extensions* below) | Extensions to enable.                                                         |
 
 ~fzfa-preview-delay~ controls live preview for commands that act on the
 highlighted candidate as the selection moves (e.g. ~fzfa-theme~ loading
