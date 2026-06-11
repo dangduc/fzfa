@@ -14,9 +14,10 @@ AUTOLOADS := $(PACKAGE)-autoloads.el
 SRC := $(filter-out $(AUTOLOADS) $(PACKAGE)-pkg.el $(PACKAGE)-test.el, \
                     $(wildcard *.el))
 
-compile: autoloads
+compile: clean autoloads
 	$(EMACS) -Q --batch \
 	  -L . -L $(FZF_NATIVE_DIR) \
+	  --eval "(setq byte-compile-error-on-warn t)" \
 	  -f batch-byte-compile $(SRC)
 
 autoloads:
@@ -27,7 +28,10 @@ autoloads:
 # tests are pure-Elisp helpers and would pass without it, but loading
 # it in CI catches "missing binary / wrong arch / module load fails"
 # regressions and lets future async-path tests just work.
-test:
+#
+# Depends on `compile' so any byte-compile warning fails the build
+# before tests run.
+test: compile
 	$(EMACS) -Q --batch \
 	  -L . -L $(FZF_NATIVE_DIR) \
 	  -l fzf-native \
