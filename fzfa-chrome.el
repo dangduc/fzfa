@@ -38,7 +38,8 @@
 ;;                                 supported way to rename or delete a
 ;;                                 bookmark without risking corruption
 ;;                                 of Chrome's JSON file
-;;   `fzfa-chrome-copy-url'   Copy the URL to the kill ring
+;;   `fzfa-chrome-bookmark-copy-url'
+;;                            Copy the bookmark URL to the kill ring
 ;;   `fzfa-chrome-refresh'    Drop the cached bookmark list
 ;;
 ;; History commands (embark category `fzfa-chrome-history'):
@@ -184,7 +185,7 @@ edits to the Bookmarks JSON file."
             (_          (browse-url url))))))))
 
 ;;;###autoload
-(defun fzfa-chrome-copy-url (cand)
+(defun fzfa-chrome-bookmark-copy-url (cand)
   "Copy the URL of bookmark CAND to the kill ring."
   (interactive (list (fzfa-chrome--pick "copy url: ")))
   (when cand
@@ -197,7 +198,7 @@ edits to the Bookmarks JSON file."
 Composed with `embark-general-map' via `embark-keymap-alist'."
   "b" #'fzfa-chrome-bookmarks
   "e" #'fzfa-chrome-edit
-  "w" #'fzfa-chrome-copy-url)
+  "w" #'fzfa-chrome-bookmark-copy-url)
 
 
 ;;; History
