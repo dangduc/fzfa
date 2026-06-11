@@ -26,6 +26,7 @@
 (defcustom fzfa-ugrep-command
   "ugrep -RIn --no-heading %s ''"
   "Shell command used by `fzfa-ugrep' for content search.
+
 A `%s' placeholder is filled with the max-columns flag derived from
 `fzfa-max-line-length'.  Output must be FILE:LINE:CONTENT."
   :type 'string
@@ -34,6 +35,7 @@ A `%s' placeholder is filled with the max-columns flag derived from
 ;;;###autoload
 (defun fzfa-ugrep ()
   "Search file contents under `default-directory' with ugrep.
+
 Streams all file contents as FILE:LINE:CONTENT; type to
  fuzzy-filter across them.
 

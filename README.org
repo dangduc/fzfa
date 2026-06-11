@@ -1,4 +1,4 @@
-#+TITLE: fzfa
+#+TITLE: ~fzfa~
 #+STARTUP: noindent
 
 [[https://github.com/jojojames/fzfa/actions/workflows/test.yaml][https://github.com/jojojames/fzfa/actions/workflows/test.yaml/badge.svg]]
@@ -7,9 +7,9 @@
 #+HTML: <video src="https://github.com/user-attachments/assets/383a2f07-6778-4e4e-89c8-68c540d8b404" controls style="max-width: 100%; height: auto;"></video>
 
 This package provides async fuzzy completion for Emacs backed by
-[[https://github.com/dangduc/fzf-native][fzf-native]].
+[[https://github.com/dangduc/fzf-native][~fzf-native~]].
 A shell command streams candidates into a background reader thread;
-[[https://github.com/junegunn/fzf][fzf]] scores and sorts them in parallel
+[[https://github.com/junegunn/fzf][~fzf~]] scores and sorts them in parallel
 across all available CPU cores; results land in a standard ~completing-read~
 UI incrementally as the shell command is still running.
 
@@ -37,10 +37,10 @@ The pattern recurs across the major async completion packages:
   re-filtered by the active ~completion-style~.
 - ~counsel-ag~ / ~counsel-rg~ / ~counsel-git-grep~
   (~counsel.el:3246~ et al.) transform input via ~ivy--regex~, run
-  the shell tool, then ivy's active matcher (e.g. ~flx~,
+  the shell tool, then ~ivy~'s active matcher (e.g. ~flx~,
   ~ivy--regex-plus~, fuzzy, …) re-filters the results.
 - ~helm-grep-ag~ (~helm-grep.el:1641~) feeds ~helm-pattern~ to ~ag~
-  directly; helm's source-level match functions re-filter what
+  directly; ~helm~'s source-level match functions re-filter what
   comes back.
 
 Basically, the pipeline issue boils down to pre-filtering with a
@@ -100,14 +100,14 @@ other hand, has smart fuzzy matching, multithreading, and multi
 component matching, while also being an industry standard matching
 algorithm.
 
-- [[https://github.com/junegunn/fzf][fzf]] — original fzf written in Go
+- [[https://github.com/junegunn/fzf][~fzf~]] — original ~fzf~ written in Go
 - [[https://github.com/nvim-telescope/telescope-fzf-native.nvim][telescope-fzf-native.nvim]]
-  — C port of fzf
-- [[https://github.com/dangduc/fzf-native][fzf-native]] — Emacs wrapper
+  — C port of ~fzf~
+- [[https://github.com/dangduc/fzf-native][~fzf-native~]] — Emacs wrapper
 
 ** Multi-component query syntax
 
-[[https://github.com/junegunn/fzf#search-syntax][fzf syntax]] is supported:
+[[https://github.com/junegunn/fzf#search-syntax][~fzf~ syntax]] is supported:
 
 | Token       | Match type                 | Description                          |
 |-------------+----------------------------+--------------------------------------|
@@ -133,7 +133,7 @@ Refer to:
 ** Performance / Speed
 
 Scoring runs in a C dynamic module
-([[https://github.com/dangduc/fzf-native][fzf-native]]) with worker
+([[https://github.com/dangduc/fzf-native][~fzf-native~]]) with worker
 threads across all available cores.  The shell command streams
 candidates into the scoring pool incrementally rather than blocking
 on a full materialization, so a million-line ~rg~ output is
@@ -188,7 +188,7 @@ the comparison.
 
 * Installation
 
-Required dependency: [[https://github.com/dangduc/fzf-native][fzf-native]] (provides the C scoring module).
+Required dependency: [[https://github.com/dangduc/fzf-native][~fzf-native~]] (provides the C scoring module).
 
 #+begin_src emacs-lisp :tangle yes
   (use-package fzf-native
@@ -239,7 +239,7 @@ experience using ~fzf~ as the core filtering/scoring algorithm.
 * Commands
 
 All commands open the selected candidate in Emacs.  The tables
-below cross-reference fzfa commands with their closest equivalents
+below cross-reference ~fzfa~ commands with their closest equivalents
 in other completion packages, on a best-effort basis.
 
 ** File finders
@@ -345,7 +345,7 @@ directory list is passed as arguments to a single shell command.
 
 ~fzfa-find-any~ merges several sources into a single
 ~completing-read~ (groups for buffers, recent files, hungry-find, …),
-ranks each group by its top fzf score, and dispatches the chosen
+ranks each group by its top ~fzf~ score, and dispatches the chosen
 candidate back to the originating command's action.
 
 The command list lives in ~fzfa-find-any-commands~ — by default
@@ -504,16 +504,16 @@ list of short symbols.
 |-------------+------------------+--------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | ~chrome~    | ~fzfa-chrome~    | ~python3~ (history); macOS dependencies (passwords) | bookmarks: ~fzfa-chrome-bookmarks~ (default), ~-edit~, ~-bookmark-copy-url~, ~-refresh~ — JSON-parses Chromium-family Bookmarks file.  history: ~fzfa-chrome-history~ (default), ~-history-copy-url~ — async stream from Chrome's ~History~ SQLite DB via an embedded Python helper (lock-copy + ~sqlite3~).  passwords (macOS only): ~fzfa-chrome-pass-copy~ (default), ~-copy-username~, ~-url~, ~-refresh~ — decrypts entries from Chrome's Login Data DB using the keychain entry ~Chrome Safe Storage~.  All URLs open via ~fzfa-chrome-browser-function~ (defaults to ~open -a "Google Chrome"~ on darwin, ~google-chrome~ on linux) so picks land in Chrome regardless of the OS default browser                                                                                                                                                                |
 | ~company~   | ~fzfa-company~   | ~company~                                        | ~fzfa-company~ — fuzzy-filter current ~company-mode~ candidates and finish                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ~eglot~     | ~fzfa-eglot~     | ~eglot~                                          | ~fzfa-eglot-symbols~ — workspace-symbol picker via the running eglot server.  Async-firing producer using ~jsonrpc-async-request~; CMD-half is the query string, FZF re-scores the snapshot.  Async producers are not supported under ~helm-mode~                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ~embark~    | ~fzfa-embark~    | ~embark~                                         | Sub-keymap on ~embark-general-map~ under the ~Z~ prefix (mnemonic: f*Z*fa) puts every fzfa command behind a single key chord reachable from any embark target.  Direct (non-prefixed) target-aware bindings on ~embark-region-map~ / ~-identifier-map~ (~R~ rg, ~G~ grep, ~A~ ag, ~U~ ugrep, ~S~ swiper — target seeds the fzf filter), ~embark-file-map~ (~G~ grep this file, ~R~ rg in file's dir), ~embark-buffer-map~ (~I~ imenu, ~S~ swiper in target buffer), ~embark-flymake-map~ (~F~ flymake, ~P~ flymake-project), ~embark-email-map~ (~N~ notmuch, ~T~ notmuch-tree on the address).  Also wires ~Z~ on ~embark-become-match-map~ for sync source-swap.                                                                                                       |
-| ~evil~      | ~fzfa-evil~      | ~evil~                                           | ~fzfa-evil-marks~ (jump to a buffer-local or global mark, candidate includes ~BUFFER:LINE: <content>~ so fzf scores against the line preview), ~fzfa-evil-registers~ (paste text registers / execute macro-vector registers), ~fzfa-evil-jumps~ (window jump list — ~C-o~/~C-i~ history — with line preview when the buffer is loaded), ~fzfa-evil-ex-history~ (re-run an entry from ~evil-ex-history~ via ~evil-ex-execute~), ~fzfa-evil-search-history~ (re-run a pattern from ~evil-ex-search-history~ and update ~evil-ex-search-pattern~ so ~n~/~N~ continue working), ~fzfa-evil-command-window~ (unified ex + search history picker grouped by source), ~fzfa-evil-any~ (multi-source picker over the other commands, configurable via ~fzfa-evil-any-commands~) |
+| ~eglot~     | ~fzfa-eglot~     | ~eglot~                                          | ~fzfa-eglot-symbols~ — workspace-symbol picker via the running ~eglot~ server.  Async-firing producer using ~jsonrpc-async-request~; CMD-half is the query string, FZF re-scores the snapshot.  Async producers are not supported under ~helm-mode~                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ~embark~    | ~fzfa-embark~    | ~embark~                                         | Sub-keymap on ~embark-general-map~ under the ~Z~ prefix (mnemonic: f*Z*fa) puts every ~fzfa~ command behind a single key chord reachable from any ~embark~ target.  Direct (non-prefixed) target-aware bindings on ~embark-region-map~ / ~-identifier-map~ (~R~ rg, ~G~ grep, ~A~ ag, ~U~ ugrep, ~S~ swiper — target seeds the ~fzf~ filter), ~embark-file-map~ (~G~ grep this file, ~R~ rg in file's dir), ~embark-buffer-map~ (~I~ ~imenu~, ~S~ swiper in target buffer), ~embark-flymake-map~ (~F~ ~flymake~, ~P~ flymake-project), ~embark-email-map~ (~N~ ~notmuch~, ~T~ notmuch-tree on the address).  Also wires ~Z~ on ~embark-become-match-map~ for sync source-swap.                                                                                                       |
+| ~evil~      | ~fzfa-evil~      | ~evil~                                           | ~fzfa-evil-marks~ (jump to a buffer-local or global mark, candidate includes ~BUFFER:LINE: <content>~ so ~fzf~ scores against the line preview), ~fzfa-evil-registers~ (paste text registers / execute macro-vector registers), ~fzfa-evil-jumps~ (window jump list — ~C-o~/~C-i~ history — with line preview when the buffer is loaded), ~fzfa-evil-ex-history~ (re-run an entry from ~evil-ex-history~ via ~evil-ex-execute~), ~fzfa-evil-search-history~ (re-run a pattern from ~evil-ex-search-history~ and update ~evil-ex-search-pattern~ so ~n~/~N~ continue working), ~fzfa-evil-command-window~ (unified ex + search history picker grouped by source), ~fzfa-evil-any~ (multi-source picker over the other commands, configurable via ~fzfa-evil-any-commands~) |
 | ~firefox~   | ~fzfa-firefox~   | ~sqlite3~ CLI (bookmarks); ~python3~ (history)   | bookmarks: ~fzfa-firefox-bookmarks~ (default), ~-bookmark-copy-url~, ~-refresh~ — reads ~places.sqlite~ via ~sqlite3~ (lock-copy + recursive CTE for folder breadcrumbs, ~tags~ subtree excluded).  history: ~fzfa-firefox-history~ (default), ~-history-copy-url~ — async stream from ~moz_places~ via an embedded Python helper.  Profile auto-detection: globs ~Profiles/*.default-release~ first, falls back to ~profiles.ini~ (prefers ~[Install*] Default=~ over legacy ~[Profile*] Default=1~).  URLs open via ~fzfa-firefox-browser-function~ (~open -a Firefox~ on darwin, ~firefox~ on linux).  Passwords intentionally out of scope (NSS / ~key4.db~ has no clean shell pipeline)                                                                            |
 | ~flymake~   | ~fzfa-flymake~   | none (built-in)                                  | ~fzfa-flymake~ (current buffer), ~fzfa-flymake-project~ (all buffers in the current project)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ~info~      | ~fzfa-info~      | none (built-in)                                  | ~fzfa-info-emacs~, ~fzfa-info-elisp~, ~fzfa-info-org~, ~fzfa-info-cl~, ~fzfa-info-eieio~, ~fzfa-info-magit~ — pick an index entry from a specific Info manual; ~fzfa-info~ is the multi-source picker over ~fzfa-info-commands~; ~fzfa-info-at-point~ delegates to `info-lookup-symbol' for the symbol at point                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | ~mail~      | ~fzfa-mail~      | macOS ~Mail.app~                                 | ~fzfa-mail~, ~fzfa-mail-refresh~ — browse and open inbox messages                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ~make~      | ~fzfa-make~      | ~make~ / ~ninja~ (CLI)                           | ~fzfa-make~ (locate ~Makefile~/~build.ninja~ and call make)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ~music~     | ~fzfa-music~     | macOS ~Music.app~                                | ~fzfa-music~, ~-by-artist~, ~-by-genre~, ~-playlist~, ~-playlist-shuffle~, ~-refresh~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ~notmuch~   | ~fzfa-notmuch~   | ~notmuch~ (CLI + Emacs package)                  | ~fzfa-notmuch~, ~fzfa-notmuch-tree~ — run a notmuch query and fuzzy-pick a thread to open                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ~notmuch~   | ~fzfa-notmuch~   | ~notmuch~ (CLI + Emacs package)                  | ~fzfa-notmuch~, ~fzfa-notmuch-tree~ — run a ~notmuch~ query and fuzzy-pick a thread to open                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ~org~       | ~fzfa-org~       | none (built-in)                                  | ~fzfa-org-heading~ (current buffer), ~fzfa-org-heading-all~ (all live org buffers), ~fzfa-org-agenda~ (all `org-agenda-files'), ~fzfa-org-todo~ (TODO-state headings in agenda files, excludes DONE-class), ~fzfa-org-tags-view~ (pick a tag then a tagged entry), ~fzfa-org-insert-link~ (pick an entry, insert an org-link at point), ~fzfa-org-any~ (multi-source over `fzfa-org-any-commands').  Candidates render ~SOURCE:LINE:STARS [TODO] HEADING :tags:~; selection reveals folded entries.                                                                                                                                                                                                                                                                       |
 | ~pass~      | ~fzfa-pass~      | ~password-store~                                 | ~fzfa-pass~ (copy), ~fzfa-pass-edit~, ~-rename~, ~-delete~, ~-add~, ~-generate~, ~-url~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ~project~   | ~fzfa-project~   | none (built-in)                                  | ~fzfa-project-find-file~, ~fzfa-project-find-dir~, ~fzfa-project-buffer~, ~fzfa-project-recentf~, ~fzfa-project-switch-project~ — candidate sets driven by ~project-files~ / ~project-buffers~ / ~project-known-project-roots~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -574,7 +574,7 @@ extension stays untouched.
 Every async command (~fzfa-rg~, ~fzfa-grep~, ~fzfa-fd~, ~fzfa-find~,
 …) splits its minibuffer input into a shell-COMMAND part (re-runs
 the underlying process on change) and an fzf-FILTER part
-(rescores/sorts in place via fzf-native).  With the default ~perl~
+(rescores/sorts in place via ~fzf-native~).  With the default ~perl~
 split style the buffer text has shape ~#COMMAND#FILTER~.
 
 By default the COMMAND region is *invisible* and only the FILTER
@@ -670,21 +670,21 @@ backend.
 This style is only a passthrough: it accepts the query string as-is and forwards
 it directly to the ~fzf~ scoring layer without applying any transformation.
 
-No setup is required on your part.  Every fzfa entry point dynamically
-binds ~completion-styles~ to ~(fzfa)~ for the duration of its
-~completing-read~, so the resolved style list inside fzfa is exactly
-~(fzfa)~ regardless of what you have in global ~completion-styles~ or
-in ~completion-category-overrides~.  This means fzfa is unaffected by,
+No setup is required on your part.  Every ~fzfa~ entry point dynamically
+binds ~completion-styles~ to ~(~fzfa~)~ for the duration of its
+~completing-read~, so the resolved style list inside ~fzfa~ is exactly
+~(~fzfa~)~ regardless of what you have in global ~completion-styles~ or
+in ~completion-category-overrides~.  This means ~fzfa~ is unaffected by,
 and also does not affect other style packages (e.g. ~orderless~, ~hotfuzz~,
 ~fussy~, ~flex~, etc.)
 
-* Companion package — fussy
+* Companion package — ~fussy~
 
 The recommended companion package is
-[[https://github.com/jojojames/fussy][fussy]],
+[[https://github.com/jojojames/fussy][~fussy~]],
 for general ~completing-read~ and ~completion-at-point~ (e.g. code
 completion).  Both ~fussy~ and ~fzfa~ are backed by the same
-[[https://github.com/dangduc/fzf-native][fzf-native]]
+[[https://github.com/dangduc/fzf-native][~fzf-native~]]
 module, giving you consistent fuzzy matching semantics with ~fzf~ across
 both synchronous and asynchronous contexts.
 
@@ -726,11 +726,11 @@ each input change.
 
 Caveat: I mostly use ~vertico~ these days so wasn't exhaustive with using the
 other completion systems.
-** vertico
+** ~vertico~
 There's also a ~vertico~ extension that wires up
 ~fzfa-vertico-columns-mode~, a per-group column layout for multi-source
 sessions.  Each completion group renders as its own vertical column instead
-of vertico's default stacked layout, which keeps every source visible at a
+of ~vertico~'s default stacked layout, which keeps every source visible at a
 glance and removes the need to scroll past one group to reach another.
 
 #+HTML: <video src="https://github.com/user-attachments/assets/0451785f-4b68-4e23-9370-88d65f4a4039" controls style="max-width: 100%; height: auto;"></video>
@@ -742,7 +742,7 @@ Per-source scrolling kicks in when a column has more candidates than the
 band's row budget — the column containing the selection scrolls to keep it
 visible while the other columns stay parked at the top.
 
-Source-column ordering follows fzf score by default
+Source-column ordering follows ~fzf~ score by default
 (~fzfa-vertico-columns-source-sort~ = ~scored~): with a query active,
 each group is sorted by its first candidate's score, so the
 strongest-matching source's column floats to the left and the cursor
@@ -794,18 +794,18 @@ group-functioned).
 | ~fzfa-vertico-columns-ellipsis~     | "…"                           | String used to mark truncated candidates (falls back to "..." on systems lacking "…").   |
 | ~fzfa-vertico-columns-source-sort~  | ~scored~                      | Column order: ~scored~ (top-fzf-score first), ~declared~, ~alphabetical~, or a function. |
 
-** ivy / counsel
+** ~ivy~ / ~counsel~
 
 Ivy support lives in ~fzfa-ivy.el~, loaded as part of
 ~fzfa-extensions~ (which includes ~ivy~ by default).  Loading the
 file alone is a no-op; ~fzfa-ivy-setup~ — called from ~fzfa-setup~
-— defers its work via ~(with-eval-after-load 'ivy …)~ so the
-display-transformer registration kicks in only when ivy itself is
+— defers its work via ~(with-eval-after-load '~ivy~ …)~ so the
+display-transformer registration kicks in only when ~ivy~ itself is
 actually loaded.
 
 #+HTML: <video src="https://github.com/user-attachments/assets/c10e3407-b59e-41be-b1ce-3164064b5aed" controls style="max-width: 100%; height: auto;"></video>
 
-The fzfa entry points share their main code path with the
+The ~fzfa~ entry points share their main code path with the
 other completing-read frontends, with ivy-specific bypass + push
 plumbing layered on:
 
@@ -819,7 +819,7 @@ function the way vertico/icomplete do — so the polling timer's
 refresh path dispatches to the corresponding =ivy-push-*= closure
 under ~ivy-mode~, which forces an =ivy--set-candidates= +
 =ivy--exhibit= + =ivy--insert-prompt= against the active minibuffer
-window.  The =:dynamic-collection t= binding stops ivy from running
+window.  The =:dynamic-collection t= binding stops ~ivy~ from running
 its re-builder regex on top of fzf-scored output (which would
 silently drop matches for multi-word and fzf-extended-syntax
 queries).
@@ -829,20 +829,20 @@ queries).
 Ivy ignores the ~group-function~ completion-metadata key that
 ~vertico~ / ~icomplete~ support, so multi-source sessions render as a
 flat merged list by default.  ~fzfa-ivy.el~ registers a display
-transformer under ivy's ~t~ fallback caller that prepends
+transformer under ~ivy~'s ~t~ fallback caller that prepends
 ~[source-name] ~ to each candidate instead.
 
 The face for the label is ~fzfa-ivy-multi-source-label~ (inherits
 ~font-lock-comment-face~ by default).
 
-*** Multi source narrowing — ivy actions
+*** Multi source narrowing — ~ivy~ actions
 
 Under ~ivy-mode~, pressing ~fzfa-multi-narrow-key~ (default ~<~)
-triggers ~ivy-dispatching-call~ rather than fzfa's in-house
+triggers ~ivy-dispatching-call~ rather than ~fzfa~'s in-house
 ~narrow-handler~.  Each source's ~:narrow~ letter is registered
 into ~ivy--actions-list~ under the ~t~ fallback caller, plus a
 widen entry on the narrow-prefix key itself — so the existing
-~<<~ muscle memory still widens.  ivy renders the action menu in
+~<<~ muscle memory still widens.  ~ivy~ renders the action menu in
 its native UI (no contention with the prompt area), the chosen
 action mutates ~narrow-idx~, and ~ivy-call~ semantics keep you in
 the picker rather than exiting.
@@ -856,7 +856,7 @@ static list — ~fzfa~ is no longer in the loop.
 Further typing is filtered by =ivy-re-builders-alist= (substring /
 regex by default).  If you want the same fuzzy matching algorithm
 to continue against the restricted set, install ~fussy~ and call
-~fussy-ivy-setup~ — fussy's matcher overrides ivy's regex filter
+~fussy-ivy-setup~ — ~fussy~'s matcher overrides ~ivy~'s regex filter
 and keeps the fuzzy-match feel after =S-SPC=.  Setup example below.
 
 *** Full setup example
@@ -891,18 +891,18 @@ case and ~fzfa~ handles the async ~completing-read~ cases.
     (setq ivy-height 9)
     (ivy-mode))
 #+end_src
-** helm
+** ~helm~
 
 Helm support lives in ~fzfa-helm.el~, loaded as part of
 ~fzfa-extensions~ (which includes ~helm~ by default).  Once loaded,
-~fzfa.el~'s dispatch sites pick up the helm entry points via ~fboundp~,
+~fzfa.el~'s dispatch sites pick up the ~helm~ entry points via ~fboundp~,
 gated on ~helm-mode~ — no extra registration step.
 
 #+HTML: <video src="https://github.com/user-attachments/assets/856a2ed4-82a0-406b-a43b-ebbeb6c90ca4" controls style="max-width: 100%; height: auto;"></video>
 
 When ~helm-mode~ is active, each ~fzfa~ entry point dispatches through
 a handler that bypasses ~completing-read~ entirely and runs
-~(helm :sources …)~ directly:
+~(~helm~ :sources …)~ directly:
 
 | Entry point             | Handler                       |
 |-------------------------+-------------------------------|
@@ -930,10 +930,10 @@ async callbacks update a closure-scoped snapshot and schedule
 controls how the CMD half is rendered in the minibuffer;
 ~fzfa-display-key~ (default ~>~) cycles between states.
 
-Sync sources are built with ~:match-dynamic t~ (helm asks for
+Sync sources are built with ~:match-dynamic t~ (~helm~ asks for
 filtered candidates on each input change rather than holding its own
-filtered list) and ~:nohighlight t~ (so helm doesn't paint over the
-~completions-common-part~ faces already embedded by fzf-native).
+filtered list) and ~:nohighlight t~ (so ~helm~ doesn't paint over the
+~completions-common-part~ faces already embedded by ~fzf-native~).
 
 For ~:command~ sources a polling timer checks
 ~fzf-native-async-generation~ and calls ~helm-force-update~ as new
@@ -947,16 +947,16 @@ refreshes.
 
 | Variable                                 |                Default | Description                                                                                                  |
 |------------------------------------------+------------------------+--------------------------------------------------------------------------------------------------------------|
-| ~fzfa-helm-candidate-limit~              |                   2000 | Per-source cap for SINGLE-source helm paths.  Default is ~fzfa-helm-multi-source-candidate-limit~ × 10.       |
-| ~fzfa-helm-multi-source-candidate-limit~ |                    200 | Per-source cap for MULTI helm paths.  Helm renders every candidate eagerly; tighter than ~fzfa-max-candidates~.|
-| ~fzfa-helm-kill-buffer-on-exit~          |                    ~t~ | Kill the helm session buffer on exit so it doesn't linger in ~buffer-list~ and surface as a candidate in ~fzfa-buffer~-backed pickers downstream.  Set nil to defer to helm's default (bury). |
+| ~fzfa-helm-candidate-limit~              |                   2000 | Per-source cap for SINGLE-source ~helm~ paths.  Default is ~fzfa-helm-multi-source-candidate-limit~ × 10.       |
+| ~fzfa-helm-multi-source-candidate-limit~ |                    200 | Per-source cap for MULTI ~helm~ paths.  Helm renders every candidate eagerly; tighter than ~fzfa-max-candidates~.|
+| ~fzfa-helm-kill-buffer-on-exit~          |                    ~t~ | Kill the ~helm~ session buffer on exit so it doesn't linger in ~buffer-list~ and surface as a candidate in ~fzfa-buffer~-backed pickers downstream.  Set nil to defer to ~helm~'s default (bury). |
 
-*** Adding fzfa sources to a helm command
+*** Adding ~fzfa~ sources to a ~helm~ command
 
 Use ~fzfa-helm-source-from-command~ to lift an existing
-~fzfa-*~ command into a helm source — useful when you want to extend
+~fzfa-*~ command into a ~helm~ source — useful when you want to extend
 a helm-mini-style picker with ~fzf-native~-scored sources mixed in
-with built-in helm sources (~helm-source-buffers-list~,
+with built-in ~helm~ sources (~helm-source-buffers-list~,
 ~helm-source-bookmarks~, ...).  The function returns a LIST (one
 source for single-source commands, N sources for multi-source
 commands like ~fzfa-find-any~), so callers can compose with ~append~:
@@ -980,7 +980,7 @@ Example below:
           :buffer "*helm mini+fzfa*"))
 #+end_src
 
-The selection is routed back to the original command via fzfa's
+The selection is routed back to the original command via ~fzfa~'s
 ~:inject~ mode so each command's post-action (~find-file~, grep jump,
 history push) still fires.
 
@@ -991,8 +991,8 @@ If every source in your picker is itself an ~fzfa-*~ command,
 ~helm~ / ~ivy~ / ~vertico~ / ~icomplete~ from a single call, and under
 ~helm-mode~ it dispatches through ~fzfa-helm--multi-read~ with the
 shared polling timer and per-source caps.  Reach for
-~fzfa-helm-source-from-command~ only when you specifically want fzfa
-sources mixed with non-fzfa helm sources (e.g. adding to ~helm-mini~).
+~fzfa-helm-source-from-command~ only when you specifically want ~fzfa~
+sources mixed with non-~fzfa~ ~helm~ sources (e.g. adding to ~helm-mini~).
 
 *** Full setup example
 To get a consistent sorting/filtering experience in ~helm~ where each ~helm~
@@ -1046,7 +1046,7 @@ use ~fussy~ for non-~fzfa~ sources and ~fzfa~ otherwise. Example below.
                   (fzfa-helm-source-from-command 'fzfa-vc-any))
           :buffer "*helm mini+fzfa*"))
 #+end_src
-** icomplete-vertical / fido
+** ~icomplete-vertical~ / ~fido~
 ~icomplete-vertical~ has a few defaults that may not work very well with ~fzfa~.
 
 I use this config when using ~fzfa~ with ~icomplete-vertical~.
@@ -1107,9 +1107,9 @@ I use this config when using ~fzfa~ with ~icomplete-vertical~.
   (fido-vertical-mode))
 #+end_src
 
-** transient
+** ~transient~
 
-A [[https://github.com/jojojames/matcha/blob/master/matcha-fzfa.el][matcha transient]]
+A [[https://github.com/jojojames/matcha/blob/master/matcha-fzfa.el][~matcha~ transient]]
 is defined for invoking all ~fzfa~ commands from a single keybinding
 via [[https://github.com/jojojames/matcha][matcha]].
 
@@ -1122,9 +1122,9 @@ whatever your frontend already uses for this concept:
 
 | Frontend            | Key     | Mechanism                                 |
 |---------------------+---------+-------------------------------------------|
-| ivy / counsel       | ~C-M-m~ | ~ivy-call~ (ivy default)                  |
-| helm                | ~C-j~   | ~helm-execute-persistent-action~          |
-| vertico / icomplete | ~C-M-m~ | ~fzfa-apply-key~ (configurable defcustom) |
+| ~ivy~ / ~counsel~       | ~C-M-m~ | ~ivy-call~ (~ivy~ default)                  |
+| ~helm~                | ~C-j~   | ~helm-execute-persistent-action~          |
+| ~vertico~ / ~icomplete~ | ~C-M-m~ | ~fzfa-apply-key~ (configurable defcustom) |
 * Customization
 
 | Variable                       | Default                  | Description                                                                   |
@@ -1264,7 +1264,7 @@ any allocation, so oversized lines never reach the scoring path.
 
 ~fzfa-max-candidates~ caps only the number of strings consed into the
 Emacs list returned to the completion UI.  The C layer always scores and
-sorts *all* candidates: every matching string is passed through the fzf
+sorts *all* candidates: every matching string is passed through the ~fzf~
 scoring threads, the full scored set is counting-sorted, and then only the
 top N are handed back to Elisp.  The ~[FILTERED]~ count in the prompt
 always reflects the true number of matches, not the capped return value.
@@ -1300,12 +1300,12 @@ can be a burden when the total collection size is millions of candidates.
 In practice, the cap should not be an issue (and is configurable anyways)
 since it's returning the top N candidates at any one time.
 
-~fzfa-case-mode~ controls how the fzf scorer treats letter case.
+~fzfa-case-mode~ controls how the ~fzf~ scorer treats letter case.
 Read on every scoring call; changes take effect immediately.
 
 | Value     | Behavior                                                                                                                   |
 |-----------+----------------------------------------------------------------------------------------------------------------------------|
-| ~smart~   | Case-insensitive when the query is all lowercase; case-sensitive once it contains any uppercase character (fzf's default). |
+| ~smart~   | Case-insensitive when the query is all lowercase; case-sensitive once it contains any uppercase character (~fzf~'s default). |
 | ~ignore~  | Always case-insensitive.                                                                                                   |
 | ~respect~ | Always case-sensitive.                                                                                                     |
 
@@ -1370,8 +1370,8 @@ The prompt overlay shows live status during a search:
 : DIR IDX/[FILTERED](TOTAL)
 
 - ~DIR~ — abbreviated working directory
-- ~IDX~ — current selection index (vertico, ivy)
-- ~FILTERED~ — candidates passing the current fzf query
+- ~IDX~ — current selection index (~vertico~, ~ivy~)
+- ~FILTERED~ — candidates passing the current ~fzf~ query
 - ~TOTAL~ — total candidates collected from the shell command so far
 
 * Writing your own command
@@ -1426,7 +1426,7 @@ sync-firing producer (callback returns before the producer fn does)
 runs every CMD change inline, while an async-firing producer
 (jsonrpc, url-retrieve) updates a closure-scoped snapshot and the
 substrate re-renders on callback arrival.  Async producers are not
-supported under ~helm-mode~ — helm's candidates contract has no
+supported under ~helm-mode~ — ~helm~'s candidates contract has no
 notion of deferred delivery.
 
 For one-off queries, ~fzfa-shell-command~ prompts for a command
@@ -1468,11 +1468,11 @@ A 2-arg producer example refires per CMD-half change.  See
 ~jsonrpc-async-request~) for in-tree consumers.
 
 * Comparison
-|                                     | fzfa                       | affe               | helm                    | counsel       | consult           | fzf.el     |
+|                                     | ~fzfa~                     | ~affe~             | ~helm~                  | ~counsel~     | ~consult~         | ~fzf.el~   |
 |-------------------------------------+----------------------------+--------------------+-------------------------+---------------+-------------------+------------|
-| Frontends supported                 | vertico/icomplete/helm/ivy | vertico/icomplete? | helm only               | ivy only      | vertico/icomplete | own UI     |
-| Smart fuzzy scoring                 | ✓ (fzf-native)             | ✓ (emacs31 flex)   | ✓ (emacs31 flex or flx) | flx           | (emacs31 flex)    | ✓ (binary) |
-| Multi-component query               | ✓ (fzfa)                   | ✓ (orderless)      | ✓ (substring AND)       | ✓ (regex AND) | ✓ (orderless)     | ✓ (fzf)    |
+| Frontends supported                 | vertico/icomplete/helm/ivy | vertico/icomplete? | ~helm~ only               | ~ivy~ only      | vertico/icomplete | own UI     |
+| Smart fuzzy scoring                 | ✓ (~fzf-native~)           | ✓ (emacs31 ~flex~) | ✓ (emacs31 ~flex~ or ~flx~) | ~flx~     | (emacs31 ~flex~)  | ✓ (binary) |
+| Multi-component query               | ✓ (~fzfa~)                 | ✓ (~orderless~)    | ✓ (substring AND)       | ✓ (regex AND) | ✓ (~orderless~)   | ✓ (~fzf~)  |
 | Producer runs once                  | ✓**                        | ✓                  | ×                       | ×             | ×*                | ✓          |
 | Async multi-source                  | ✓                          | ×                  | ✓                       | ×             | sync only         | ×          |
 | Scales to large repos/sources       | ✓                          | ×                  | ×                       | ×             | ×                 | ✓          |
@@ -1486,7 +1486,7 @@ A 2-arg producer example refires per CMD-half change.  See
 - ~flx~ is smart fuzzy matching, but slow and doesn't scale to large
   codebases at all.
 - ~affe~, ~helm~, and ~consult~ can take advantage of
-  ~completion-styles~ and leverage Emacs 31's C flex implementation
+  ~completion-styles~ and leverage Emacs 31's C ~flex~ implementation
   using Gotoh's algorithm.  From my short testing, the C
   implementation doesn't scale very well to large codebases, being
   single-threaded.
@@ -1514,21 +1514,21 @@ How the other packages handle the smart-fuzzy-vs-filter dimension
 covered in [[*Smart fuzzy matching][Smart fuzzy matching]]:
 
 - =orderless= treats query components as substring / literal / regex
-  / flex predicates.  Its =flex= dispatcher is the only mainstream
+  / ~flex~ predicates.  Its =flex= dispatcher is the only mainstream
   pure-Elisp fuzzy implementation but is too slow for large
   candidate sets.  It does integrate with other Emacs sorting like
   history/recency.
 - =affe= filters via =all-completions= + optional ~orderless~ regex
   through ~completion-styles~.  Pure filter; no per-character scoring;
   ranking is whatever =all-completions= returns.
-- =helm-= sources use helm's multi-pattern matcher (substring or
+- =helm-= sources use ~helm~'s multi-pattern matcher (substring or
   regex).  A few external packages try to hook smart fuzzy matching
   into ~helm~ but with the downsides listed above.
 - =hotfuzz= is written in C and pluggable to ~completion-styles~.
 
 ** Multi-source
 
-- *helm* has native multi-source (helm-mini-style: stream from N
+- *~helm~* has native multi-source (helm-mini-style: stream from N
   producer processes concurrently, each filtered/scored live).
 - *vertico/consult* has =consult--multi=, which can mix sync and async
   sources (the dispatcher upgrades to an async pipeline when any source
@@ -1547,7 +1547,7 @@ covered in [[*Smart fuzzy matching][Smart fuzzy matching]]:
 
 ~consult~ and ~vertico~ integrate the most with base Emacs
 (plain ~completing-read~), but a ~consult~ function generally can't
-run in helm's UI or vice versa.  That's why each frontend's
+run in ~helm~'s UI or vice versa.  That's why each frontend's
 ecosystem duplicates the same async-* surface — there's a
 ~helm-rg~, a ~counsel-rg~, and a ~consult-ripgrep~.
 
@@ -1556,7 +1556,7 @@ dedicated extension (=fzfa-helm.el=, =fzfa-ivy.el=, =fzfa-vertico.el=)
 that wires the same producer + scorer pair into its native UI
 plumbing.  Using ~helm~ as an example, ~fzfa~ can provide "sources"
 that ~helm~ can read (e.g. with ~helm-mini~), and ~fzfa-*~ commands
-themselves render in helm's UI when ~helm-mode~ is on.
+themselves render in ~helm~'s UI when ~helm-mode~ is on.
 
 ** Per-package notes (opinions mixed in)
 
@@ -1568,7 +1568,7 @@ themselves render in helm's UI when ~helm-mode~ is on.
   scalable. Feels slightly sluggish compared to alternatives even with
   things tuned down. Probably the most feature rich of the bunch with
   the most third-party extensions. It doesn't use built-in Emacs APIs
-  so can feel like you're using "helm" instead of using "emacs". Can
+  so can feel like you're using "~helm~" instead of using "emacs". Can
   be a little inconsistent in experience as its sources can all use
   different completion algorithms which is good or bad depending on who
   you ask.
@@ -1595,22 +1595,22 @@ themselves render in helm's UI when ~helm-mode~ is on.
   where you can set a specific ripgrep shell command to run and a
   separate query to filter.
 
-- *[[https://github.com/minad/affe][affe]]*: closest architectural
+- *[[https://github.com/minad/affe][~affe~]]*: closest architectural
   cousin to ~fzfa~ — background producer + async filter.
   Matching can integrate with ~orderless~ or take advantage of any
   of the Emacs plumbing. Filtering is single-threaded Elisp;
-  plateaus around 1-2M candidates while fzf-native chews 10-20M in
+  plateaus around 1-2M candidates while ~fzf-native~ chews 10-20M in
   the same wall time (again, eye test).  Strict pure-Elisp win compared
-  to fzfa's native dep. ~fzfa~ took the most learning from this project
+  to ~fzfa~'s native dep. ~fzfa~ took the most learning from this project
   and its background producer + filter flow is what ~fzfa~ does. It
   doesn't do smart fuzzy matching, and it's still relatively "slow"
   (in the context of fuzzy matching, not prefix matching)
-  compared to newer alternatives (e.g. fff, fzf).
+  compared to newer alternatives (e.g. ~fff~, ~fzf~).
 
-- *[[https://github.com/bling/fzf.el][fzf.el]]*: shells out to the
+- *[[https://github.com/bling/fzf.el][~fzf.el~]]*: shells out to the
   =fzf= command-line binary as its UI.  Doesn't participate in
   Emacs's completion machinery (no =completing-read= integration, no
-  embark, no marginalia, no category dispatch).  Works if you want
+  ~embark~, no marginalia, no category dispatch).  Works if you want
   fzf-the-tool inside a buffer. It's a great option if you work in a large
   repo and don't want the C binary requirement ~fzfa~ imposes and also
   don't care about how integrated it is with other Emacs packages.
@@ -1618,9 +1618,9 @@ themselves render in helm's UI when ~helm-mode~ is on.
 ** Prior discussions
 
 - [[https://github.com/abo-abo/swiper/pull/1151][swiper: add counsel-fzf]]
-- [[https://github.com/abo-abo/swiper/issues/848][swiper: fzf integration]]
-- [[https://github.com/minad/consult/issues/587][consult: fzf integration]]
-- [[https://github.com/minad/consult/discussions/1312][consult: async fzf]]
+- [[https://github.com/abo-abo/swiper/issues/848][swiper: ~fzf~ integration]]
+- [[https://github.com/minad/consult/issues/587][~consult~: ~fzf~ integration]]
+- [[https://github.com/minad/consult/discussions/1312][~consult~: async ~fzf~]]
 
 * Architecture
 
@@ -1630,18 +1630,18 @@ abstraction, timer model, prompt overlay — see
 [[file:architecture.org][architecture.org]].
 
 The C scoring module under ~fzfa~ is documented separately in
-[[https://github.com/dangduc/fzf-native/blob/HEAD/architecture.org][fzf-native's architecture overview]]
+[[https://github.com/dangduc/fzf-native/blob/HEAD/architecture.org][~fzf-native~'s architecture overview]]
 (thread/lock model, ~AsyncSession~, arena allocator, counting sort,
 ~score_abort~ rule).
 
 For ~fussy~, the broader fuzzy completion-style framework that
 ~fzfa~ deliberately bypasses, see
-[[https://github.com/jojojames/fussy/blob/HEAD/architecture.org][fussy's architecture overview]].
+[[https://github.com/jojojames/fussy/blob/HEAD/architecture.org][~fussy~'s architecture overview]].
 
 * Acknowledgements
 
-- [[https://github.com/abo-abo/swiper][counsel]]
-- [[https://github.com/emacs-helm/helm][helm]]
-- [[https://github.com/minad/consult][consult]]
-- [[https://github.com/minad/affe][affe]]
-- [[https://github.com/bling/fzf.el][fzf.el]]
+- [[https://github.com/abo-abo/swiper][~counsel~]]
+- [[https://github.com/emacs-helm/helm][~helm~]]
+- [[https://github.com/minad/consult][~consult~]]
+- [[https://github.com/minad/affe][~affe~]]
+- [[https://github.com/bling/fzf.el][~fzf.el~]]

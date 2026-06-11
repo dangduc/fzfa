@@ -157,6 +157,7 @@ Display differences:
 ;;;###autoload
 (defun fzfa-imenu-all ()
   "Jump to an imenu entry across all open buffers using fzf.
+
 Buffers without an imenu index (or whose major mode does not support
 imenu) are skipped silently."
   (interactive)
@@ -165,6 +166,7 @@ imenu) are skipped silently."
 ;;;###autoload
 (defun fzfa-imenu-all-but-current ()
   "Jump to an imenu entry across all open buffers except the current one.
+
 Buffers without an imenu index (or whose major mode does not support
 imenu) are skipped silently."
   (interactive)

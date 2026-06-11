@@ -79,6 +79,7 @@
 ;;;###autoload
 (defun fzfa-yank-pop ()
   "Yank from `kill-ring' using fzf for selection.
+
 When invoked immediately after a yank command, replaces the previously
 yanked text with the selection (mirroring `yank-pop' / `consult-yank-pop')."
   (interactive "*")
@@ -178,6 +179,7 @@ yanked text with the selection (mirroring `yank-pop' / `consult-yank-pop')."
 
 (defun fzfa--theme-switch (sym)
   "Disable currently enabled themes (except SYM) and enable SYM, if any.
+
 SYM nil means leave nothing enabled."
   (dolist (th custom-enabled-themes)
     (unless (eq th sym) (disable-theme th)))
@@ -193,6 +195,7 @@ SYM nil means leave nothing enabled."
 ;;;###autoload
 (defun fzfa-theme ()
   "Prompt for a theme to enable, previewing each candidate live.
+
 Aborting (e.g. \\[keyboard-quit]) restores the themes that were enabled
 when the command was invoked.  Selecting \"default\" disables all themes."
   (interactive)
@@ -271,6 +274,7 @@ when the command was invoked.  Selecting \"default\" disables all themes."
 ;;;###autoload
 (defun fzfa-swiper-all ()
   "Search lines across all open buffers using fzf.
+
 Candidates display LINE:CONTENT; the originating buffer (file path or
 buffer name) is carried on each candidate as an `fzfa-location' text
 property and shown as the group header.  fzf scores only against
@@ -316,6 +320,7 @@ LINE:CONTENT — buffer names never enter the search input."
 
 (defun fzfa--commands (&optional predicate)
   "Return a sorted list of command names as strings.
+
 When PREDICATE is non-nil, only include commands for which
 \(funcall PREDICATE SYMBOL) returns non-nil."
   (let (commands)
@@ -328,6 +333,7 @@ When PREDICATE is non-nil, only include commands for which
 
 (defun fzfa--run-command (name)
   "Execute the command named NAME.
+
 Records it like \\[execute-extended-command]."
   (let ((cmd (intern name)))
     (setq this-command cmd
@@ -348,6 +354,7 @@ Records it like \\[execute-extended-command]."
 ;;;###autoload
 (defun fzfa-M-x-for-buffer ()
   "Run an extended command applicable to the current buffer's mode.
+
 Filters using `command-completion-default-include-p' when available,
 mirroring `execute-extended-command-for-buffer'."
   (interactive)
@@ -366,6 +373,7 @@ mirroring `execute-extended-command-for-buffer'."
 ;;;###autoload
 (defun fzfa-minor-mode-menu ()
   "Toggle a minor mode via fzf.
+
 Candidates are every command-bound symbol in `minor-mode-list'.
 Enabled modes sort to the top with an `[on]' prefix; disabled modes
 follow with `[off]'.  Selecting calls the mode function via
@@ -405,6 +413,7 @@ the global state for global modes."
 
 (defun fzfa--mark-candidates (markers)
   "Build `fzfa-location' candidates from MARKERS.
+
 Each marker contributes one candidate showing LINE:CONTENT of the
 target line, with the originating buffer (file path or buffer name)
 and the line number carried as an `fzfa-location' text property.
@@ -435,6 +444,7 @@ fzf-native's distinct-candidate guarantee holds."
 ;;;###autoload
 (defun fzfa-mark ()
   "Jump to a position in the current buffer's `mark-ring' using fzf.
+
 Includes the buffer's current `mark-marker' as the first candidate.
 Selection pushes point onto the mark ring before moving so the prior
 position is recoverable with \\[set-mark-command] \\[set-mark-command]."
@@ -458,6 +468,7 @@ position is recoverable with \\[set-mark-command] \\[set-mark-command]."
 ;;;###autoload
 (defun fzfa-global-mark ()
   "Jump to a position in `global-mark-ring' using fzf.
+
 Selection switches buffers when needed and moves point to the marked
 line.  Dead markers (buffer killed or position out of range) are
 silently skipped."
@@ -480,6 +491,7 @@ silently skipped."
 ;;;###autoload
 (defun fzfa-register ()
   "Select and use a register from `register-alist' via fzf.
+
 Dispatches by type: position-class registers (markers, frame and
 window configurations, framesets, file/file-query, bookmark) jump;
 remaining types (text, number, rectangle, …) insert at point.
@@ -524,6 +536,7 @@ Falls back to `insert-register' when `jump-to-register' signals."
 ;;;###autoload
 (defun fzfa-outline ()
   "Jump to an outline heading in the current buffer using fzf.
+
 Walks every line matching `outline-regexp' (set by `outline-mode',
 `outline-minor-mode', or the major mode's own definition — most
 programming modes set one).  Selection pushes point onto the mark
@@ -566,6 +579,7 @@ and line number."
 ;;;###autoload
 (defun fzfa-compile-error ()
   "Jump to an error from a compilation buffer using fzf.
+
 Walks the current buffer when it derives from `compilation-mode',
 otherwise the buffer returned by `next-error-find-buffer' (typically
 the most recent compile/grep buffer).  Each line carrying a

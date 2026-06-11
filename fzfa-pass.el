@@ -59,6 +59,7 @@
 ;;;###autoload
 (defun fzfa-pass-copy (&optional key)
   "Copy the password for KEY to the kill ring.
+
 When KEY is nil (e.g. called interactively), prompt for one."
   (interactive)
   (when-let* ((key (or key (fzfa-pass--read "Copy password: "))))

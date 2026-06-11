@@ -92,6 +92,7 @@
 
 (defvar-local fzfa-vertico--band-offset 0
   "Per-minibuffer first visible band index, for pagination.
+
 When `fzfa-vertico-columns-page-size' caps the number of bands
 rendered, this offset slides as the selection moves between
 bands so the band containing the selection always stays in
@@ -100,6 +101,7 @@ nothing else needs to mutate it directly.")
 
 (defvar-local fzfa-vertico--initial-snap-done nil
   "Per-minibuffer one-shot flag for the initial selection snap.
+
 `vertico--update' resets `vertico--index' to 0 on entry, which —
 once partitioned by `fzfa-vertico-columns-source-sort' — points
 at whichever candidate `fzfa--sort-by-history' promoted to the
@@ -115,6 +117,7 @@ user's explicit navigation.")
 
 (defcustom fzfa-vertico-columns-max 3
   "Maximum number of columns rendered per band.
+
 When the active completion produces more groups than this, the
 overflow groups wrap into additional bands stacked below.  For
 example, with `fzfa-vertico-columns-max' = 3 and 7 groups, the
@@ -157,6 +160,7 @@ Set to 0 or nil to disable pagination (all bands always visible)."
   #("  |  " 2 3 (display (space :width (1))
                  face (:inherit window-divider :inverse-video t)))
   "Separator string between adjacent columns.
+
 The middle character carries a `display' property that renders it
 as a 1-pixel-wide vertical line in the `window-divider' face, so
 the divider looks like a window separator on GUI frames.  On a
@@ -167,6 +171,7 @@ through as a readable fallback."
 
 (defcustom fzfa-vertico-columns-headers t
   "When non-nil, render group names as a header row above the candidates.
+
 The header consumes one slot of `vertico-count'."
   :type 'boolean
   :group 'fzfa-vertico)
@@ -174,6 +179,7 @@ The header consumes one slot of `vertico-count'."
 (defface fzfa-vertico-columns-header
   '((t :inherit minibuffer-prompt))
   "Face for source-name header text in `fzfa-vertico-columns-mode'.
+
 The overline above and underline beneath each header are layered
 on at render time using `window-divider's foreground, so the
 framing rules track theme changes alongside the column-separator
@@ -183,6 +189,7 @@ foreground / weight."
 
 (defcustom fzfa-vertico-columns-header-face 'fzfa-vertico-columns-header
   "Face applied to the column header row.
+
 Defaults to `fzfa-vertico-columns-header', which inherits from
 `minibuffer-prompt' and adds an underline."
   :type 'face
@@ -190,6 +197,7 @@ Defaults to `fzfa-vertico-columns-header', which inherits from
 
 (defcustom fzfa-vertico-columns-auto t
   "When non-nil, `fzfa-vertico-setup' wires up per-category activation.
+
 The hook fires from `fzfa-setup' when `vertico' is in
 `fzfa-extensions'.  Each entry in
 `fzfa-vertico-multiform-categories' is registered with
@@ -204,6 +212,7 @@ definitions without touching multiform — you can then enable
 
 (defcustom fzfa-vertico-multiform-categories '(fzfa-multi)
   "Completion categories that should auto-activate columns mode.
+
 Each symbol is registered with `vertico-multiform-categories'
 as (CATEGORY fzfa-vertico-columns-mode), so opening a
 `completing-read' under one of these categories turns the
@@ -281,6 +290,7 @@ previous band (same column-in-band)."
 ;;;###autoload
 (define-minor-mode fzfa-vertico-columns-mode
   "Render each completion group as a column in `vertico'.
+
 The active completion's `group-function' partitions candidates;
 each unique group becomes one column.  Falls back to the default
 stacked layout when there is no `group-function' or only one
@@ -302,6 +312,7 @@ group is produced."
 
 (defun fzfa-vertico--src-idx-of (part)
   "Return PART's first candidate `fzfa-src-idx', or `most-positive-fixnum'.
+
 Used as the sort key for the `source-idx' ordering mode."
   (let ((c (cadr part)))
     (or (and (stringp c)
@@ -311,6 +322,7 @@ Used as the sort key for the `source-idx' ordering mode."
 
 (defun fzfa-vertico--empty-query-p ()
   "Return non-nil when the active minibuffer has no user query.
+
 Used by the `scored' column-sort mode to lock declared order
 while sources stream in — without a query there is no rank to
 follow, and async arrival order would otherwise shuffle columns."
@@ -320,6 +332,7 @@ follow, and async arrival order would otherwise shuffle columns."
 
 (defun fzfa-vertico--sort-parts (parts)
   "Order PARTS according to `fzfa-vertico-columns-source-sort'.
+
 `sort' is stable, so groups with equal sort keys (e.g., no
 `fzfa-src-idx' property) retain their discovery order."
   (pcase fzfa-vertico-columns-source-sort
@@ -343,6 +356,7 @@ follow, and async arrival order would otherwise shuffle columns."
 
 (defun fzfa-vertico--partition (group-fun)
   "Partition `vertico--candidates' by GROUP-FUN.
+
 Returns ((GROUP . (CAND ...)) ...) ordered according to
 `fzfa-vertico-columns-source-sort'; per-group candidate order
 follows the original `vertico--candidates' order."
@@ -383,6 +397,7 @@ follows the original `vertico--candidates' order."
 
 (defun fzfa-vertico--move-source (dsrc)
   "Move DSRC sources horizontally in the linear source order.
+
 Row index is preserved (clamped to the destination source's row
 count).  Crossing a band boundary wraps to the adjacent band's
 edge source on the same data row, matching the visual reading
@@ -401,6 +416,7 @@ order left-to-right, top-to-bottom."
 
 (defun fzfa-vertico--move-row (drow)
   "Move DROW rows vertically within the current source's column.
+
 At the bottom of a source, DOWN jumps to the source visually
 below in the next band (same column-in-band).  At the top, UP
 jumps to the corresponding source in the previous band."
@@ -437,6 +453,7 @@ jumps to the corresponding source in the previous band."
 
 (defun fzfa-vertico--multi-columns-p ()
   "Non-nil when more than one group is currently rendered as columns.
+
 This is the condition under which our custom columnar navigation
 is meaningful.  When the active completion has no group-function,
 or when narrowing collapses the layout to a single column,
@@ -447,6 +464,7 @@ vertico / cursor commands."
 
 (defun fzfa-vertico-columns-right (&optional n)
   "Move N sources to the right in reading order (default 1).
+
 At a band's right edge, wraps to the next band's leftmost source
 on the same data row.  Falls back to `right-char' when the layout
 is single-column (no group-function, or narrowed to one group)."
@@ -457,6 +475,7 @@ is single-column (no group-function, or narrowed to one group)."
 
 (defun fzfa-vertico-columns-left (&optional n)
   "Move N sources to the left in reading order (default 1).
+
 At a band's left edge, wraps to the previous band's rightmost
 source on the same data row.  Falls back to `left-char' when the
 layout is single-column."
@@ -467,6 +486,7 @@ layout is single-column."
 
 (defun fzfa-vertico-columns-next (&optional n)
   "Move N rows down within the current source's column (default 1).
+
 At the source's last row, jumps to the source visually below in
 the next band.  Falls back to `vertico-next' when the layout is
 single-column — so vertico's normal scrolling still works after
@@ -478,6 +498,7 @@ narrowing to one source."
 
 (defun fzfa-vertico-columns-previous (&optional n)
   "Move N rows up within the current source's column (default 1).
+
 At the source's first row, jumps to the source visually above in
 the previous band.  Falls back to `vertico-previous' when the
 layout is single-column."
@@ -488,6 +509,7 @@ layout is single-column."
 
 (defun fzfa-vertico--move-band (dband)
   "Move DBAND bands vertically, keeping the same column-in-band.
+
 Row index within the destination source is preserved when
 possible, clamped to the destination's length.  Crossing the
 top/bottom edge is a no-op."
@@ -508,6 +530,7 @@ top/bottom edge is a no-op."
 
 (defun fzfa-vertico-columns-band-down (&optional n)
   "Jump N bands down to the source in the same column-in-band (default 1).
+
 Falls back to `vertico-next' when the layout is single-column."
   (interactive "p")
   (if (fzfa-vertico--multi-columns-p)
@@ -516,6 +539,7 @@ Falls back to `vertico-next' when the layout is single-column."
 
 (defun fzfa-vertico-columns-band-up (&optional n)
   "Jump N bands up to the source in the same column-in-band (default 1).
+
 Falls back to `vertico-previous' when the layout is single-column."
   (interactive "p")
   (if (fzfa-vertico--multi-columns-p)
@@ -526,6 +550,7 @@ Falls back to `vertico-previous' when the layout is single-column."
 
 (defun fzfa-vertico--path-like-p (s)
   "Heuristic: non-nil when S resembles a file path / grep-style result.
+
 Used by the `auto' value of `fzfa-vertico-columns-truncate' to
 pick right-anchored truncation for path-bearing candidates."
   (or (string-match-p "/" s)
@@ -534,11 +559,13 @@ pick right-anchored truncation for path-bearing candidates."
 (defconst fzfa-vertico--match-faces
   '(completions-common-part completions-first-difference)
   "Faces vertico applies to matched characters in `vertico--hilit'.
+
 Used to detect when right-truncation would drop a matched span
 off the leading edge, so the ellipsis can carry the hint forward.")
 
 (defun fzfa-vertico--has-match-face-p (s)
   "Return non-nil when S has any `fzfa-vertico--match-faces' span.
+
 Walks face text properties with `next-single-property-change'
 so the scan stays cheap even on long candidates."
   (let ((i 0) (len (length s)) hit)
@@ -552,6 +579,7 @@ so the scan stays cheap even on long candidates."
 
 (defun fzfa-vertico--truncate-right (s width)
   "Truncate S to visible WIDTH keeping the trailing characters.
+
 Prepends `fzfa-vertico-columns-ellipsis' when truncation occurs.
 Text properties on the surviving suffix are preserved, so
 vertico's match highlights and the selection face survive intact
@@ -589,6 +617,7 @@ signals \"there's a match in the part you can't see\"."
 
 (defun fzfa-vertico--truncate (s width)
   "Truncate S to visible WIDTH per `fzfa-vertico-columns-truncate'.
+
 Falls back to standard left-anchored `truncate-string-to-width'
 for unrecognised values."
   (pcase fzfa-vertico-columns-truncate
@@ -603,6 +632,7 @@ for unrecognised values."
 
 (defun fzfa-vertico--render-cell (cand idx width &optional group-fun)
   "Render CAND at flat index IDX, truncated/padded to WIDTH.
+
 Reuses `vertico--format-candidate' so selection highlighting and
 match-fontification stay consistent with vertico's defaults.
 When GROUP-FUN is non-nil, the candidate is passed through
@@ -624,6 +654,7 @@ instead of having their basenames chopped off the right."
 
 (defun fzfa-vertico--header-face-spec ()
   "Return a face spec for header text with `window-divider'-colored rules.
+
 Wraps `fzfa-vertico-columns-header-face' in an overline plus an
 underline, both drawn in `window-divider's foreground so the
 two rules visually frame each header into a tabular row that
@@ -638,6 +669,7 @@ foreground."
 
 (defun fzfa-vertico--scroll-offset (data-cap cur-row n-items)
   "Return per-source scroll offset to keep CUR-ROW visible.
+
 DATA-CAP is the visible row count for the band; N-ITEMS is the
 total length of the source's candidate list.  When CUR-ROW is
 nil (the source does not contain the selection) returns 0 — only
@@ -774,6 +806,7 @@ past its last item."
 ;;;###autoload
 (defun fzfa-vertico-setup ()
   "Wire fzfa's vertico integration into the current session.
+
 Invoked by `fzfa-setup' when `vertico' is listed in
 `fzfa-extensions'.  No-op when `vertico' is not installed —
 keeping the default `fzfa-extensions' list portable across users

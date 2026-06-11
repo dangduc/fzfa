@@ -36,6 +36,7 @@
 
 (defcustom fzfa-make-build-dir ""
   "Build directory relative to the project root.
+
 When non-empty, `fzfa-make' also searches this directory (and \"build\")
 for a Makefile/build.ninja."
   :type 'string
@@ -49,6 +50,7 @@ for a Makefile/build.ninja."
 
 (defcustom fzfa-make-cache-targets nil
   "When non-nil, cache parsed targets keyed by Makefile path + mtime.
+
 Reset the cache with `fzfa-make-reset-cache'."
   :type 'boolean
   :group 'fzfa-make)
@@ -70,6 +72,7 @@ Reset the cache with `fzfa-make-reset-cache'."
 
 (defcustom fzfa-make-arguments "-j%d"
   "Arguments passed to the make/ninja executable.
+
 `%d' is substituted with the resolved job count."
   :type 'string
   :group 'fzfa-make)
@@ -86,6 +89,7 @@ Reset the cache with `fzfa-make-reset-cache'."
 
 (defcustom fzfa-make-nproc 1
   "Default number of jobs (the `-j' value).
+
 0 auto-detects via `nproc' / `sysctl'.  A numeric prefix to `fzfa-make'
 overrides this."
   :type 'integer
@@ -93,6 +97,7 @@ overrides this."
 
 (defcustom fzfa-make-list-target-method 'default
   "How to enumerate Makefile targets.
+
 default — pure-elisp regex scan; fast but misses `include'd Makefiles.
 qp      — parse `make -nqp' output; accurate but slower.
 Ninja build files always use ninja's `-t targets' regardless."
@@ -115,6 +120,7 @@ Ninja build files always use ninja's `-t targets' regardless."
     fzfa-make-project-directory
     fzfa-make-dominating-directory)
   "Functions that return candidate Makefile directories, in priority order.
+
 The first one whose returned directory contains a Makefile/build.ninja wins."
   :type '(repeat (choice
                   (const :tag "Default directory"   fzfa-make-current-directory)
@@ -151,6 +157,7 @@ The first one whose returned directory contains a Makefile/build.ninja wins."
 
 (defun fzfa-make-project-directory ()
   "Return the current project root, or nil.
+
 Respects `fzfa-project-backend' via `fzfa--default-dir'."
   (let ((fzfa-directory nil))
     (and (or (project-current nil)
@@ -181,6 +188,7 @@ Respects `fzfa-project-backend' via `fzfa--default-dir'."
 
 (defun fzfa-make--makefile-exists (base-dir &optional dir-list)
   "Return the absolute path of the first Makefile/build.ninja in BASE-DIR.
+
 DIR-LIST is an optional list of subdirectories (relative to BASE-DIR)
 to also search.  Sets `fzfa-make--build-system' as a side effect."
   (let* ((default-directory (file-truename base-dir))
@@ -302,6 +310,7 @@ to also search.  Sets `fzfa-make--build-system' as a side effect."
 
 (defun fzfa-make--construct-command (arg makefile)
   "Return a compile command template for MAKEFILE.
+
 ARG is the prefix arg passed to `fzfa-make'.  The template ends with
 \"%s\" so a target name can be `format'-substituted in at action time."
   (let* ((exe (if (eq fzfa-make--build-system 'ninja)
@@ -352,6 +361,7 @@ ARG is the prefix arg passed to `fzfa-make'.  The template ends with
 ;;;###autoload
 (defun fzfa-make (&optional arg)
   "Pick a make/ninja target via fzfa and compile it.
+
 A numeric prefix ARG overrides `fzfa-make-nproc' for the `-j' flag."
   (interactive "P")
   (let ((makefile (fzfa-make--locate)))

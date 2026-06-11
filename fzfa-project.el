@@ -57,6 +57,7 @@
 ;;;###autoload
 (defun fzfa-project-find-file ()
   "Find a file in the current project.
+
 Candidate set comes from `project-files', so membership respects
 `project-vc-*' and `project-find-functions'."
   (interactive)
@@ -77,6 +78,7 @@ Candidate set comes from `project-files', so membership respects
 ;;;###autoload
 (defun fzfa-project-find-dir ()
   "Open a directory contained in the current project, in Dired.
+
 Candidates are the unique parent directories of `project-files', plus
 the project root itself."
   (interactive)
@@ -120,6 +122,7 @@ the project root itself."
 ;;;###autoload
 (defun fzfa-project-recentf ()
   "Open a recently visited file under the current project.
+
 Filters `recentf-list' to entries whose expanded path is under the
 current project's root."
   (interactive)
@@ -143,6 +146,7 @@ current project's root."
 ;;;###autoload
 (defun fzfa-project-switch-project ()
   "Switch to a known project root via fzf.
+
 After selection, dispatches through `project-switch-project' so the
 user's `project-switch-commands' menu kicks in."
   (interactive)

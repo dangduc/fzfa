@@ -93,11 +93,13 @@
 
 (defvar fzfa-debug nil
   "When non-nil at load time, compile debug logging into fzfa.
+
 Set before loading or re-evaluating fzfa.el; toggling at runtime
 has no effect (the check is macro-expanded at load time, like #ifdef).")
 
 (defmacro fzfa--log (fmt &rest args)
   "Emit a debug message FMT with ARGS if `fzfa-debug' is non-nil at load.
+
 Expands to nothing when disabled — zero runtime cost.  Logs to *Messages*
 only; variable `inhibit-message' is bound around the `message' call so
 the echo-area write is suppressed, otherwise it would stomp the
@@ -109,6 +111,7 @@ active minibuffer/mini-window display."
 
 (defcustom fzfa-max-candidates 10000
   "Max candidates returned to Elisp from `fzfa-completing-read'.
+
 The full filtered/total counts are still tracked and shown in the prompt.
 Set to nil or 0 to disable the cap (may be slow for very large result sets)."
   :type '(choice (const  :tag "No cap" nil)
@@ -117,15 +120,17 @@ Set to nil or 0 to disable the cap (may be slow for very large result sets)."
 
 (defcustom fzfa-refresh-delay 0.05
   "Seconds between polls for new C-side candidate generations.
+
 The background reader thread increments a generation counter as lines
 arrive; this timer checks that counter and schedules a display refresh
 when new data is available.  Lower values feel more responsive but burn
-more CPU on the polling loop.  Analogous to `consult-async-refresh-delay'."
+more CPU on the polling loop."
   :type 'float
   :group 'fzfa)
 
 (defcustom fzfa-input-debounce 0.1
   "Seconds of idle time to wait before retrying after interrupted scoring.
+
 When the user types fast, `while-no-input' aborts the scoring call.  This
 idle timer fires once typing pauses and re-triggers the display so results
 self-heal."
@@ -134,6 +139,7 @@ self-heal."
 
 (defcustom fzfa-input-throttle 0.2
   "Minimum seconds between display refreshes driven by new incoming data.
+
 Even when new candidate generations arrive continuously (e.g. a fast `find'
 streaming thousands of files), the completion UI is only re-exhibited once
 per this interval.  The debounce retry path is unaffected — after the user
@@ -143,6 +149,7 @@ pauses typing the display always self-heals regardless of this value."
 
 (defcustom fzfa-preview-delay 0.9
   "Seconds of idle time before live preview fires after a candidate change.
+
 Used by commands that preview the highlighted candidate as the selection
 moves (e.g. `fzfa-theme' loading the theme under point).  Implemented with
 `run-with-idle-timer', so fast typing or arrow-key bursts naturally suppress
@@ -156,6 +163,7 @@ live preview entirely (global escape hatch)."
 
 (defcustom fzfa-highlight 200
   "Controls C-side match highlighting of completion candidates.
+
 nil or a negative integer — no highlighting.
 t                        — highlight every returned candidate.
 a positive integer N     — highlight only the top N candidates.
@@ -168,6 +176,7 @@ run of matched bytes via fzf_get_positions."
 
 (defcustom fzfa-max-line-length 256
   "Maximum character length of a candidate line.
+
 nil           — no limit.
 positive N    — exclude lines longer than N characters.
 negative -N   — include but truncate lines to N characters.
@@ -213,6 +222,7 @@ Propagated to `fzf-native-fuzzy' via `:around' advice on the
 
 (defcustom fzfa-cache-size 40
   "Maximum number of scored snapshots cached per async session.
+
 Each entry stores the top-K results and the full matched-candidate
 index for one query, enabling exact-fresh hits (skip scoring) and
 prefix-refinement hits (rescore only previously-matched candidates
@@ -265,6 +275,7 @@ Read at session start; changing it does not affect running sessions."
     (vc        . "vc.el")
     (vertico   . "Vertico"))
   "Single source of truth for fzfa extensions.
+
 Each entry is (SYMBOL . DESCRIPTION).  Adding a new extension is a
 one-line change here — the default value and `:type' of
 `fzfa-extensions', plus the prune set in `fzfa-sync-autoloads',
@@ -274,6 +285,7 @@ all derive from this alist.")
 (defcustom fzfa-extensions
   (mapcar #'car fzfa--extension-registry)
   "List of fzfa extensions to load from `fzfa-setup'.
+
 Each SYMBOL causes `fzfa-setup' to call `fzfa-SYMBOL-setup' if
 defined.  The autoloaded commands inside each extension remain
 callable regardless of this list.
@@ -329,7 +341,8 @@ or restart Emacs for that case."
 
 (defcustom fzfa-project-backend 'project
   "How to resolve the root directory for fzfa commands.
-project    Use `project.el' to find the project root (default, matches consult).
+
+project    Use `project.el' to find the project root (default).
 projectile Use `projectile-project-root'.
 nil        Use `default-directory' (no project detection).
 function   Call the function with no arguments; Returns a directory string."
@@ -343,10 +356,12 @@ function   Call the function with no arguments; Returns a directory string."
 
 (defvar fzfa--setup-done nil
   "Non-nil once `fzfa--ensure-setup' has installed registrations.
+
 Reset to nil to force a re-setup on the next entry-point call.")
 
 (defvar fzfa--multi-mode nil
   "Dispatch flag for `fzfa-completing-read'.
+
 - `:extract'         — throw `fzfa-extracted' with the call's keyword args.
 - (`:inject' . CAND) — return CAND directly without prompting.
 Bound by `fzfa-multi-read' to derive multi-source sources from
@@ -354,6 +369,7 @@ existing single-source commands without modifying their definitions.")
 
 (defvar fzfa-directory nil
   "Per-call directory override for fzfa commands.
+
 When non-nil, supersedes `fzfa-project-backend' and `default-directory'.
 Intended for `let'-binding when extending built-in commands:
 
@@ -363,11 +379,13 @@ Priority: `fzfa-directory' > project backend > `default-directory'.")
 
 (defun fzfa-try-completion (string _table _pred _point)
   "Try-completion for the fzfa completion style.
+
 Always accepts STRING as-is; scoring is done in C."
   (cons string (length string)))
 
 (defun fzfa-all-completions (string table pred _point)
   "All-completions for the fzfa completion style.
+
 Passes STRING through to the collection TABLE filtered by PRED.
 Highlighting is applied by the C layer (see `fzfa-highlight')."
   (funcall table string pred t))
@@ -376,6 +394,7 @@ Highlighting is applied by the C layer (see `fzfa-highlight')."
 
 (defun fzfa--frontend-index ()
   "Return the active completion UI's selection index (0-based), or nil.
+
 Returns nil for frontends without a selection index (e.g. icomplete)."
   (cond
    ((bound-and-true-p vertico-mode) (max 0 vertico--index))
@@ -448,6 +467,7 @@ standard `icomplete-exhibit' to repopulate the overlay's
 
 (defun fzfa--frontend-exhibit ()
   "Trigger a display refresh in the active completion UI.
+
 Handles vertico and icomplete.  `ivy' is handled separately."
   (when-let* ((win (active-minibuffer-window)))
     (with-selected-window win
@@ -460,6 +480,7 @@ Handles vertico and icomplete.  `ivy' is handled separately."
 
 (defun fzfa--frontend-push (ivy-push-fn)
   "Refresh the active completion display.
+
 Under `ivy-mode' (push model) `funcall' IVY-PUSH-FN; otherwise hand
 off to `fzfa--frontend-exhibit' for the pull-model frontends.
 Designed to be passed straight to `run-with-idle-timer' with
@@ -470,6 +491,7 @@ IVY-PUSH-FN as the trailing argument, or called directly inline."
 
 (defun fzfa--insert-prompt-if-ivy ()
   "Force ivy to redraw its prompt if `ivy-mode' is active.
+
 Required because `ivy--exhibit' skips the prompt redraw when the
 candidate body didn't change; our dynamic-state pre-prompt content
 \(stats line, narrow indicator) would otherwise stay stale.  No-op
@@ -484,6 +506,7 @@ under non-ivy frontends."
 (defcustom fzfa-after-visit-hook
   '(recenter pulse-momentary-highlight-one-line)
   "Hook run after a fzfa command visits its selection.
+
 Each command's action lambda wraps its body in `fzfa-with-visit', which
 fires this hook once the visit completes (point is at the destination)."
   :type 'hook :group 'fzfa)
@@ -496,6 +519,7 @@ fires this hook once the visit completes (point is at the destination)."
 (defcustom fzfa-after-preview-hook
   '(recenter pulse-momentary-highlight-one-line)
   "Hook run after `fzfa-preview-show' displays a candidate.
+
 Fires on every preview tick (point is at the previewed location in the
 origin window)."
   :type 'hook :group 'fzfa)
@@ -557,6 +581,7 @@ already binds to the constructor's `:directory'.  Multi sessions read
 
 (defun fzfa--resolve-apply (cand)
   "Resolve the apply function for CAND in the active fzfa session.
+
 Returns the function or nil when no apply is available.
 
 Multi: route via `fzfa--multi-source-of', prefer the source's `:apply'
@@ -659,6 +684,7 @@ Silently no-ops when no `:apply' is defined for the source/session."
 
 (defun fzfa--minibuffer-install-apply-key ()
   "Bind `fzfa-apply-key' to `fzfa-apply-current' in the active minibuffer.
+
 Installed via a per-instance child of `current-local-map' so we don't
 mutate the frontend's shared keymap.  No-op under `ivy-mode' (ivy uses
 `fzfa-ivy.el's `:around' advice on `ivy-call' instead) or when
@@ -689,6 +715,7 @@ mutate the frontend's shared keymap.  No-op under `ivy-mode' (ivy uses
 
 (defcustom fzfa-preview-file-size-limit (* 1 1024 1024)
   "Maximum file size in bytes that `fzfa--file-preview' will open.
+
 Files larger than this are skipped (no preview) to keep selection
 movement snappy even when the cursor lands on multi-megabyte binaries.
 Set to nil to remove the cap (not recommended for large repositories).
@@ -723,6 +750,7 @@ during preview, which would prompt for a passphrase."
     (fzfa-grep     :preview fzfa--grep-preview)
     (fzfa-location :preview fzfa--location-preview))
   "Per-category preview handlers.
+
 Alist of (CATEGORY . PLIST), where PLIST recognizes :setup, :preview,
 :exit, :return slots (see commentary in fzfa.el).  Only :preview is
 required.  Categories without an entry get no preview.
@@ -740,6 +768,7 @@ or `setq') to add categories of your own."
 
 (defvar fzfa--preview-session nil
   "Active preview session: (HANDLER . STATE-PLIST).
+
 `let'-bound by `fzfa-sync/async-completing-read' so the session is
 visible from :setup, :preview, :exit, and :return.  Use
 `fzfa-preview-get' / `fzfa-preview-put' to access the state plist.")
@@ -761,6 +790,7 @@ visible from :setup, :preview, :exit, and :return.  Use
 
 (defun fzfa--preview-handler (preview category)
   "Resolve the handler plist for this call, or nil if preview is disabled.
+
 PREVIEW is the explicit `:preview' keyword value (nil means \"fall back
 to the registry\"):
   nil        — look up CATEGORY in `fzfa-preview-functions'.
@@ -778,6 +808,7 @@ wiring nil into individual calls)."
 
 (defun fzfa--preview-call (action &rest args)
   "Dispatch ACTION to the active session's handler with ARGS.
+
 Selects the captured origin window, makes its buffer current, rebinds
 `default-directory' to the value captured at install time, and traps
 errors so a bad handler can't break completion.  No-op when ACTION has
@@ -801,6 +832,7 @@ no slot in the handler or when there is no active session."
 
 (defun fzfa--preview-install (&optional delay)
   "Install live preview in the current minibuffer for the active session.
+
 Call from inside a `minibuffer-with-setup-hook' lambda.  Reads the
 handler from `fzfa--preview-session', captures origin window/buffer
 and `default-directory' into the session state, dispatches :setup, and
@@ -860,6 +892,7 @@ immediately on every selection change."
 
 (defun fzfa--preview-return (cand)
   "Dispatch :return on the active session with CAND (nil = aborted).
+
 Called from the constructors after `completing-read' unwinds.  The
 session `let'-binding still encloses this call, so handlers see their
 stashed state and the captured `default-directory'."
@@ -936,22 +969,10 @@ read `buffer-file-name' during their own setup."
 
 (defun fzfa-preview-show (buffer &optional pos)
   "Show BUFFER (optionally moved to POS) in the originating window.
+
 Does not steal the minibuffer's input focus.  POS may be a buffer
 position number or a marker; when nil, point is left where it was.
-Public helper for `:preview' handlers to call.
-
-The originating window — the one selected just before the minibuffer
-opened — is the same window the post-selection action (e.g. `find-file')
-will land in once the minibuffer exits, so preview and selection share
-one slot by construction.  `fzfa--preview-call' already selects it
-before invoking handlers; this function just uses `display-buffer-same-window'
-so `display-buffer' honors that selection instead of routing to an LRU
-non-selected window.
-
-To customize placement (side window, popup frame, fresh split), configure
-`display-buffer-alist' at the Emacs level — that applies uniformly to both
-the preview here and the eventual selection action, avoiding the half-broken
-\"preview lands here, selection lands there\" split."
+Public helper for `:preview' handlers to call."
   (when (buffer-live-p buffer)
     (when pos
       (with-current-buffer buffer
@@ -966,6 +987,7 @@ the preview here and the eventual selection action, avoiding the half-broken
 
 (defun fzfa--grep-preview (cand)
   "Open the FILE from a FILE:LINE:CONTENT grep CAND at LINE for preview.
+
 Resolves FILE against the captured `default-directory' (the search root
 when invoked from `fzfa-completing-read')."
   (when (and cand
@@ -985,6 +1007,7 @@ when invoked from `fzfa-completing-read')."
 
 (defun fzfa--location-preview (cand)
   "Preview SOURCE at LINE for an `fzfa-location' CAND.
+
 Reads `(SOURCE . LINE)' off CAND's `fzfa-location' text property.
 SOURCE is resolved as a file path when `file-readable-p', otherwise as
 a live buffer name.  Computes the line's start position in the source
@@ -1070,6 +1093,7 @@ though `delay-mode-hooks' suppresses `global-font-lock-mode'."
 
 (defun fzfa--file-preview-return (cand)
   "Promote CAND's buffer (if accepted) and kill the remaining ephemerals.
+
 The promoted buffer survives so the caller's subsequent `find-file'
 reuses it instead of re-loading from disk."
   (when-let* ((opener (fzfa-preview-get :opener)))
@@ -1149,6 +1173,7 @@ e.g., 1234567 → 1,234,567."
 
 (defun fzfa--format-stats (prefix idx filtered total)
   "Format the fzfa stats text \"PREFIX[N/][FILTERED](TOTAL) \".
+
 PREFIX is the leading text — e.g. \"PROMPT DIR \", \"DIR \", or just
 \"PROMPT\" — and is emitted verbatim.  IDX is the 0-based selection
 index; when non-nil it's rendered as \"N/\", when nil that segment is
@@ -1272,6 +1297,7 @@ Returns the empty string otherwise."
 
 (defun fzfa--candidate-limit ()
   "Return `fzfa-max-candidates' when it is a positive integer, else nil.
+
 Nil disables the cap on the C side."
   (and fzfa-max-candidates
        (> fzfa-max-candidates 0)
@@ -1279,6 +1305,7 @@ Nil disables the cap on the C side."
 
 (defun fzfa--final-p (r handle query)
   "Return non-nil when R is the final answer for QUERY on HANDLE.
+
 R is the value returned by `fzf-native-async-candidates' for QUERY.
 The result is final in either of two cases:
   - R is non-nil (candidates to display); or
@@ -1317,10 +1344,12 @@ HANDLES may be a single async handle, a list, or a vector; nil values
 
 (defvar fzfa--hist-hash nil
   "Cached string→position hash for the active minibuffer history.
+
 Lower positions are more recent.  Built lazily by `fzfa--history-hash'.")
 
 (defvar fzfa--hist-hash-last-val nil
   "List `fzfa--hist-hash' was built from; `eq'-compared per call.
+
 Any update to the history list (entries cons onto the head) breaks
 identity and triggers a rebuild.")
 
@@ -1435,6 +1464,7 @@ when RESOLVE-PATHS is nil."
 
 (defun fzfa--default-dir ()
   "Return the working directory for fzfa commands.
+
 Priority: `fzfa-directory' >
           `fzfa-project-backend' >
           `default-directory'."
@@ -1469,6 +1499,7 @@ Suggested values:
 
 (defcustom fzfa-shell-command-debounce 0.2
   "Seconds of typing silence before a shell-command restart fires.
+
 Each keystroke that changes the command portion of the minibuffer
 reschedules a fresh restart timer; the producer process is not
 spawned until the user pauses for this long, so a burst of
@@ -1517,6 +1548,7 @@ both."
 
 (defcustom fzfa-display-key ">"
   "Key string that toggles compact view of the CMD portion.
+
 When compact, only the program name and the quoted-argument slot
 \(if any) are visible; flags are hidden behind a `...' display.
 Press the key again to expand and edit the full command.  The
@@ -1527,6 +1559,7 @@ session starts compact.  Set to nil to disable the feature entirely
 
 (defun fzfa--display-cmd-bounds (sep)
   "Return (CMD-BEG . CMD-END) for the CMD region in the current minibuffer.
+
 SEP is the separator character used by the active split style.  Returns
 nil when the minibuffer does not begin with SEP or no closing SEP is
 present yet."
@@ -1540,6 +1573,7 @@ present yet."
 
 (defun fzfa--display-make-overlays (cmd-beg cmd-end)
   "Return overlays compacting flag regions between CMD-BEG and CMD-END.
+
 Uses the *last* balanced `\\='…\\=' / \"…\" pair as anchor (so an
 earlier quoted flag value like `-flag=\\='val\\='' is ignored in favor
 of the trailing input slot): text from the end of the program name up
@@ -2350,6 +2384,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
 
 (defun fzfa--extract-args (cmd)
   "Run CMD in `:extract' mode and return its keyword args plist.
+
 Returns nil if CMD does not flow through a fzfa `completing-read'."
   (catch 'fzfa-extracted
     (let ((fzfa--multi-mode :extract))
@@ -2360,6 +2395,7 @@ Returns nil if CMD does not flow through a fzfa `completing-read'."
 
 (defun fzfa--smart-resolve (clauses)
   "Return the first CMD in CLAUSES whose conditions are satisfied, else nil.
+
 Each CLAUSE is (CMD &key executable predicate).  A clause matches when
 CMD is `fboundp', its `:executable' (if any) is on PATH, and its
 `:predicate' (if any) returns non-nil.  Clauses without either keyword
@@ -2435,6 +2471,7 @@ PATH and whose command symbol is bound: %s."
 
 (defcustom fzfa-multi-narrow-key "<"
   "Key string that activates source narrowing in `fzfa-multi-read'.
+
 Press this key in a multi-source minibuffer, then a source's narrow
 character, to restrict candidates to that source.  Re-pressing the
 same combination widens back to all sources.  Set to nil to disable
@@ -2445,6 +2482,7 @@ narrowing entirely."
 
 (defconst fzfa--tofu-base #x100000
   "Base Unicode Private Use Area codepoint for source-disambiguation suffixes.
+
 Each multi source's candidates carry a single trailing codepoint at
 `fzfa--tofu-base' + source-idx, propertized `display \"\"' so it renders
 invisibly while making cross-source duplicates `string='-unique.
@@ -2455,6 +2493,7 @@ See consult's `consult--tofu-encode' for the same trick.")
 
 (defvar fzfa--multi-active-sources nil
   "Source vector bound across the active `fzfa--multi-read' session.
+
 Read by frontends that need per-source rendering — currently the
 ivy display transformer in `fzfa-ivy.el', which decodes each
 candidate's tofu suffix into its source name.")
@@ -2469,6 +2508,7 @@ candidate's tofu suffix into its source name.")
 
 (defun fzfa--tofu-hide (s)
   "Return S without its trailing tofu codepoint, if any.
+
 Returns S unchanged when there is no tofu suffix."
   (if (and (stringp s)
            (let ((n (length s)))
@@ -2479,6 +2519,7 @@ Returns S unchanged when there is no tofu suffix."
 
 (defun fzfa--multi-tag (cand idx hash)
   "Return CAND tagged for source IDX.
+
 Appends an invisible tofu suffix so cross-source duplicates remain
 `string='-distinct, sets a `fzfa-src-idx' text property at position 0
 for in-band dispatch, and records the tagged string in HASH as a
@@ -2497,6 +2538,7 @@ preserves the snapshot's TOFU suffix but drops its text property)."
 
 (defun fzfa--multi-source-of (cand sources-v hash)
   "Return the source plist responsible for CAND, or nil.
+
 SOURCES-V is the vector of source plists; HASH maps CAND to source index."
   (and (stringp cand) (> (length cand) 0)
        (let ((idx (or (get-text-property 0 'fzfa-src-idx cand)
@@ -2505,6 +2547,7 @@ SOURCES-V is the vector of source plists; HASH maps CAND to source index."
 
 (defun fzfa--multi-source-idx (cand hash)
   "Return the source index for CAND, or nil.
+
 HASH maps CAND to source index."
   (and (stringp cand) (> (length cand) 0)
        (or (get-text-property 0 'fzfa-src-idx cand)
@@ -2588,6 +2631,7 @@ Lifecycle:
 
 (defun fzfa--multi-rank (results query async-p)
   "Top fzf score for RESULTS under QUERY.
+
 For async sources (ASYNC-P non-nil) the C async path does not attach
 `completion-score' text properties, so we re-score the top candidate
 once via `fzf-native-score'.  For sync sources the score is read off
@@ -2642,6 +2686,7 @@ Returns non-nil iff a fetch was actually issued."
 
 (defun fzfa--multi-derive-narrow-key (name used)
   "Return a free single-character narrow key for source NAME.
+
 USED is a hash table of already-allocated length-1 strings.  Tries
 each word's first character (case preserved) from NAME split on
 \"-\"; falls back to a-z / A-Z / 0-9.  Errors when the pool is
@@ -2662,6 +2707,7 @@ exhausted."
 (defun fzfa--format-narrow-hint (sources-v narrow-idx
                                            &optional width prefix-key)
   "Format the narrow-menu hint.
+
 SOURCES-V is the source vector; NARROW-IDX is the active narrow
 index or nil.  Shows every source as `KEY:NAME', separated by two
 spaces, wrapping between entries when a line would exceed WIDTH
@@ -2711,6 +2757,7 @@ indicate the prefix widens.  Multi-line output relies on
 
 (defun fzfa--multi-allocate-narrow-keys (sources)
   "Return SOURCES with each plist augmented with a length-1 :narrow key.
+
 Two passes: explicit :narrow values are coerced and reserved first
 \(duplicates signal an error); remaining sources derive keys from
 their :name via `fzfa--multi-derive-narrow-key'."
@@ -2740,6 +2787,7 @@ their :name via `fzfa--multi-derive-narrow-key'."
 
 (cl-defun fzfa--multi-read (sources &key (prompt "fzf-multi: "))
   "Run `completing-read' across multiple SOURCES, fzfa style.
+
 PROMPT is shown in the minibuffer.
 
 Internal — users should call `fzfa-multi-read' which derives sources
@@ -3388,6 +3436,7 @@ Per-source plist keys:
 ;;;###autoload
 (defun fzfa-multi-read (commands &rest options)
   "Run a multi-source completing-read over COMMANDS.
+
 Each entry in COMMANDS is either a bare command symbol or a list
 \(COMMAND :narrow KEY) overriding the auto-derived narrow key for
 that source (KEY is a single character — symbol, ?char, or string).
@@ -3485,6 +3534,7 @@ inner sources receive auto-derived keys from their own :name."
     (fzfa-hungry-swiper :narrow S)
     fzfa-locate)
   "Commands shown by `fzfa-find-any'.
+
 Each entry is either a bare command symbol or a list
 \(COMMAND :narrow KEY) overriding the auto-derived narrow key."
   :type '(repeat (choice function (cons function plist)))
@@ -3504,6 +3554,7 @@ Each entry is either a bare command symbol or a list
     (fzfa-swiper :narrow s)
     (fzfa-smart-grep :narrow g))
   "Commands shown by `fzfa-find-some'.
+
 Each entry is either a bare command symbol or a list
 \(COMMAND :narrow KEY) overriding the auto-derived narrow key."
   :type '(repeat (choice function (cons function plist)))
@@ -3524,6 +3575,7 @@ Each entry is either a bare command symbol or a list
 ;;;###autoload
 (defun fzfa-passwords ()
   "Multi-source fuzzy completion over `pass' and Chrome's password manager.
+
 Selecting an entry copies its password to the kill ring via the
 originating source's command (`fzfa-pass-copy' or
 `fzfa-chrome-pass-copy')."
@@ -3553,12 +3605,14 @@ reader-side cap still runs as a backstop."
 
 (defconst fzfa--grep-line-regexp "\\`\\(.*?\\):\\([0-9]+\\):"
   "Lazy parser for `fzfa-grep' category candidates.
+
 Group 1 is SOURCE (file path or buffer name).  Group 2 is LINE.
 Lazy match anchors on the first `:DIGITS:' boundary so a colon-bearing
 buffer name does not corrupt the split.")
 
 (defun fzfa--goto-source (source line)
   "Open SOURCE and jump to LINE.
+
 SOURCE is a file path when `file-exists-p'; otherwise it is treated as
 a buffer name."
   (cond
@@ -3581,6 +3635,7 @@ Composed with `embark-general-map' via `embark-keymap-alist'.")
 
 (defun fzfa--grep-group (cand transform)
   "Group function for FILE:LINE:CONTENT grep candidate CAND.
+
 TRANSFORM nil  → return the filename as the section header.
 TRANSFORM non-nil → strip the filename prefix; display LINE:CONTENT only."
   (if (string-match fzfa--grep-line-regexp cand)
@@ -3593,6 +3648,7 @@ TRANSFORM non-nil → strip the filename prefix; display LINE:CONTENT only."
 
 (defun fzfa--location-candidate (cand source line)
   "Tag CAND with SOURCE and LINE as an `fzfa-location' text property.
+
 Modifies CAND in place and returns it.  The property is attached at index
 0 only so the interval tree stays one node per candidate.  SOURCE is a
 file path or buffer name; LINE is the 1-based line number.
@@ -3616,6 +3672,7 @@ Composed with `embark-general-map' via `embark-keymap-alist'.")
 
 (defun fzfa--location-group (cand transform)
   "Group function for `fzfa-location' candidate CAND.
+
 TRANSFORM nil  → return the source (file or buffer) as the section header.
 TRANSFORM non-nil → return CAND unchanged.
 Reads the source off CAND's `fzfa-location' text property; returns CAND

@@ -26,6 +26,7 @@
 
 (defcustom fzfa-rg-files-command "rg --files"
   "Shell command used by `fzfa-rg-files'.
+
 Run from `default-directory'; stdout lines become file candidates."
   :type 'string
   :group 'fzfa)
@@ -33,6 +34,7 @@ Run from `default-directory'; stdout lines become file candidates."
 (defcustom fzfa-rg-command
   "rg --line-number --no-heading --with-filename %s ''"
   "Shell command used by `fzfa-rg' for content search.
+
 A `%s' placeholder is filled with the max-columns flag derived from
 `fzfa-max-line-length'.  Output must be FILE:LINE:CONTENT."
   :type 'string
@@ -41,6 +43,7 @@ A `%s' placeholder is filled with the max-columns flag derived from
 ;;;###autoload
 (defun fzfa-rg-files ()
   "Find a file under `default-directory' using rg --files.
+
 The command is configurable via `fzfa-rg-files-command'."
   (interactive)
   (when-let* ((result (fzfa-completing-read
@@ -50,6 +53,7 @@ The command is configurable via `fzfa-rg-files-command'."
 ;;;###autoload
 (defun fzfa-rg ()
   "Search file contents under `default-directory' with rg.
+
 Streams all file contents as FILE:LINE:CONTENT; type to
  fuzzy-filter across them.
 Selecting a candidate opens the file at that line.

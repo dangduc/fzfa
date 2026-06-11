@@ -35,12 +35,14 @@
 
 (defcustom fzfa-mail-dump-timeout 120
   "Seconds to wait for the Mail.app dump before giving up.
+
 Large inboxes (10k+ messages) can take 30s+ to enumerate."
   :type 'number
   :group 'fzfa)
 
 (defconst fzfa-mail--dump-script
   "var Mail = Application('Mail');
+
    var msgs = Mail.inbox.messages;
    var ids = msgs.messageId();
    var dates = msgs.dateReceived();
@@ -57,6 +59,7 @@ Large inboxes (10k+ messages) can take 30s+ to enumerate."
 
 (defvar fzfa-mail--cache nil
   "Cached messages.
+
 Each entry is a plist with `:id', `:date', `:from', and `:subject' keys.")
 
 (defun fzfa-mail--osascript-lines (script)

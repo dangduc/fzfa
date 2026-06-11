@@ -31,30 +31,35 @@
 
 (defcustom fzfa-git-grep-command "git --no-pager grep -n \"\""
   "Shell command used by `fzfa-git-grep' for content search.
+
 Output must be FILE:LINE:CONTENT."
   :type 'string
   :group 'fzfa)
 
 (defcustom fzfa-git-ls-files-command "git ls-files"
   "Shell command used by `fzfa-git-ls-files'.
+
 Run from `default-directory'; stdout lines become file candidates."
   :type 'string
   :group 'fzfa)
 
 (defcustom fzfa-git-modified-locally-command "git ls-files -m"
   "Shell command used by `fzfa-git-modified-locally'.
+
 Run from `default-directory'; stdout lines become file candidates."
   :type 'string
   :group 'fzfa)
 
 (defcustom fzfa-git-added-files-command "git ls-files -o --exclude-standard"
   "Shell command used by `fzfa-git-added-files'.
+
 Run from `default-directory'; stdout lines become file candidates."
   :type 'string
   :group 'fzfa)
 
 (defcustom fzfa-git-staged-for-commit-command "git diff --cached --name-only"
   "Shell command used by `fzfa-git-staged-for-commit'.
+
 Run from `default-directory'; stdout lines become file candidates."
   :type 'string
   :group 'fzfa)
@@ -62,6 +67,7 @@ Run from `default-directory'; stdout lines become file candidates."
 (defcustom fzfa-git-modified-in-head-command
   "git diff-tree --no-commit-id --name-only -r HEAD"
   "Shell command used by `fzfa-git-modified-in-head'.
+
 Run from `default-directory'; stdout lines become file candidates."
   :type 'string
   :group 'fzfa)
@@ -71,6 +77,7 @@ Run from `default-directory'; stdout lines become file candidates."
           " --pretty=format:'%h  %ad  %<(20,trunc)%aN  %s'"
           " --date=format:'%Y-%m-%d %H:%M'")
   "Shell command used by `fzfa-git-log-grep'.
+
 Each output line must begin with the commit's short SHA followed by
 display columns; the leading hex token is parsed as the SHA when a
 candidate is selected."
@@ -85,6 +92,7 @@ candidate is selected."
 ;;;###autoload
 (defun fzfa-git-grep ()
   "Search file contents under `default-directory' with git grep.
+
 Streams all file contents as FILE:LINE:CONTENT; type to
  fuzzy-filter across them.
 Selecting a candidate opens the file at that line.
@@ -101,6 +109,7 @@ The command is configurable via `fzfa-git-grep-command'."
 ;;;###autoload
 (defun fzfa-git-ls-files ()
   "Find a tracked file in the current Git repo using git ls-files.
+
 The command is configurable via `fzfa-git-ls-files-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
@@ -113,6 +122,7 @@ The command is configurable via `fzfa-git-ls-files-command'."
 ;;;###autoload
 (defun fzfa-git-modified-locally ()
   "Pick a locally-modified tracked file in the current Git repo.
+
 The command is configurable via `fzfa-git-modified-locally-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
@@ -125,6 +135,7 @@ The command is configurable via `fzfa-git-modified-locally-command'."
 ;;;###autoload
 (defun fzfa-git-added-files ()
   "Pick an untracked file in the current Git repo.
+
 The command is configurable via `fzfa-git-added-files-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
@@ -137,6 +148,7 @@ The command is configurable via `fzfa-git-added-files-command'."
 ;;;###autoload
 (defun fzfa-git-staged-for-commit ()
   "Pick a file staged for the next commit in the current Git repo.
+
 The command is configurable via `fzfa-git-staged-for-commit-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
@@ -149,6 +161,7 @@ The command is configurable via `fzfa-git-staged-for-commit-command'."
 ;;;###autoload
 (defun fzfa-git-modified-in-head ()
   "Pick a file modified by the HEAD commit of the current Git repo.
+
 The command is configurable via `fzfa-git-modified-in-head-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
@@ -162,6 +175,7 @@ The command is configurable via `fzfa-git-modified-in-head-command'."
 
 (defun fzfa-git-log-grep-show-commit (sha)
   "Show commit SHA.
+
 Dispatches to `magit-show-commit' when Magit is loaded, otherwise falls
 back to `fzfa-git-log-grep-show-commit-plain'.  Magit is preferred but
 not required."
@@ -184,6 +198,7 @@ not required."
 ;;;###autoload
 (defun fzfa-git-log-grep ()
   "Fuzzy-filter the git log of the current repo.
+
 Streams `git log' output as candidates; type to fuzzy-filter across
 commit SHAs, dates, authors, and subjects.  Selecting a candidate calls
 `fzfa-git-log-grep-action' with the commit SHA (default: show the commit

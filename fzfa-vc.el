@@ -67,6 +67,7 @@ opens a candidate file."
 
 (defun fzfa-vc--backend ()
   "Return the VC backend symbol for `default-directory'.
+
 Signal a `user-error' when no backend is responsible."
   (or (vc-responsible-backend default-directory t)
       (user-error "No VC backend responsible for %s" default-directory)))
@@ -74,6 +75,7 @@ Signal a `user-error' when no backend is responsible."
 ;;;###autoload
 (defun fzfa-vc-modified-files ()
   "Multi-source picker over the current VC repository's modified files.
+
 Streams every source configured for the current backend (per
 `fzfa-vc-modified-files-sources') into a single fzf session with
 group headers; selection invokes the source's underlying command."
@@ -90,6 +92,7 @@ group headers; selection invokes the source's underlying command."
 
 (defun fzfa-vc--dispatch (id)
   "Invoke the backend-specific command bound to ID in the current repo.
+
 ID is a key in the per-backend alists of
 `fzfa-vc-modified-files-sources' (e.g. `modified-locally')."
   (require 'vc-hooks)
@@ -103,6 +106,7 @@ ID is a key in the per-backend alists of
 ;;;###autoload
 (defun fzfa-vc-modified-locally ()
   "Pick a locally modified file from the current VC repository.
+
 Dispatches to the backend's `modified-locally' source in
 `fzfa-vc-modified-files-sources'."
   (interactive)
@@ -111,6 +115,7 @@ Dispatches to the backend's `modified-locally' source in
 ;;;###autoload
 (defun fzfa-vc-added-files ()
   "Pick an added (untracked) file from the current VC repository.
+
 Dispatches to the backend's `added-files' source in
 `fzfa-vc-modified-files-sources'."
   (interactive)
@@ -119,6 +124,7 @@ Dispatches to the backend's `added-files' source in
 ;;;###autoload
 (defun fzfa-vc-staged-for-commit ()
   "Pick a staged-for-commit file from the current VC repository.
+
 Dispatches to the backend's `staged-for-commit' source in
 `fzfa-vc-modified-files-sources'."
   (interactive)
@@ -127,6 +133,7 @@ Dispatches to the backend's `staged-for-commit' source in
 ;;;###autoload
 (defun fzfa-vc-modified-in-head ()
   "Pick a file modified in HEAD from the current VC repository.
+
 Dispatches to the backend's `modified-in-head' source in
 `fzfa-vc-modified-files-sources'."
   (interactive)
@@ -140,6 +147,7 @@ Dispatches to the backend's `modified-in-head' source in
     (fzfa-vc-staged-for-commit :narrow s)
     (fzfa-vc-modified-in-head  :narrow h))
   "Commands shown by `fzfa-vc-any'.
+
 Each entry is either a bare command symbol or a list
 \(COMMAND :narrow KEY) overriding the auto-derived narrow key.
 The defaults dispatch via `vc-responsible-backend' so the active

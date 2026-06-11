@@ -49,6 +49,7 @@
 
 (defvar fzfa-company--source-buffer nil
   "Buffer that originated the current `fzfa-company' session.
+
 Let-bound during the read so the annotation function and embark
 actions can call `company-call-backend' in the buffer where the
 session is alive — `company-backend' is buffer-local and is nil

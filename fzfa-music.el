@@ -42,6 +42,7 @@
 
 (defconst fzfa-music--dump-script
   "var m = Application('Music');
+
    var t = m.tracks;
    var ids = t.persistentID();
    var ar = t.artist();
@@ -58,6 +59,7 @@
 
 (defvar fzfa-music--cache nil
   "Cached tracks.
+
 Each entry is a plist with `:id', `:artist', `:album', `:name', and
 `:genre' keys.")
 
@@ -66,6 +68,7 @@ Each entry is a plist with `:id', `:artist', `:album', `:name', and
 
 (defconst fzfa-music--playlists-script
   "var m = Application('Music');
+
    var p = m.playlists;
    var ids = p.persistentID();
    var names = p.name();
@@ -78,6 +81,7 @@ Each entry is a plist with `:id', `:artist', `:album', `:name', and
 
 (defvar fzfa-music--items nil
   "Dynamic per-call hash table mapping candidate string -> track plist.
+
 Bound by `fzfa-music--read' so the `:group' callback can look up
 metadata for the candidate currently being rendered.")
 
@@ -131,6 +135,7 @@ metadata for the candidate currently being rendered.")
 
 (defun fzfa-music--read (tracks group-key prompt)
   "Read TRACKS via `fzfa-completing-read'; return the chosen plist.
+
 PROMPT is shown in the minibuffer.
 GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
 - TRACKS are sorted by GROUP-KEY so consecutive same-key entries cluster.
@@ -235,6 +240,7 @@ GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
 ;;;###autoload
 (defun fzfa-music-playlist ()
   "Fuzzy-select a Music.app playlist and play it sequentially.
+
 Explicitly disables shuffle so this command always plays in order,
 even if `fzfa-music-playlist-shuffle' was used previously."
   (interactive)
@@ -263,6 +269,7 @@ even if `fzfa-music-playlist-shuffle' was used previously."
 ;;;###autoload
 (defun fzfa-music-by-genre ()
   "Fuzzy-select and play a track, with results grouped by genre.
+
 Genre is prefixed to each candidate, so typing the genre narrows results."
   (interactive)
   (fzfa-music--pick-and-play :genre "music (by genre): "))

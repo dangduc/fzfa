@@ -72,6 +72,7 @@
       (lambda (url) (call-process "open" nil 0 nil "-a" "Safari" url))
     #'browse-url)
   "Function used to open URLs from `fzfa-safari-*' commands.
+
 Dispatches bookmark and history entries to Safari explicitly rather
 than via `browse-url' — which on a non-Safari default would send them
 to Chrome/Firefox.  Override to point at Safari Technology Preview or
@@ -119,6 +120,7 @@ a wrapper that adds flags."
 
 (defun fzfa-safari--walk (node folder-path)
   "Collect tab-encoded candidate strings for leaf nodes under NODE.
+
 FOLDER-PATH accumulates the breadcrumb of containing folders.  Each
 emitted line has fields: FOLDER\\tNAME\\tURL\\tUUID.  Folder nodes
 recurse; leaf nodes emit one row; proxy nodes (e.g. cloud tabs) are
@@ -169,6 +171,7 @@ ignored."
 
 (defun fzfa-safari--group (cand transform)
   "Group fn for `fzfa-safari-bookmark' candidate CAND.
+
 TRANSFORM nil returns the constant group key (suppresses headers
 beyond the first); TRANSFORM t returns the cleaned per-row display
 without the trailing UUID field."
@@ -241,6 +244,7 @@ Composed with `embark-general-map' via `embark-keymap-alist'."
 
 (defconst fzfa-safari-history--py
   "import sys, os, shutil, tempfile, sqlite3
+
 src = sys.argv[1]
 limit = int(sys.argv[2]) if len(sys.argv) > 2 else 5000
 fd, tmp = tempfile.mkstemp(prefix='fzfa-safari-history-', suffix='.db')
@@ -268,6 +272,7 @@ finally:
     except OSError: pass
 "
   "Python helper that streams Safari history rows.
+
 Reads the History.db path from argv[1] and the row limit from
 argv[2]; writes TAB-separated TITLE\\tURL lines to stdout.  Joins
 `history_visits' onto `history_items', grouped by URL — SQLite's
@@ -312,6 +317,7 @@ tempfile first.")
 
 (defun fzfa-safari-history--group (cand transform)
   "Group fn for `fzfa-safari-history' candidate CAND.
+
 TRANSFORM nil returns the constant group key (suppresses headers
 beyond the first); TRANSFORM t returns the per-row display."
   (let ((fields (split-string cand "\t")))
@@ -323,6 +329,7 @@ beyond the first); TRANSFORM t returns the per-row display."
 
 (defun fzfa-safari-history--pick (prompt)
   "Fuzzy-select a history entry with PROMPT; return raw tab-encoded candidate.
+
 Streams candidates asynchronously from the Python helper so the picker
 stays responsive even on large History.db DBs."
   (fzfa-completing-read

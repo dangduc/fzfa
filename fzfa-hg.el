@@ -28,24 +28,28 @@
 
 (defcustom fzfa-hg-files-command "hg files"
   "Shell command used by `fzfa-hg-files'.
+
 Run from `default-directory'; stdout lines become file candidates."
   :type 'string
   :group 'fzfa)
 
 (defcustom fzfa-hg-modified-locally-command "hg status -n -m"
   "Shell command used by `fzfa-hg-modified-locally'.
+
 Run from `default-directory'; stdout lines become file candidates."
   :type 'string
   :group 'fzfa)
 
 (defcustom fzfa-hg-added-files-command "hg status -n -u"
   "Shell command used by `fzfa-hg-added-files'.
+
 Run from `default-directory'; stdout lines become file candidates."
   :type 'string
   :group 'fzfa)
 
 (defcustom fzfa-hg-modified-in-head-command "hg status -n --change ."
   "Shell command used by `fzfa-hg-modified-in-head'.
+
 `.' resolves to the working directory's parent revision — i.e., the
 most recent commit on the current branch.  Run from `default-directory';
 stdout lines become file candidates."
@@ -55,6 +59,7 @@ stdout lines become file candidates."
 ;;;###autoload
 (defun fzfa-hg-files ()
   "Find a tracked file in the current Mercurial repo using hg files.
+
 The command is configurable via `fzfa-hg-files-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".hg")
@@ -67,6 +72,7 @@ The command is configurable via `fzfa-hg-files-command'."
 ;;;###autoload
 (defun fzfa-hg-modified-locally ()
   "Pick a locally-modified tracked file in the current Mercurial repo.
+
 The command is configurable via `fzfa-hg-modified-locally-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".hg")
@@ -79,6 +85,7 @@ The command is configurable via `fzfa-hg-modified-locally-command'."
 ;;;###autoload
 (defun fzfa-hg-added-files ()
   "Pick an unknown (untracked) file in the current Mercurial repo.
+
 The command is configurable via `fzfa-hg-added-files-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".hg")
@@ -91,6 +98,7 @@ The command is configurable via `fzfa-hg-added-files-command'."
 ;;;###autoload
 (defun fzfa-hg-modified-in-head ()
   "Pick a file modified by the parent revision of the current Mercurial repo.
+
 The command is configurable via `fzfa-hg-modified-in-head-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".hg")

@@ -73,6 +73,7 @@ Default is `fzfa-helm-multi-source-candidate-limit' × 10."
 
 (defcustom fzfa-helm-apply-follow t
   "Whether helm should auto-fire `:apply' on every selection move.
+
 When non-nil (the default), bridged fzfa sources that declare an
 `:apply' lambda set `:follow 1' on their helm source — the apply
 function runs on every selection change (preview-style) AND on
@@ -176,6 +177,7 @@ before the idle delay elapses -> timer fires post-cleanup ->
 
 (defun fzfa-helm--async-stats-suffix (handle)
   "Return ` (FILTERED/TOTAL)' suffix string from HANDLE's current stats.
+
 Returns empty string when HANDLE is nil or has no stats yet (producer
 process hasn't produced any candidates, e.g. brand-new session).
 Numbers comma-formatted via `fzfa--commas' to match the vertico-side
@@ -183,7 +185,7 @@ stats overlay shape.
 Read by `:header-name' closures so the source's helm-buffer header
 updates live as new candidates stream in — helm re-calls `:header-name'
 on every `helm-force-update', which is what the polling timers in the
-async / 2pass / multi handlers trigger on each generation tick."
+async / multi handlers trigger on each generation tick."
   (if-let* ((stats (and handle (fzf-native-async-stats handle))))
       (format " (%s/%s)" (fzfa--commas (car stats))
               (fzfa--commas (cdr stats)))
@@ -191,6 +193,7 @@ async / 2pass / multi handlers trigger on each generation tick."
 
 (defun fzfa-helm--sync-stats-suffix (filtered total)
   "Return ` (FILTERED/TOTAL)' suffix string from sync-source counts.
+
 Returns empty string when either count is nil (initial state — `:candidates'
 hasn't run yet).  Numbers comma-formatted via `fzfa--commas'."
   (if (and filtered total)
@@ -224,7 +227,7 @@ inside the dispatch — required for the multi handler where each
 source has its own session cell and the ambient
 `fzfa--preview-session' may point at a different cell (or be nil)
 when the idle timer fires.  When nil, dispatch uses the ambient
-binding (sync/async/2pass paths bind it themselves at the handler
+binding (sync/async paths bind it themselves at the handler
 level for the whole helm session)."
   (let ((preview-timer nil)
         (preview-last 'unset))
@@ -318,6 +321,7 @@ candidate string alone doesn't carry enough context."
     (name command directory action limit
           &optional annotate persistent-action apply)
   "Return (SOURCE . STOP) for NAME / COMMAND.
+
 Eagerly start the fzf-native producer in DIRECTORY and the polling
 timer, capped at LIMIT candidates.  ACTION is the helm action.
 SOURCE's `:cleanup' calls STOP; STOP is idempotent so callers can also
@@ -969,10 +973,10 @@ vertico / icomplete rely on.  Side effect: bypassing
       (fzfa-preview-put :default-directory default-directory)
       (fzfa--preview-call :setup))
     ;; Producer-kind `:display' compact/full needs the leading separator(s)
-    ;; pre-seeded into the minibuffer.  Mirrors fzfa.el:1791-1803 — empty
-    ;; preset CMD: `<sep><sep>' with point between them.  Helm doesn't
-    ;; honor `:input' for cursor-mid placement, so we install a
-    ;; one-shot `helm-minibuffer-set-up-hook' that does both.
+    ;; pre-seeded into the minibuffer — empty preset CMD: `<sep><sep>' with
+    ;; point between them.  Helm doesn't honor `:input' for cursor-mid
+    ;; placement, so we install a one-shot `helm-minibuffer-set-up-hook'
+    ;; that does both.
     (let* ((producer-kind-p
             (and candidates (functionp candidates)
                  (>= (car (func-arity candidates)) 1)))

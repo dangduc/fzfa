@@ -31,6 +31,7 @@
 
 (defun fzfa-hungry--deduplicate-dirs (dirs)
   "Remove duplicates and subdirectory entries from DIRS.
+
 If directory A is a prefix of directory B, B is dropped — A's recursive
 search already covers it.  Exception: B is kept when it is itself a git
 root (contains a .git entry), so rg's gitignore stack starts at B rather
@@ -48,6 +49,7 @@ than inheriting A's.  Git-specific — rg only honors .gitignore, so .hg
 ;;;###autoload
 (defun fzfa-hungry-swiper ()
   "Grep across the parent directories of all file-visiting buffers.
+
 Collects unique parent directories, drops any that are subdirectories of
 another in the set, then streams rg (or grep) output through fzf.
 Selecting a match opens the file and jumps to the line."
@@ -83,6 +85,7 @@ Selecting a match opens the file and jumps to the line."
 ;;;###autoload
 (defun fzfa-hungry-find ()
   "Find files across the parent directories of all file-visiting buffers.
+
 Collects unique parent directories, drops subdirectories already covered
 by a shallower parent, then streams fd (or find) output through fzf."
   (interactive)

@@ -73,6 +73,7 @@
     ('gnu/linux (lambda (url) (call-process "firefox" nil 0 nil url)))
     (_          #'browse-url))
   "Function used to open URLs from `fzfa-firefox-*' commands.
+
 Dispatches bookmark and history entries to Firefox explicitly
 rather than via `browse-url' — which on a non-Firefox default would
 send them to Chrome/Safari.  Override to point at a specific Firefox
@@ -92,10 +93,12 @@ binary (e.g. Firefox Developer Edition) or a wrapper that adds flags
      (when-let* ((appdata (getenv "APPDATA")))
        (concat appdata "/Mozilla/Firefox/"))))
   "Per-OS Firefox application support directory.
+
 Contains `profiles.ini' and the `Profiles' subdirectory.")
 
 (defcustom fzfa-firefox-profile-dir nil
   "Path to the Firefox profile directory to use.
+
 When nil, auto-detected at first use: glob for
 `Profiles/*.default-release' under `fzfa-firefox--profiles-root',
 falling back to parsing `profiles.ini'."
@@ -118,6 +121,7 @@ falling back to parsing `profiles.ini'."
 
 (defun fzfa-firefox--profiles-ini-default ()
   "Parse `profiles.ini' and return the active profile's absolute path.
+
 Prefers the `[Install*]' section's `Default=' (the modern,
 Firefox 67+ active-profile marker) over the legacy `[Profile*]
 Default=1' flag.  Returns nil when nothing parses."
@@ -175,6 +179,7 @@ Default=1' flag.  Returns nil when nothing parses."
 
 (defcustom fzfa-firefox-places-file nil
   "Path to Firefox's `places.sqlite' (history + bookmarks share the DB).
+
 When nil, derived from `fzfa-firefox--profile' at first use."
   :type '(choice (file :tag "places.sqlite")
                  (const :tag "Auto-detect from profile" nil))
@@ -190,6 +195,7 @@ When nil, derived from `fzfa-firefox--profile' at first use."
 
 (defun fzfa-firefox--copy-db ()
   "Copy `places.sqlite' to a tempfile, returning its path.
+
 Firefox holds an exclusive lock while running, so queries operate on a copy."
   (let ((src (fzfa-firefox--places-file))
         (dst (make-temp-file "fzfa-firefox-" nil ".sqlite")))
@@ -200,6 +206,7 @@ Firefox holds an exclusive lock while running, so queries operate on a copy."
 
 (defconst fzfa-firefox--bookmarks-sql
   "WITH RECURSIVE fp(id, path) AS (
+
    SELECT id, title FROM moz_bookmarks
    WHERE guid IN ('menu________','toolbar_____','unfiled_____','mobile______')
    UNION ALL
@@ -217,6 +224,7 @@ JOIN fp ON b.parent = fp.id
 WHERE b.type = 1 AND pl.url NOT LIKE 'place:%'
 ORDER BY fp.path, b.position;"
   "SQL producing FOLDER\\tNAME\\tURL\\tID rows from `places.sqlite'.
+
 The recursive CTE seeds at the four user-visible roots
 (menu/toolbar/unfiled/mobile), so the `tags' subtree — Firefox's
 fake folders that hold tagged-URL backrefs — is naturally excluded.
@@ -254,6 +262,7 @@ split-on-tab decoding on the Lisp side stays sound.")
 
 (defun fzfa-firefox--group (cand transform)
   "Group fn for `fzfa-firefox-bookmark' candidate CAND.
+
 TRANSFORM nil returns the constant group key (suppresses headers
 beyond the first); TRANSFORM t returns the cleaned per-row display
 without the trailing ID field."
@@ -318,6 +327,7 @@ Composed with `embark-general-map' via `embark-keymap-alist'."
 
 (defconst fzfa-firefox-history--py
   "import sys, os, shutil, tempfile, sqlite3
+
 src = sys.argv[1]
 limit = int(sys.argv[2]) if len(sys.argv) > 2 else 5000
 fd, tmp = tempfile.mkstemp(prefix='fzfa-firefox-history-', suffix='.sqlite')
@@ -344,6 +354,7 @@ finally:
     except OSError: pass
 "
   "Python helper that streams Firefox history rows.
+
 Reads the `places.sqlite' path from argv[1] and the row limit from
 argv[2]; writes TAB-separated TITLE\\tURL lines to stdout.  Firefox
 locks the live DB, so the helper copies it to a tempfile first.")
@@ -378,6 +389,7 @@ locks the live DB, so the helper copies it to a tempfile first.")
 
 (defun fzfa-firefox-history--group (cand transform)
   "Group fn for `fzfa-firefox-history' candidate CAND.
+
 TRANSFORM nil returns the constant group key (suppresses headers
 beyond the first); TRANSFORM t returns the per-row display."
   (let ((fields (split-string cand "\t")))
@@ -389,6 +401,7 @@ beyond the first); TRANSFORM t returns the per-row display."
 
 (defun fzfa-firefox-history--pick (prompt)
   "Fuzzy-select a history entry with PROMPT; return raw tab-encoded candidate.
+
 Streams candidates asynchronously from the Python helper so the picker
 stays responsive even on large `places.sqlite' DBs."
   (fzfa-completing-read

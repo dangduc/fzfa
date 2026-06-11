@@ -87,6 +87,7 @@
                   (call-process "google-chrome" nil 0 nil url)))
     (_          #'browse-url))
   "Function used to open URLs from `fzfa-chrome-*' commands.
+
 Dispatches bookmark, history, and password entries to Chrome
 explicitly rather than via `browse-url' — which on a non-Chrome
 default would send them to Safari/Firefox.  Override to point at a
@@ -235,6 +236,7 @@ Composed with `embark-general-map' via `embark-keymap-alist'."
      (when-let* ((appdata (getenv "LOCALAPPDATA")))
        (concat appdata "/Google/Chrome/User Data/Default/History"))))
   "Path to Chrome's History SQLite database.
+
 Override to point at a non-Default profile or another Chromium browser."
   :type '(choice (file :tag "History file")
                  (const :tag "Auto/Unsupported" nil))
@@ -252,6 +254,7 @@ Override to point at a non-Default profile or another Chromium browser."
 
 (defconst fzfa-chrome-history--py
   "import sys, os, shutil, tempfile, sqlite3
+
 src = sys.argv[1]
 limit = int(sys.argv[2]) if len(sys.argv) > 2 else 5000
 fd, tmp = tempfile.mkstemp(prefix='fzfa-chrome-history-', suffix='.sqlite')
@@ -276,6 +279,7 @@ finally:
     except OSError: pass
 "
   "Python helper that streams Chrome history rows.
+
 Reads the History DB path from argv[1] and the row limit from
 argv[2]; writes TAB-separated TITLE\\tURL lines to stdout.  Chrome
 locks the live DB, so the helper copies it to a tempfile first.")
@@ -371,6 +375,7 @@ Composed with `embark-general-map' via `embark-keymap-alist'."
      (when-let* ((appdata (getenv "LOCALAPPDATA")))
        (concat appdata "/Google/Chrome/User Data/Default/Login Data"))))
   "Path to Chrome's Login Data SQLite database.
+
 Override to point at a non-Default profile or another Chromium browser."
   :type '(choice (file :tag "Login Data file")
                  (const :tag "Auto/Unsupported" nil))
@@ -393,6 +398,7 @@ Override to point at a non-Default profile or another Chromium browser."
 
 (defcustom fzfa-chrome-pass-timeout 45
   "Seconds before a copied password is cleared from the kill ring.
+
 Set to 0 to disable auto-clearing."
   :type 'integer
   :group 'fzfa)
@@ -402,6 +408,7 @@ Set to 0 to disable auto-clearing."
 
 (defconst fzfa-chrome-pass--py
   "import os, sys, hashlib, subprocess
+
 hex_blob = sys.argv[1]
 pwd = os.environ['CHROME_PWD']
 key = hashlib.pbkdf2_hmac('sha1', pwd.encode(), b'saltysalt', 1003, 16)
@@ -416,6 +423,7 @@ r = subprocess.run(
 sys.stdout.buffer.write(r.stdout)
 "
   "Python helper that decrypts a Chrome password blob.
+
 Reads the hex-encoded ciphertext from argv[1] and the keychain
 password from $CHROME_PWD; writes plaintext bytes to stdout.")
 

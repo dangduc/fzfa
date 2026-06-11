@@ -28,6 +28,7 @@
 (defcustom fzfa-spotlight-audio-directories
   '("~/Music" "~/Downloads" "~/Desktop")
   "Directories searched by `fzfa-spotlight-audio'.
+
 Each directory is passed to `mdfind -onlyin'; results are concatenated.
 Set to nil to search the whole index."
   :type '(repeat directory)
@@ -36,6 +37,7 @@ Set to nil to search the whole index."
 ;;;###autoload
 (defun fzfa-spotlight ()
   "Find a file system-wide using Spotlight (mdfind).
+
 .app bundles are opened with `open'; all other results open with `find-file'."
   (interactive)
   (when-let* ((result (fzfa-completing-read
@@ -48,6 +50,7 @@ Set to nil to search the whole index."
 ;;;###autoload
 (defun fzfa-spotlight-apps ()
   "Find an installed application using Spotlight.
+
 Opens the selection with `open'."
   (interactive)
   (when-let*
@@ -62,6 +65,7 @@ Opens the selection with `open'."
 ;;;###autoload
 (defun fzfa-spotlight-audio ()
   "Find audio and play it using Spotlight.
+
 Constrained to `fzfa-spotlight-audio-directories'."
   (interactive)
   (let* ((query "'kMDItemContentTypeTree == \"public.audio\"'")

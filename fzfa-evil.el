@@ -57,6 +57,7 @@
 
 (defun fzfa-evil--mark-location (val)
   "Return a \"BUFFER:LINE: CONTENT\" string describing evil mark value VAL.
+
 VAL is whatever `evil-get-marker' returns: a marker, an integer
 position in the current buffer, or a (FILE . POS) cons for an
 unloaded global mark.  Returns nil when VAL is unrecognized."
@@ -93,6 +94,7 @@ unloaded global mark.  Returns nil when VAL is unrecognized."
 ;;;###autoload
 (defun fzfa-evil-marks ()
   "Jump to an evil mark, fuzzy-selected from the set of evil marks.
+
 The candidate string includes the mark's location and line content
 so fzf scores against the preview too — type a snippet of the line
 to filter."
@@ -150,6 +152,7 @@ to filter."
 ;;;###autoload
 (defun fzfa-evil-registers ()
   "Fuzzy-select an evil register; paste text or execute a macro.
+
 Vector / string-of-key-events values are executed as keyboard macros;
 other values are inserted via `evil-paste-from-register'."
   (interactive)
@@ -182,6 +185,7 @@ other values are inserted via `evil-paste-from-register'."
 
 (defun fzfa-evil--jump-format (entry)
   "Return (DISPLAY . ACTION-PLIST) for jump-list ENTRY, or nil to skip.
+
 ENTRY is `(MARK FILE-NAME)' as stored in `evil--jumps-get-window-jump-list'.
 MARK is a marker for in-session jumps and an integer for savehist-restored
 jumps.  DISPLAY includes the line content (when the buffer is loaded) so
@@ -289,6 +293,7 @@ the fzf scorer can match against the preview text."
 ;;;###autoload
 (defun fzfa-evil-command-window ()
   "Fuzzy-select from unified ex + search history.
+
 Ex commands display with a `:' prefix, search patterns with `/'.
 The prefix is stripped before dispatching to `evil-ex-execute' or
 the evil search."

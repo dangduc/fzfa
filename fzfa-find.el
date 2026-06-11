@@ -25,6 +25,7 @@
 
 (defcustom fzfa-find-command "find ."
   "Shell command used by `fzfa-find'.
+
 Run from `default-directory'; stdout lines become file candidates."
   :type 'string
   :group 'fzfa)
@@ -32,6 +33,7 @@ Run from `default-directory'; stdout lines become file candidates."
 ;;;###autoload
 (defun fzfa-find ()
   "Find a file under `default-directory' using find.
+
 The command is configurable via `fzfa-find-command'."
   (interactive)
   (when-let* ((result (fzfa-completing-read :command fzfa-find-command)))

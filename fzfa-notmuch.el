@@ -38,6 +38,7 @@
 
 (defcustom fzfa-notmuch-default-query "tag:inbox"
   "Default notmuch query offered at the `fzfa-notmuch' prompt.
+
 Anything notmuch's CLI accepts is valid (e.g. \"tag:unread\",
 \"from:alice and date:1week..\")."
   :type 'string
@@ -46,6 +47,7 @@ Anything notmuch's CLI accepts is valid (e.g. \"tag:unread\",
 (defcustom fzfa-notmuch-search-args
   '("--format=text" "--output=summary" "--sort=newest-first")
   "Arguments inserted between `notmuch search' and the user query.
+
 Each element is shell-quoted before being joined into the command."
   :type '(repeat string)
   :group 'fzfa)
@@ -64,6 +66,7 @@ Each element is shell-quoted before being joined into the command."
 
 (defun fzfa-notmuch--query-candidates ()
   "Candidates for the query completing-read: tags plus saved-search queries.
+
 Tags are formatted as `tag:NAME'.  Saved searches come from
 `notmuch-saved-searches' as-is."
   (let ((tags (ignore-errors

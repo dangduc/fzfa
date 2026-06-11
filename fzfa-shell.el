@@ -33,6 +33,7 @@
 ;;;###autoload
 (defun fzfa-shell-command (command &optional directory)
   "Fuzzy-search the output of a user-provided shell COMMAND.
+
 Runs in DIRECTORY, defaulting to `default-directory'.
 COMMAND is passed verbatim to `shell-file-name', so pipes,
 redirections, and shell quoting all work as expected.  The selected
@@ -61,6 +62,7 @@ directory; otherwise it is placed in the kill ring."
 ;;;###autoload
 (defun fzfa-shell-project-command (command)
   "Fuzzy-search the output of a user-provided shell COMMAND.
+
 Like `fzfa-shell-command' but runs in the project root."
   (interactive
    (list (read-shell-command "Shell command: "
@@ -69,6 +71,7 @@ Like `fzfa-shell-command' but runs in the project root."
 
 (defcustom fzfa-shell-history-file nil
   "Path to a shell history file (bash or zsh).
+
 When nil, defaults to `$HISTFILE' if set, otherwise `~/.zsh_history'."
   :type '(choice (const :tag "Auto ($HISTFILE or ~/.zsh_history)" nil)
                  file)
@@ -77,6 +80,7 @@ When nil, defaults to `$HISTFILE' if set, otherwise `~/.zsh_history'."
 ;;;###autoload
 (defun fzfa-shell-history ()
   "Select a command from the shell history file and insert it at point.
+
 Supports bash and zsh history file formats (including zsh
 `EXTENDED_HISTORY' and bash `HISTTIMEFORMAT' timestamp comments).
 If the current buffer is read-only the selection is copied to the

@@ -38,6 +38,7 @@
 
 (defun fzfa-flymake--collect (diags)
   "Walk DIAGS and return a list of (BUFFER LINE TYPE TEXT MARKER) tuples.
+
 Diagnostics whose buffer has been killed are dropped."
   (delq nil
         (mapcar
@@ -59,6 +60,7 @@ Diagnostics whose buffer has been killed are dropped."
 
 (defun fzfa-flymake--candidates (diags)
   "Return (CANDIDATES . LOOKUP) for DIAGS.
+
 CANDIDATES is a list of pre-formatted display strings sorted by buffer,
 severity (descending), then position.  LOOKUP is a hash mapping each
 display string to its source-buffer marker."
@@ -104,6 +106,7 @@ display string to its source-buffer marker."
 
 (defun fzfa-flymake--group (lookup)
   "Return a group function partitioning candidates by source buffer.
+
 LOOKUP is the display→marker hash returned by `fzfa-flymake--candidates'."
   (lambda (cand transform)
     (if transform
@@ -115,6 +118,7 @@ LOOKUP is the display→marker hash returned by `fzfa-flymake--candidates'."
 
 (defun fzfa-flymake--read (diags prompt)
   "Prompt for one of DIAGS via fzf and jump to it.
+
 PROMPT is the minibuffer prompt string."
   (let* ((pair (fzfa-flymake--candidates diags))
          (candidates (car pair))

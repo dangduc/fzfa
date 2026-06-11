@@ -53,6 +53,7 @@
     fzfa-org-agenda
     fzfa-org-todo)
   "Commands shown by the multi-source `fzfa-org-any'.
+
 Each entry must be an interactive command that funnels through
 `fzfa-org--read'.  Two-step commands (`fzfa-org-tags-view') and
 non-jump commands (`fzfa-org-insert-link') are deliberately
@@ -63,6 +64,7 @@ multi flow."
 
 (defun fzfa-org--format-display ()
   "Format the current heading as a `SOURCE:LINE:CONTENT' display string.
+
 CONTENT carries the heading at its native depth (leading stars), the
 TODO state when set, the heading text itself, and `:tag1:tag2:'-style
 tags appended.  Called from inside `org-map-entries' on a heading line."
@@ -82,6 +84,7 @@ tags appended.  Called from inside `org-map-entries' on a heading line."
 
 (defun fzfa-org--reveal ()
   "Reveal the entry around point if folded.
+
 Tolerates org-fold renames across Emacs versions."
   (cond
    ((fboundp 'org-fold-show-context) (org-fold-show-context))
@@ -124,6 +127,7 @@ PREDICATE filters from within the callback after MATCH has narrowed."
 
 (defun fzfa-org--all-tags (scope)
   "Return a sorted unique list of tags across SCOPE.
+
 SCOPE accepts the same values as `fzfa-org--collect'."
   (let ((tags (make-hash-table :test 'equal)))
     (cl-flet ((capture ()
@@ -153,6 +157,7 @@ SCOPE accepts the same values as `fzfa-org--collect'."
 
 (defun fzfa-org--read (entries prompt &optional action)
   "Present ENTRIES via fzf with PROMPT; ACTION on the chosen marker.
+
 ENTRIES is a list of (DISPLAY . MARKER) pairs.  ACTION is a function
 of one argument (the marker); defaults to `fzfa-org--jump'."
   (let* ((lookup (make-hash-table :test 'equal))
@@ -187,6 +192,7 @@ of one argument (the marker); defaults to `fzfa-org--jump'."
 ;;;###autoload
 (defun fzfa-org-heading ()
   "Jump to a heading in the current `org-mode' buffer using fzf.
+
 Candidates show SOURCE:LINE:STARS [TODO] HEADING :tags:.  Selection
 moves point to the heading, pushing the prior position onto the mark
 ring; the entry is revealed if folded."
@@ -200,6 +206,7 @@ ring; the entry is revealed if folded."
 ;;;###autoload
 (defun fzfa-org-heading-all ()
   "Jump to a heading across all live `org-mode' buffers using fzf.
+
 Walks every buffer where `derived-mode-p' reports `org-mode'.  Buffers
 without an associated file are walked too — the candidate's SOURCE
 falls back to the buffer name and the jump still resolves via the
@@ -213,6 +220,7 @@ captured marker."
 ;;;###autoload
 (defun fzfa-org-agenda ()
   "Jump to a heading across `org-agenda-files' using fzf.
+
 Files not currently visited are loaded by `org-map-entries' as needed."
   (interactive)
   (require 'org)
@@ -222,6 +230,7 @@ Files not currently visited are loaded by `org-map-entries' as needed."
 ;;;###autoload
 (defun fzfa-org-todo ()
   "Jump to a TODO-state heading across `org-agenda-files' using fzf.
+
 The PREDICATE step in `fzfa-org--collect' filters to headings with
 a non-nil `org-get-todo-state', covering any keyword the user has
 configured in `org-todo-keywords' (TODO, NEXT, WAITING, …) but
@@ -239,6 +248,7 @@ excluding DONE-class keywords."
 ;;;###autoload
 (defun fzfa-org-tags-view ()
   "Pick a tag, then pick a heading carrying that tag, via fzf.
+
 Tags and headings are sourced from `org-agenda-files'.  Two-step
 flow: the first prompt picks one tag from the deduplicated tag set;
 the second prompt picks an entry filtered to that tag via an
@@ -279,6 +289,7 @@ the second prompt picks an entry filtered to that tag via an
 ;;;###autoload
 (defun fzfa-org-insert-link ()
   "Pick an org heading and insert an org-link to it at point.
+
 Walks all live `org-mode' buffers (`fzfa-org-heading-all'-style) to
 gather candidates so links can target unsaved scratch org buffers
 as well as file-backed ones.  Link target uses `file:PATH::*HEADING'
@@ -294,6 +305,7 @@ when the source has a file, `*HEADING' otherwise."
 ;;;###autoload
 (defun fzfa-org-any ()
   "Multi-source pick across `fzfa-org-any-commands'.
+
 Each command in the list contributes one group; per-group rank is
 recomputed on every keystroke per the standard `fzfa-multi-read'
 algorithm.  Commands whose buffer/file scope is empty are silently

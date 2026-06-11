@@ -24,7 +24,7 @@
 ;;
 ;;   - A display transformer so the user can tell which source each
 ;;     candidate came from (ivy ignores the `group-function'
-;;     completion-metadata key that vertico/icomplete consult).
+;;     completion-metadata key that vertico/icomplete read).
 ;;
 ;;   - A push closure that re-scores async sources against `ivy-text'
 ;;     on each pattern change.  ivy's push model means typing doesn't
@@ -89,6 +89,7 @@ Multi-source: `fzfa--multi-active-sources' is let-bound by
 
 (defun fzfa-ivy--current-action-fn ()
   "Return the function ivy would invoke on the current `ivy-call'.
+
 Returns nil when ivy state is unavailable."
   (when (bound-and-true-p ivy-last)
     (ignore-errors
@@ -149,10 +150,10 @@ no-op)."
   "Wire fzfa's ivy integration into the current session."
   (with-eval-after-load 'ivy
     ;; Register under the `t' fallback caller — `ivy-completing-read'
-    ;; uses `this-command' as the actual caller (ivy.el:2672), so
-    ;; per-fzfa-command registration would be brittle.  The
-    ;; transformer self-gates on `fzfa--multi-active-sources' so
-    ;; non-fzfa-multi sessions pass through unchanged.
+    ;; uses `this-command' as the actual caller, so per-fzfa-command
+    ;; registration would be brittle.  The transformer self-gates on
+    ;; `fzfa--multi-active-sources' so non-fzfa-multi sessions pass
+    ;; through unchanged.
     (ivy-configure t
       :display-transformer-fn #'fzfa-ivy--multi-display-transformer)
     (advice-add 'ivy-restrict-to-matches :before

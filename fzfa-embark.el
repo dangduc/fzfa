@@ -111,6 +111,7 @@
 
 (defun fzfa-embark-grep-this-file (file)
   "Grep within FILE via `fzfa-grep-current-file'.
+
 FILE is opened with `find-file-noselect' so the command sees a real
 variable `buffer-file-name'."
   (interactive "fFile: ")
@@ -150,6 +151,7 @@ variable `buffer-file-name'."
 
 (defun fzfa-embark-export-location (cands)
   "Embark exporter for `fzfa-location' candidates CANDS.
+
 Emit SOURCE:LINE:CAND lines in a fresh `grep-mode' buffer so RET jumps
 to the hit and `wgrep' can edit hits in place.  SOURCE comes from each
 element's `fzfa-location' text property; file paths navigate, buffer-only
@@ -219,8 +221,7 @@ prefix into the full set.  Inherits `fzfa-embark-sync-search-map' and
 
 ;; Make the keymap symbols `commandp' so embark's default prompter
 ;; renders them as e.g. "fzfa-embark-search-map" instead of the
-;; placeholder "<keymap>".  Same trick embark-consult uses at
-;; embark-consult.el:399 / 404.
+;; placeholder "<keymap>".
 (fset 'fzfa-embark-sync-search-map  fzfa-embark-sync-search-map)
 (fset 'fzfa-embark-async-search-map fzfa-embark-async-search-map)
 (fset 'fzfa-embark-search-map       fzfa-embark-search-map)
@@ -230,6 +231,7 @@ prefix into the full set.  Inherits `fzfa-embark-sync-search-map' and
 ;;;###autoload
 (defun fzfa-embark-setup ()
   "Install fzfa actions on embark keymaps.
+
 Idempotent — safe to call more than once."
   (with-eval-after-load 'embark
     ;; Bind by quoted symbol (not keymap value) so embark's default

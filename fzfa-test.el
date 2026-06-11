@@ -129,6 +129,7 @@
 
 (defun fzfa-test--extract (cmd)
   "Run CMD under the multi `:extract' mode and return the captured plist.
+
 Returns nil if CMD completes without invoking `completing-read'."
   (let ((fzfa--multi-mode :extract))
     (catch 'fzfa-extracted
@@ -137,6 +138,7 @@ Returns nil if CMD completes without invoking `completing-read'."
 
 (defmacro fzfa-test--with-ssh-config (content &rest body)
   "Run BODY with a temp file containing CONTENT as the ssh config.
+
 Mocks `expand-file-name' so `fzfa-tramp' reads the temp file."
   (declare (indent 1))
   `(let ((tmpfile (make-temp-file "fzfa-test-ssh-config")))
@@ -180,6 +182,7 @@ Mocks `expand-file-name' so `fzfa-tramp' reads the temp file."
 
 (ert-deftest fzfa-swiper-all-emits-source-line-content ()
   "Candidates display LINE:CONTENT; source rides on `fzfa-location'.
+
 The buffer name (or file path) is no longer embedded in the candidate
 string — it is carried in-band as an `fzfa-location' text property at
 position 0, so fzf scores only against LINE:CONTENT and the source is
@@ -250,6 +253,7 @@ surfaced via `fzfa--location-group' as the section header."
 
 (ert-deftest fzfa-multi-narrow-string-rejects-bad-type ()
   "Non-string/char/symbol values error.
+
 Integers are deliberately accepted (they are characters in Emacs)."
   (should-error (fzfa--multi-narrow->string [a b]))
   (should-error (fzfa--multi-narrow->string '(a b))))
@@ -375,6 +379,7 @@ Integers are deliberately accepted (they are characters in Emacs)."
 
 (defun fzfa-test--alloc (specs)
   "Build sources from SPECS \\='((NAME . PLIST) ...) and allocate narrow keys.
+
 Returns an alist of (NAME . KEY) preserving allocation order."
   (let ((sources
          (mapcar (lambda (spec)
@@ -408,6 +413,7 @@ Returns an alist of (NAME . KEY) preserving allocation order."
 
 (ert-deftest fzfa-multi-allocate-mixed-explicit-and-implicit ()
   "Explicit :narrow values are honored; implicit derivation routes around them.
+
 Note `imenu' takes uppercase `I' so `imenu-all-but-current' gets the free `i'."
   (should (equal
            (fzfa-test--alloc
@@ -469,6 +475,7 @@ Note `imenu' takes uppercase `I' so `imenu-all-but-current' gets the free `i'."
 
 (ert-deftest fzfa-multi-allocate-nested-collision-with-outer-explicit ()
   "Outer explicit `:narrow' wins over an inner derived key.
+
 Reproduces a real bug: a nested multi (e.g. `fzfa-vc-modified-files')
 flattened into an outer multi (`fzfa-find-any') used to bring inner
 sources with `:narrow' already pinned by a prior inner allocation —
@@ -660,6 +667,7 @@ when the inner sources arrive without `:narrow'."
 
 (ert-deftest fzfa-preview-show-uses-same-window ()
   "`fzfa-preview-show' lands the buffer in the currently selected window.
+
 `fzfa--preview-call' selects the originating window before invoking
 handlers, so passing `display-buffer-same-window' here keeps preview
 and the eventual post-selection action sharing one window slot."
@@ -691,6 +699,7 @@ and the eventual post-selection action sharing one window slot."
 
 (defmacro fzfa-test--with-executables (available &rest body)
   "Run BODY with `executable-find' stubbed to recognize only AVAILABLE.
+
 AVAILABLE is a list of program-name strings; calls for any other
 program return nil.  Also stubs the smart-find/grep backend symbols
 referenced by the resolve tests as no-op functions so they are
@@ -826,6 +835,7 @@ referenced by the resolve tests as no-op functions so they are
 
 (ert-deftest fzfa-smart-define-propagates-multi-mode ()
   "Active `fzfa--multi-mode' propagates through the smart command.
+
 This is the contract that makes smart commands work transparently
 inside `fzfa-multi-read' (`:extract')."
   (let ((sym (intern "fzfa-smart-test-multi"))
@@ -911,6 +921,7 @@ inside `fzfa-multi-read' (`:extract')."
 
 (ert-deftest fzfa-split-hidden-state-takes-priority ()
   "Hidden mode short-circuits *before* the splitter runs.
+
 INPUT that looks like a separator-delimited shape is NOT parsed when
 the session is hidden — the whole INPUT (including literal separator
 characters) is the FILTER."
@@ -999,6 +1010,7 @@ characters) is the FILTER."
 
 (ert-deftest fzfa-display-extract-deletes-overlays ()
   "Extract removes the separator-protective overlays before mutating the buffer.
+
 \(Their `modification-hooks' would otherwise self-heal the deletion.)"
   (with-temp-buffer
     (insert "#find .#abc")
@@ -1025,6 +1037,7 @@ characters) is the FILTER."
 
 (ert-deftest fzfa-sync-autoloads-prunes-excluded-extensions ()
   "Autoload stubs for extensions not in `fzfa-extensions' get unbound,
+
 included extensions are left alone."
   (let ((syms '(fzfa-syncauttest1 fzfa-syncauttest1-foo
                 fzfa-syncauttest2 fzfa-syncauttest2-bar))
@@ -1047,6 +1060,7 @@ included extensions are left alone."
 
 (ert-deftest fzfa-sync-autoloads-skips-loaded-functions ()
   "Already-loaded (non-autoload) bindings are not touched by the prune,
+
 even when their extension is excluded from `fzfa-extensions'."
   (let ((syms '(fzfa-syncauttest3 fzfa-syncauttest3-loaded))
         (registry '((syncauttest3 . "test 3"))))

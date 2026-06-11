@@ -25,6 +25,7 @@
 
 (defcustom fzfa-locate-command "locate ''"
   "Shell command used by `fzfa-locate'.
+
 Stdout lines become file candidates."
   :type 'string
   :group 'fzfa)
@@ -32,6 +33,7 @@ Stdout lines become file candidates."
 ;;;###autoload
 (defun fzfa-locate ()
   "Find a file system-wide using locate.
+
 The command is configurable via `fzfa-locate-command'."
   (interactive)
   (when-let* ((result (fzfa-completing-read

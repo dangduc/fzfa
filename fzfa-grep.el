@@ -26,12 +26,14 @@
 
 (defcustom fzfa-grep-command "grep -Rn ''"
   "Shell command used by `fzfa-grep' for content search.
+
 Output must be FILE:LINE:CONTENT."
   :type 'string
   :group 'fzfa)
 
 (defcustom fzfa-grep-current-file-command "grep -vnH '^[[:space:]]*$' %s"
   "Shell command used by `fzfa-grep-current-file'.
+
 A `%s' placeholder is filled with the shell-quoted current file path.
 Output must be FILE:LINE:CONTENT."
   :type 'string
@@ -40,6 +42,7 @@ Output must be FILE:LINE:CONTENT."
 ;;;###autoload
 (defun fzfa-grep ()
   "Search file contents under `default-directory' with grep.
+
 Streams all file contents as FILE:LINE:CONTENT; type
  to fuzzy-filter across them.
 Selecting a candidate opens the file at that line.
@@ -54,6 +57,7 @@ The command is configurable via `fzfa-grep-command'."
 ;;;###autoload
 (defun fzfa-grep-current-file ()
   "Search the current buffer's file with grep.
+
 Streams non-blank lines as FILE:LINE:CONTENT; type to fuzzy-filter across them.
 Selecting a candidate jumps to that line in the file.
 The command is configurable via `fzfa-grep-current-file-command'."
