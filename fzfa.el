@@ -85,8 +85,7 @@
 (declare-function fzf-native-async-stop "fzf-native")
 (declare-function fzf-native-async-generation "fzf-native")
 (declare-function fzf-native-async-candidates "fzf-native")
-(declare-function fzfa-helm--sync-read "fzfa-helm")
-(declare-function fzfa-helm--async-read "fzfa-helm")
+(declare-function fzfa-helm--completing-read "fzfa-helm")
 (declare-function fzf-native-async-stats "fzf-native")
 (declare-function fzf-native-async-result-fresh-p "fzf-native")
 
@@ -1696,40 +1695,29 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
         (setq fzfa--multi-mode nil)
         (cl-return-from fzfa-completing-read
           (fzfa--maybe-expand cand directory resolve-paths)))))
-    ;; Normalize :candidates (list / zero-arg fn / 2-arg fn) to the
-    ;; producer shape that the rest of the body consumes.  Done after
-    ;; extract/inject so outer multi sees the raw value, but before
-    ;; the helm dispatch so it routes uniformly.
+    ;; Helm dispatch receives the RAW candidates value (list / zero-arg
+    ;; fn / 2-arg fn).  Helm's own `fzfa-helm-make-sync-source' has
+    ;; polymorphism that does the right thing per kind — in particular,
+    ;; static-list candidates skip the #CMD#FILTER split so the user's
+    ;; typing filters the snapshot rather than going to a no-op CMD
+    ;; slot.  Normalization happens AFTER for the non-helm path, which
+    ;; consumes the uniform producer shape.
+    (when (and (bound-and-true-p helm-mode)
+               (fboundp 'fzfa-helm--completing-read))
+      (cl-return-from fzfa-completing-read
+        (fzfa--maybe-expand
+         (fzfa-helm--completing-read
+          :prompt prompt :command command :candidates candidates
+          :directory directory :category category
+          :annotate annotate :affix affix :group group
+          :history history :require-match require-match
+          :default default :preview preview :apply apply
+          :display display
+          :skip-executable-check skip-executable-check)
+         directory resolve-paths)))
+    ;; Non-helm path: normalize :candidates to the producer shape that
+    ;; the substrate body (table lambda, ivy-push closure) consumes.
     (setq candidates (fzfa--normalize-candidates candidates))
-    (when (bound-and-true-p helm-mode)
-      (cond
-       (candidates
-        ;; Sync-firing test: invoke producer once with empty input
-        ;; and check the callback fired during the funcall.  Async-
-        ;; firing producers (jsonrpc, url-retrieve) leave FIRED nil
-        ;; — error out, since helm can't accept candidates after the
-        ;; source's :candidates fn has already returned.
-        (let ((fired nil))
-          (funcall candidates "" (lambda (_x) (setq fired t)))
-          (unless fired
-            (user-error
-             "fzfa-completing-read: async-firing :candidates not supported under helm-mode")))
-        (cl-return-from fzfa-completing-read
-          (fzfa--maybe-expand
-           (fzfa-helm--sync-read
-            :candidates candidates :prompt prompt :category category
-            :annotate annotate :affix affix :group group
-            :history history :require-match require-match
-            :default default :preview preview :apply apply)
-           directory resolve-paths)))
-       ((fboundp 'fzfa-helm--async-read)
-        (cl-return-from fzfa-completing-read
-          (fzfa--maybe-expand
-           (fzfa-helm--async-read
-            :prompt prompt :command command :directory directory
-            :skip-executable-check skip-executable-check
-            :category category :preview preview :apply apply)
-           directory resolve-paths)))))
     (let* ((completion-styles '(fzfa))
            (dir (expand-file-name directory))
            (dir-abbrev (abbreviate-file-name directory))

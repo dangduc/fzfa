@@ -876,19 +876,38 @@ When ~helm-mode~ is active, each ~fzfa~ entry point dispatches through
 a handler that bypasses ~completing-read~ entirely and runs
 ~(helm :sources …)~ directly:
 
-| Entry point                  | Handler                  |
-|------------------------------+--------------------------|
-| ~fzfa-async-completing-read~ | ~fzfa-helm--async-read~  |
-| ~fzfa-sync-completing-read~  | ~fzfa-helm--sync-read~   |
-| ~fzfa--multi-read~           | ~fzfa-helm--multi-read~  |
+| Entry point             | Handler                       |
+|-------------------------+-------------------------------|
+| ~fzfa-completing-read~  | ~fzfa-helm--completing-read~  |
+| ~fzfa-multi-read~       | ~fzfa-helm--multi-read~       |
 
-Each handler builds a ~helm-source-sync~ source with ~:match-dynamic t~
-(helm asks for filtered candidates on each input change rather than
-holding its own filtered list) and ~:nohighlight t~ (so helm doesn't
-paint over the ~completions-common-part~ faces already embedded by
-fzf-native).
+~fzfa-helm--completing-read~ is a single entry point covering all
+three types of sources.
 
-For async commands a polling timer checks
+~:command~ (shell pipeline) routes to ~fzfa-helm-make-async-source~
+over a process pipe.
+
+~:candidates~ as a static list or zero-arg fn routes to
+~fzfa-helm-make-sync-source~ with ~helm-pattern~ as the whole FILTER
+(no CMD concept).
+
+~:candidates~ as a 2-arg ~(INPUT CALLBACK)~ producer fn also routes to
+~fzfa-helm-make-sync-source~, but ~helm-pattern~ is split via
+~fzfa--split-input~ into (CMD . FILTER) — CMD goes to the producer's
+INPUT slot (refire only when CMD changes), FILTER scores the snapshot
+via ~fzf-native-score-all~.  Producer-kind detection (sync- vs async-firing)
+runs once at construction via a test fire with empty input;
+async callbacks update a closure-scoped snapshot and schedule
+~helm-force-update~.  The ~:display~ kwarg (~hidden~ / ~compact~ / ~full~)
+controls how the CMD half is rendered in the minibuffer;
+~fzfa-display-key~ (default ~>~) cycles between states.
+
+Sync sources are built with ~:match-dynamic t~ (helm asks for
+filtered candidates on each input change rather than holding its own
+filtered list) and ~:nohighlight t~ (so helm doesn't paint over the
+~completions-common-part~ faces already embedded by fzf-native).
+
+For ~:command~ sources a polling timer checks
 ~fzf-native-async-generation~ and calls ~helm-force-update~ as new
 candidates stream in.  The multi handler uses a single shared timer
 that watches every source's handle, throttled to one

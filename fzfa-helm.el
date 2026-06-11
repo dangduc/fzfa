@@ -12,9 +12,9 @@
 
 ;; Helm frontend for `fzfa'.  Loaded automatically when `helm' is in
 ;; `fzfa-extensions' and `fzfa-setup' has been called.  Once loaded,
-;; the three internal entry points (`fzfa-helm--async-read',
-;; `fzfa-helm--sync-read', `fzfa-helm--multi-read') are picked up by
-;; `fzfa.el's dispatch sites via `fboundp', gated on `helm-mode'.
+;; the two internal entry points (`fzfa-helm--completing-read' and
+;; `fzfa-helm--multi-read') are picked up by `fzfa.el's dispatch
+;; sites via `fboundp', gated on `helm-mode'.
 ;;
 ;; Public source constructors for building helm commands directly:
 ;;
@@ -65,8 +65,8 @@ this value (see that defcustom for rationale)."
   "Per-source candidate cap for SINGLE-source helm paths.
 
 Used by `fzfa-helm-make-async-source', `fzfa-helm-make-sync-source',
-`fzfa-helm--async-read', `fzfa-helm--sync-read'.  Like the multi cap,
-this controls both fzf-native's returned-list size and helm's
+and `fzfa-helm--completing-read'.  Like the multi cap, this controls
+both fzf-native's returned-list size and helm's
 `:candidate-number-limit'.
 
 Default is `fzfa-helm-multi-source-candidate-limit' × 10."
@@ -525,13 +525,15 @@ timing.  The source's `:cleanup' stops it."
 
 (cl-defun fzfa-helm-make-sync-source
     (&key name items action history annotate persistent-action apply
+          display
           (candidate-number-limit fzfa-helm-candidate-limit))
   "Return a helm source that scores ITEMS with `fzf-native'.
 
-NAME is the source header.  ITEMS is a list of strings or a zero-arg
-function returning one.  ACTION is a one-arg function called with the
-selection (default returns it unchanged).  CANDIDATE-NUMBER-LIMIT is
-`helm''s display cap.
+NAME is the source header.  ITEMS is a list of strings, a zero-arg
+function returning one, or a 2-arg producer fn `(lambda (INPUT
+CALLBACK) ...)' (sync- or async-firing).  ACTION is a one-arg function
+called with the selection (default returns it unchanged).
+CANDIDATE-NUMBER-LIMIT is `helm''s display cap.
 
 ANNOTATE, when non-nil, is a (CAND) -> STRING function rendered as a
 per-row suffix (faced as `completions-annotations', column-aligned
@@ -551,42 +553,148 @@ candidate level.  HISTORY here governs ORDERING only; pushing the
 selection onto HISTORY is the caller's responsibility (the registered
 sync/multi handlers wrap their `:action' to do so).
 
-Each `helm-pattern' change re-scores the full ITEMS list via
-`fzf-native-score-all'."
+For 2-arg producer ITEMS, `helm-pattern' is split via `fzfa--split'
+into (CMD . FILTER) based on DISPLAY state — hidden mode keeps CMD in
+source-local closure state (editable region in the minibuffer is pure
+FILTER); compact/full materialize CMD into the buffer between
+`fzfa-separator' chars.  `fzfa-display-key' (default `>') is bound on
+the source's `:keymap' and cycles hidden → compact → full → hidden,
+mirroring `fzfa-helm-make-async-source' and the substrate.  For lists
+and zero-arg fns there is no CMD concept; `helm-pattern' is the FILTER
+directly and DISPLAY is ignored.
+
+Producer-kind detection runs once at source construction (a test fire
+with empty input observes whether the callback arrives synchronously).
+Async-firing producers (jsonrpc, url-retrieve) keep their snapshot in
+source-local closure state and trigger `helm-force-update' from the
+callback so helm re-reads candidates with the fresh snapshot."
   (let* ((limit (or candidate-number-limit 10000))
          (last-filtered nil)
          (last-total nil)
          (last-result nil)
          (retry-timer nil)
+         (prod-snapshot nil)
+         (prod-last-cmd :unfired)
+         (prod-token 0)
+         (kind
+          (cond
+           ((listp items) 'list)
+           ((functionp items)
+            (if (>= (car (func-arity items)) 1)
+                (let ((fired nil))
+                  (funcall items "" (lambda (_x) (setq fired t)))
+                  (if fired 'sync 'async))
+              'zero))))
+         (producer-kind-p (memq kind '(sync async)))
+         ;; Display-state machinery for producer kinds.  `command'
+         ;; stores the CMD half when display-state is `hidden' (it
+         ;; lives in this closure, not the minibuffer); compact/full
+         ;; materialize it into the buffer.  `display-cycle' is bound
+         ;; to `fzfa-display-key' below.  Mirrors
+         ;; `fzfa-helm-make-async-source' and the substrate body in
+         ;; `fzfa-completing-read'.
+         (initial-char fzfa-separator)
+         (display-state (or display 'hidden))
+         (command "")
+         (separator-overlays nil)
+         (display-overlays nil)
+         (display-clear
+          (lambda ()
+            (mapc #'delete-overlay display-overlays)
+            (setq display-overlays nil)))
+         (display-apply
+          (lambda ()
+            ;; Only `compact' installs an overlay (flags collapse to
+            ;; `…').  `hidden' has no CMD region; `full' shows the cmd
+            ;; verbatim.  Same dispatch as the async source.
+            (funcall display-clear)
+            (when (eq display-state 'compact)
+              (when-let* ((bounds (fzfa--display-cmd-bounds
+                                   initial-char)))
+                (setq display-overlays
+                      (fzfa--display-make-overlays
+                       (car bounds) (cdr bounds)))))))
+         (display-cycle
+          (lambda ()
+            (interactive)
+            (let* ((from display-state)
+                   (to (fzfa--display-next-state from)))
+              (cond
+               ((and (eq from 'hidden) (eq to 'compact))
+                (setq separator-overlays
+                      (fzfa--display-materialize
+                       command initial-char)))
+               ((eq to 'hidden)
+                (setq command (fzfa--display-extract
+                               separator-overlays))
+                (setq separator-overlays nil)))
+              (setq display-state to)
+              (funcall display-apply)
+              ;; Sync `helm-pattern' to the post-mutation
+              ;; minibuffer-contents.  Otherwise post-command-hook's
+              ;; `helm-check-minibuffer-input' would see the mutation
+              ;; as a pattern change and fire `helm-update', erasing
+              ;; the helm-buffer and re-rendering candidates even
+              ;; though the FILTER (and therefore the candidates) is
+              ;; unchanged.
+              (when helm-alive-p
+                (setq helm-pattern (minibuffer-contents))))))
          (stop (lambda ()
                  (when retry-timer
                    (cancel-timer retry-timer)
-                   (setq retry-timer nil)))))
+                   (setq retry-timer nil))
+                 (mapc #'delete-overlay separator-overlays)
+                 (mapc #'delete-overlay display-overlays)
+                 (setq separator-overlays nil
+                       display-overlays nil))))
     (apply #'helm-make-source (or name "fzfa") 'helm-source-sync
            :header-name
            (lambda (n)
              (format "%s%s" n (fzfa-helm--sync-stats-suffix
                                last-filtered last-total)))
+           :keymap (let ((map (make-sparse-keymap)))
+                     (set-keymap-parent map helm-map)
+                     (when (and producer-kind-p fzfa-display-key)
+                       (define-key map (kbd fzfa-display-key)
+                                   display-cycle))
+                     map)
            :candidates
            (lambda ()
-             (let* ((all (cond
-                          ((listp items) items)
-                          ((functionp items)
-                           (if (>= (car (func-arity items)) 1)
-                               ;; 2-arg producer fn (sync-firing).
-                               ;; Callback must fire during funcall.
-                               (let (snap)
-                                 (funcall items (or helm-pattern "")
-                                          (lambda (x) (setq snap x)))
-                                 snap)
-                             ;; Zero-arg fn returning a list.
-                             (funcall items)))))
-                    (q (or helm-pattern ""))
+             (let* ((pat (or helm-pattern ""))
+                    ;; For producer kinds, split CMD from FILTER and
+                    ;; route CMD to the producer; for static kinds the
+                    ;; whole pattern is the FILTER.
+                    (split (and producer-kind-p
+                                (fzfa--split pat display-state command)))
+                    (cmd (and split (car split)))
+                    (filter (if split (cdr split) pat))
+                    (all
+                     (cl-case kind
+                       (list items)
+                       (zero (funcall items))
+                       (sync (let (snap)
+                               (funcall items (or cmd "")
+                                        (lambda (x) (setq snap x)))
+                               snap))
+                       (async
+                        (unless (equal cmd prod-last-cmd)
+                          (setq prod-last-cmd cmd)
+                          (let ((my-token (cl-incf prod-token)))
+                            (funcall items (or cmd "")
+                                     (lambda (cands-result)
+                                       (when (= my-token prod-token)
+                                         (setq prod-snapshot cands-result)
+                                         (when (and (boundp 'helm-alive-p)
+                                                    helm-alive-p)
+                                           (run-with-idle-timer
+                                            0 nil
+                                            #'helm-force-update)))))))
+                        prod-snapshot)))
                     (r (while-no-input
-                         (if (string-empty-p q)
+                         (if (string-empty-p filter)
                              (if history (fzfa--history-rank all history) all)
                            (fzfa--bridge-defcustoms
-                            #'fzf-native-score-all all q)))))
+                            #'fzf-native-score-all all filter)))))
                (cond
                 ((eq r t)
                  (when retry-timer (cancel-timer retry-timer))
@@ -740,110 +848,41 @@ Errors if CMD is not an extract-capable fzfa command."
                      :directory directory :history history
                      :action action))))))))
 
-;;; Async handler — dispatched from `fzfa-completing-read'
+;;; Unified handler — `fzfa-completing-read' dispatch under helm-mode
 
-(cl-defun fzfa-helm--async-read (&key prompt command directory
-                                      skip-executable-check
-                                      category preview apply)
+(cl-defun fzfa-helm--completing-read
+    (&key prompt command candidates directory category annotate
+          affix group history require-match default preview apply
+          display
+          skip-executable-check)
   "Helm dispatch for `fzfa-completing-read'.
 
-PROMPT, COMMAND, DIRECTORY, SKIP-EXECUTABLE-CHECK as per the caller.
-APPLY is forwarded to `fzfa-helm-make-async-source' for
-persistent-action wiring (falls back to the category default in
-`fzfa-apply-functions').
-CATEGORY and PREVIEW are threaded through to the preview framework:
-`fzfa--preview-handler' resolves a handler plist; if present we
-capture origin window/buffer/`default-directory' into the session
-state, fire `:setup' before helm activates, and fire `:exit' +
-`:return' on exit.  Replaces the preview pipeline that the vertico
-path runs via `minibuffer-with-setup-hook' +
-`fzfa--preview-install' (which doesn't translate to helm — helm has
-its own input/redisplay cycle that doesn't go through the
-minibuffer's setup hook).
+Single entry point covering all three source kinds the substrate
+supports — `:command' (shell pipeline), `:candidates' as a static
+list or zero-arg fn, and `:candidates' as a 2-arg `(INPUT CALLBACK)'
+producer fn (sync- or async-firing).  Mirrors the substrate's own
+single-entry-point shape.
 
-Live preview during the session (firing `:preview' as the selection
-moves) is not wired here; that needs `:persistent-action' +
-`:follow 1' per source — separate work.  This change is the
-\"unbreak preview-encoded actions\" minimum: commands like
-`fzfa-theme' whose actual action lives in `:preview :return' now
-fire correctly under helm.
+Source-kind routing:
 
-Returns the selected candidate string, or nil on cancel."
-  (unless skip-executable-check
-    (when-let* ((prog (and command (car (split-string command nil t)))))
-      (unless (executable-find prog)
-        (user-error "%s not found in exec-path" prog))))
-  (let* ((prompt (or prompt
-                     (when command
-                       (concat (car (split-string command nil t)) ": "))))
-         (dir (expand-file-name (or directory default-directory)))
-         (result nil)
-         (helm-completion-style 'emacs)
-         (handler (fzfa--preview-handler preview category))
-         (fzfa--preview-session (and handler (list handler)))
-         ;; Wire live preview when handler is set — helm fires
-         ;; persistent-action on every selection change via :follow 1.
-         ;; Debounced via `fzfa-helm--make-debounced-preview-fn' to mirror
-         ;; the vertico path's `fzfa-preview-delay'-based throttling so
-         ;; fast scrolling doesn't fire expensive preview handlers per
-         ;; row.
-         (apply-fn (or apply (plist-get
-                              (alist-get category fzfa-apply-functions)
-                              :apply)))
-         (origin-window (selected-window))
-         (origin-buffer (window-buffer (selected-window)))
-         ;; Wrap apply with baseline restoration so helm's :follow 1
-         ;; can't cascade `default-directory' through the bogus buffer
-         ;; state it leaves behind after each fire.  See
-         ;; `fzfa-helm--wrap-apply' for the mechanism.
-         (apply-fn (and apply-fn
-                        (fzfa-helm--wrap-apply
-                         apply-fn dir origin-window origin-buffer)))
-         (source (fzfa-helm-make-async-source
-                  :name (or prompt "fzfa")
-                  :command command
-                  :directory dir
-                  :action (lambda (cand) (setq result cand))
-                  :persistent-action
-                  (and handler (fzfa-helm--make-debounced-preview-fn))
-                  :apply apply-fn)))
-    (when handler
-      (fzfa-preview-put :origin-window (selected-window))
-      (fzfa-preview-put :origin-buffer (window-buffer (selected-window)))
-      (fzfa-preview-put :default-directory default-directory)
-      (fzfa--preview-call :setup))
-    (unwind-protect
-        (let ((default-directory dir))
-          (helm :sources source :buffer "*helm fzfa*"))
-      (when handler
-        (fzfa--preview-call :exit)
-        (fzfa--preview-return result))
-      (fzfa-helm--cancel-stranded-follow-timer))
-    result))
+  :command            → `fzfa-helm-make-async-source' (process pipe).
+  :candidates list /  → `fzfa-helm-make-sync-source'.  Whole
+    zero-arg fn         `helm-pattern' is the FILTER (no CMD concept).
+  :candidates 2-arg   → `fzfa-helm-make-sync-source'.  Producer kind
+    fn                  (sync- or async-firing) is detected once at
+                        source construction; `helm-pattern' is split
+                        via `fzfa--split-input' into (CMD . FILTER).
+                        CMD goes to the producer's INPUT slot (refire
+                        only when CMD changes); FILTER scores the
+                        snapshot via `fzf-native-score-all'.  Async
+                        callbacks update a closure-scoped snapshot
+                        and schedule `helm-force-update'.
 
-;;; Sync handler — `fzfa-completing-read' dispatch for :candidates sources
-
-(cl-defun fzfa-helm--sync-read (&key candidates prompt category annotate
-                                     affix group history require-match
-                                     default preview apply)
-  "Helm dispatch for `fzfa-completing-read' static-list sources.
-
-Invoked when `:candidates' is set (list, zero-arg fn, or sync-firing
-2-arg producer fn).  Async-firing producers continue to `user-error'
-under helm — see `fzfa-completing-read'.
-
-CANDIDATES, PROMPT, CATEGORY, ANNOTATE, AFFIX, GROUP, HISTORY,
-REQUIRE-MATCH, DEFAULT, PREVIEW, and APPLY are forwarded from the
-caller.  APPLY (falling back to `fzfa-apply-functions' by category)
-is wired into helm's `:persistent-action' slot for
-`helm-execute-persistent-action'.
-
-Bypasses `completing-read' (and therefore helm-mode's advice) so we
-can apply per-history candidate ordering — helm doesn't consult the
-metadata `display-sort-function' that `vertico' / `icomplete' rely on, so
-recent picks would otherwise be lost.  Side effect: bypassing
-`completing-read' also bypasses its HIST push, so the action wraps
-`add-to-history' to mirror what would have happened.
+Shared scaffolding: PROMPT, CATEGORY, PREVIEW, APPLY, HISTORY,
+DEFAULT, DIRECTORY, SKIP-EXECUTABLE-CHECK behave as in
+`fzfa-completing-read'.  ANNOTATE, AFFIX, GROUP, REQUIRE-MATCH are
+accepted for signature parity but unused — helm sources don't
+consume completion-read metadata.
 
 PREVIEW (with CATEGORY for registry lookup) wires the preview
 lifecycle — handler resolved via `fzfa--preview-handler', session
@@ -851,14 +890,31 @@ state captured manually (helm doesn't go through
 `minibuffer-with-setup-hook' so `fzfa--preview-install' can't be
 used), `:setup' fires before helm activates, `:exit' + `:return'
 fire on exit.  Live preview during the session (firing `:preview'
-on selection movement) is not wired here.
+on selection movement) wires up via `:persistent-action' +
+`:follow 1' when handler is set and APPLY is not — APPLY otherwise
+wins the persistent-action slot.
 
-ANNOTATE, AFFIX, GROUP, REQUIRE-MATCH are accepted for signature
-parity but unused — helm sources don't consume completion-read
-metadata."
+Bypasses `completing-read' (and therefore helm-mode's advice) so
+per-history candidate ordering can land at the candidate level —
+helm doesn't consult the metadata `display-sort-function' that
+vertico / icomplete rely on.  Side effect: bypassing
+`completing-read' also bypasses its HIST push, so the action wraps
+`add-to-history' to mirror what would have happened."
   (ignore annotate affix group require-match)
-  (let* ((helm-completion-style 'emacs)
+  (when (and command candidates)
+    (user-error
+     "fzfa-helm--completing-read: :command and :candidates are mutually exclusive"))
+  (unless (or skip-executable-check candidates)
+    (when-let* ((prog (and command (car (split-string command nil t)))))
+      (unless (executable-find prog)
+        (user-error "%s not found in exec-path" prog))))
+  (let* ((prompt (or prompt
+                     (when command
+                       (concat (car (split-string command nil t)) ": "))
+                     (when candidates "fzf > ")))
+         (dir (expand-file-name (or directory default-directory)))
          (result nil)
+         (helm-completion-style 'emacs)
          (handler (fzfa--preview-handler preview category))
          (fzfa--preview-session (and handler (list handler)))
          (apply-fn (or apply (plist-get
@@ -867,40 +923,82 @@ metadata."
          (origin-window (selected-window))
          (origin-buffer (window-buffer (selected-window)))
          ;; Wrap apply with baseline restoration — see
-         ;; `fzfa-helm--wrap-apply'.  Sync sources have no `:directory'
-         ;; concept, so the baseline `default-directory' is whatever the
-         ;; user invoked the command from (their origin buffer's dir).
+         ;; `fzfa-helm--wrap-apply'.  Baseline `default-directory'
+         ;; is :DIRECTORY when supplied (typical for :command), else
+         ;; the user's invoking buffer dir (typical for :candidates).
          (apply-fn (and apply-fn
                         (fzfa-helm--wrap-apply
-                         apply-fn default-directory
-                         origin-window origin-buffer)))
+                         apply-fn dir origin-window origin-buffer)))
+         ;; History-push action wrapper.  When HISTORY is a real symbol,
+         ;; mirror `completing-read''s HIST push that helm bypasses.
          (action
           (lambda (cand)
             (when (and history (symbolp history) (not (eq history t)))
               (add-to-history history cand))
-            (setq result cand))))
+            (setq result cand)))
+         (source
+          (cond
+           (command
+            (fzfa-helm-make-async-source
+             :name (or prompt "fzfa")
+             :command command
+             :directory dir
+             :action action
+             :persistent-action
+             (and handler (fzfa-helm--make-debounced-preview-fn))
+             :apply apply-fn))
+           (candidates
+            (fzfa-helm-make-sync-source
+             :name (or prompt "fzfa")
+             :items candidates
+             :history history
+             :action action
+             :display display
+             :persistent-action
+             (and handler (fzfa-helm--make-debounced-preview-fn))
+             :apply apply-fn)))))
     (when handler
-      (fzfa-preview-put :origin-window (selected-window))
-      (fzfa-preview-put :origin-buffer (window-buffer (selected-window)))
+      (fzfa-preview-put :origin-window origin-window)
+      (fzfa-preview-put :origin-buffer origin-buffer)
       (fzfa-preview-put :default-directory default-directory)
       (fzfa--preview-call :setup))
-    (unwind-protect
-        (helm :sources (fzfa-helm-make-sync-source
-                        :name (or prompt "fzfa")
-                        :items candidates
-                        :history history
-                        :action action
-                        :persistent-action
-                        (and handler
-                             (fzfa-helm--make-debounced-preview-fn))
-                        :apply apply-fn)
-              :prompt (or prompt "fzf > ")
-              :default default
-              :buffer "*helm fzfa sync*")
-      (when handler
-        (fzfa--preview-call :exit)
-        (fzfa--preview-return result))
-      (fzfa-helm--cancel-stranded-follow-timer))
+    ;; Producer-kind `:display' compact/full needs the leading separator(s)
+    ;; pre-seeded into the minibuffer.  Mirrors fzfa.el:1791-1803 — empty
+    ;; preset CMD: `<sep><sep>' with point between them.  Helm doesn't
+    ;; honor `:input' for cursor-mid placement, so we install a
+    ;; one-shot `helm-minibuffer-set-up-hook' that does both.
+    (let* ((producer-kind-p
+            (and candidates (functionp candidates)
+                 (>= (car (func-arity candidates)) 1)))
+           (init-text
+            (and producer-kind-p
+                 (memq display '(compact full))
+                 (concat (char-to-string fzfa-separator)
+                         (char-to-string fzfa-separator))))
+           (init-point (and init-text 1))
+           (setup-fn
+            (when init-text
+              (lambda ()
+                (when (active-minibuffer-window)
+                  (with-selected-window (active-minibuffer-window)
+                    (goto-char (minibuffer-prompt-end))
+                    (delete-region (point) (point-max))
+                    (insert init-text)
+                    (goto-char (+ (minibuffer-prompt-end) init-point))))))))
+      (unwind-protect
+          (let ((default-directory dir))
+            (when setup-fn
+              (add-hook 'helm-minibuffer-set-up-hook setup-fn))
+            (helm :sources source
+                  :prompt prompt
+                  :default default
+                  :buffer "*helm fzfa*"))
+        (when setup-fn
+          (remove-hook 'helm-minibuffer-set-up-hook setup-fn))
+        (when handler
+          (fzfa--preview-call :exit)
+          (fzfa--preview-return result))
+        (fzfa-helm--cancel-stranded-follow-timer)))
     result))
 
 ;;; Multi handler — dispatched from `fzfa--multi-read'
@@ -912,7 +1010,11 @@ SOURCES is the same list of plists as the `completing-read' path.
 PROMPT is the prompt string shown in the helm session.
 Each `fzfa' source maps to a `helm' source:
   :command     -> async (eager-start, no per-source polling timer)
-  :candidates  -> sync (fzf-native-score-all on each `helm-pattern' change)
+  :candidates  -> sync (fzf-native-score-all on each `helm-pattern'
+                  change).  Producer kind is detected once at source
+                  construction; async-firing producers (jsonrpc etc.)
+                  keep their snapshot in source-local closure state and
+                  trigger `helm-force-update' on callback arrival.
 
 A SINGLE shared polling timer watches every async handle and calls
 `helm-force-update' at most once per `fzfa-input-throttle' seconds
@@ -1097,10 +1199,32 @@ for fuzzy-multi-source UX."
                ;; can update the multi handler's per-source rank slot.
                ;; Same `while-no-input' + `last-result' cache +
                ;; `retry-timer' pattern as the async branch above.
+               ;;
+               ;; Producer kind is detected once at construction:
+               ;; lists and zero-arg fns are static; 2-arg producers
+               ;; get a test fire to determine whether the callback
+               ;; arrives synchronously (regexp scan etc.) or
+               ;; asynchronously (jsonrpc, url-retrieve).  Async-
+               ;; firing sources keep their snapshot in source-local
+               ;; closure state and trigger `helm-force-update' when
+               ;; the callback arrives.
                (let* ((last-filtered nil)
                       (last-total nil)
                       (last-result nil)
                       (retry-timer nil)
+                      (prod-snapshot nil)
+                      (prod-last-fired :unfired)
+                      (prod-token 0)
+                      (kind
+                       (cond
+                        ((listp cands) 'list)
+                        ((functionp cands)
+                         (if (>= (car (func-arity cands)) 1)
+                             (let ((fired nil))
+                               (funcall cands ""
+                                        (lambda (_x) (setq fired t)))
+                               (if fired 'sync 'async))
+                           'zero))))
                       (sync-stop
                        (lambda ()
                          (when retry-timer
@@ -1113,26 +1237,56 @@ for fuzzy-multi-source UX."
                                             last-filtered last-total)))
                         :candidates
                         (lambda ()
-                          (let* ((all
-                                  (cond
-                                   ((listp cands) cands)
-                                   ((functionp cands)
-                                    (if (>= (car (func-arity cands)) 1)
-                                        ;; Sync-firing 2-arg producer.
-                                        (let (snap)
-                                          (funcall cands
-                                                   (or helm-pattern "")
-                                                   (lambda (x) (setq snap x)))
-                                          snap)
-                                      (funcall cands)))))
-                                 (q (or helm-pattern ""))
+                          (let* ((pat (or helm-pattern ""))
+                                 ;; #CMD#FILTER split — producer
+                                 ;; kinds route CMD to INPUT and
+                                 ;; FILTER to fzf scoring.  Static
+                                 ;; kinds have no CMD; whole pattern
+                                 ;; is the FILTER.
+                                 (split (and (memq kind '(sync async))
+                                             (fzfa--split-input pat)))
+                                 (cmd (and split (car split)))
+                                 (filter (if split (cdr split) pat))
+                                 (all
+                                  (cl-case kind
+                                    (list cands)
+                                    (zero (funcall cands))
+                                    (sync (let (snap)
+                                            (funcall cands (or cmd "")
+                                                     (lambda (x)
+                                                       (setq snap x)))
+                                            snap))
+                                    (async
+                                     ;; Fire producer when CMD changes
+                                     ;; since the last fire.  Callback
+                                     ;; updates prod-snapshot and
+                                     ;; schedules a force-update;
+                                     ;; meanwhile we return the current
+                                     ;; snapshot (possibly stale for one
+                                     ;; tick).
+                                     (unless (equal cmd prod-last-fired)
+                                       (setq prod-last-fired cmd)
+                                       (let ((my-token
+                                              (cl-incf prod-token)))
+                                         (funcall cands (or cmd "")
+                                                  (lambda (cands-result)
+                                                    (when (= my-token
+                                                             prod-token)
+                                                      (setq prod-snapshot
+                                                            cands-result)
+                                                      (when (and (boundp 'helm-alive-p)
+                                                                 helm-alive-p)
+                                                        (run-with-idle-timer
+                                                         0 nil
+                                                         #'helm-force-update)))))))
+                                     prod-snapshot)))
                                  (r (while-no-input
-                                      (if (string-empty-p q)
+                                      (if (string-empty-p filter)
                                           (if history
                                               (fzfa--history-rank all history)
                                             all)
                                         (fzfa--bridge-defcustoms
-                                         #'fzf-native-score-all all q)))))
+                                         #'fzf-native-score-all all filter)))))
                             (cond
                              ((eq r t)
                               (when retry-timer (cancel-timer retry-timer))
@@ -1153,7 +1307,8 @@ for fuzzy-multi-source UX."
                               (setq last-total (length all)
                                     last-filtered (length r)
                                     last-result r)
-                              (aset ranks i (fzfa--multi-rank r q nil))
+                              (aset ranks i
+                                    (fzfa--multi-rank r filter nil))
                               r))))
                         :match-dynamic t
                         :nohighlight t
