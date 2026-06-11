@@ -569,7 +569,18 @@ Each `helm-pattern' change re-scores the full ITEMS list via
                                last-filtered last-total)))
            :candidates
            (lambda ()
-             (let* ((all (if (functionp items) (funcall items) items))
+             (let* ((all (cond
+                          ((listp items) items)
+                          ((functionp items)
+                           (if (>= (car (func-arity items)) 1)
+                               ;; 2-arg producer fn (sync-firing).
+                               ;; Callback must fire during funcall.
+                               (let (snap)
+                                 (funcall items (or helm-pattern "")
+                                          (lambda (x) (setq snap x)))
+                                 snap)
+                             ;; Zero-arg fn returning a list.
+                             (funcall items)))))
                     (q (or helm-pattern ""))
                     (r (while-no-input
                          (if (string-empty-p q)

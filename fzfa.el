@@ -85,6 +85,8 @@
 (declare-function fzf-native-async-stop "fzf-native")
 (declare-function fzf-native-async-generation "fzf-native")
 (declare-function fzf-native-async-candidates "fzf-native")
+(declare-function fzfa-helm--sync-read "fzfa-helm")
+(declare-function fzfa-helm--async-read "fzfa-helm")
 (declare-function fzf-native-async-stats "fzf-native")
 (declare-function fzf-native-async-result-fresh-p "fzf-native")
 
@@ -1052,6 +1054,32 @@ FILTERED and TOTAL are integer candidate counts, comma-formatted."
           (fzfa--commas filtered)
           (fzfa--commas total)))
 
+(defun fzfa--normalize-candidates (cands)
+  "Normalize CANDS to the (lambda (INPUT CALLBACK) ...) producer shape.
+
+Accepted forms:
+- list of strings → wrapped as (lambda (_ cb) (funcall cb LIST))
+- zero-arg function returning a list → wrapped as
+  (lambda (_ cb) (funcall cb (funcall FN)))
+- 2-arg function (lambda (INPUT CALLBACK) ...) → returned as-is
+
+Returns nil for nil input.  Signals on any other shape."
+  (cond
+   ((null cands) nil)
+   ((functionp cands)
+    (let ((min-args (car (func-arity cands))))
+      (cond
+       ((= min-args 0)
+        (let ((fn cands))
+          (lambda (_input callback) (funcall callback (funcall fn)))))
+       ((>= min-args 1) cands)
+       (t (error "fzfa: :candidates fn has unsupported arity %S" min-args)))))
+   ((listp cands)
+    (let ((lst cands))
+      (lambda (_input callback) (funcall callback lst))))
+   (t (error "fzfa: :candidates must be list, zero-arg fn, or 2-arg fn, got %S"
+             cands))))
+
 (defun fzfa--current-query (str)
   "Return the live query for a `completing-read' collection lambda.
 
@@ -1516,7 +1544,12 @@ any path, `fzfa--async-separator-heal-hook' restores it."
                                       candidates
                                       (directory (fzfa--default-dir))
                                       (category 'fzfa-file)
+                                      annotate
+                                      affix
                                       group
+                                      history
+                                      require-match
+                                      default
                                       initial-input
                                       (resolve-paths t)
                                       (display 'hidden)
@@ -1602,7 +1635,10 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
      ((eq fzfa--multi-mode :extract)
       (throw 'fzfa-extracted
              (list :prompt prompt :command command :candidates candidates
-                   :directory directory :category category :group group
+                   :directory directory :category category
+                   :annotate annotate :affix affix :group group
+                   :history history :require-match require-match
+                   :default default
                    :initial-input initial-input
                    :resolve-paths resolve-paths
                    :display display
@@ -1615,17 +1651,40 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
         (setq fzfa--multi-mode nil)
         (cl-return-from fzfa-async-completing-read
           (fzfa--maybe-expand cand directory resolve-paths)))))
-    (when (and candidates (bound-and-true-p helm-mode))
-      (user-error
-       "fzfa-async-completing-read: :candidates not yet supported under helm-mode"))
-    (when (and (bound-and-true-p helm-mode) (fboundp 'fzfa-helm--async-read))
-      (cl-return-from fzfa-async-completing-read
-        (fzfa--maybe-expand
-         (fzfa-helm--async-read
-          :prompt prompt :command command :directory directory
-          :skip-executable-check skip-executable-check
-          :category category :preview preview :apply apply)
-         directory resolve-paths)))
+    ;; Normalize :candidates (list / zero-arg fn / 2-arg fn) to the
+    ;; producer shape that the rest of the body consumes.  Done after
+    ;; extract/inject so outer multi sees the raw value, but before
+    ;; the helm dispatch so it routes uniformly.
+    (setq candidates (fzfa--normalize-candidates candidates))
+    (when (bound-and-true-p helm-mode)
+      (cond
+       (candidates
+        ;; Sync-firing test: invoke producer once with empty input
+        ;; and check the callback fired during the funcall.  Async-
+        ;; firing producers (jsonrpc, url-retrieve) leave FIRED nil
+        ;; — error out, since helm can't accept candidates after the
+        ;; source's :candidates fn has already returned.
+        (let ((fired nil))
+          (funcall candidates "" (lambda (_x) (setq fired t)))
+          (unless fired
+            (user-error
+             "fzfa-async-completing-read: async-firing :candidates not supported under helm-mode")))
+        (cl-return-from fzfa-async-completing-read
+          (fzfa--maybe-expand
+           (fzfa-helm--sync-read
+            :candidates candidates :prompt prompt :category category
+            :annotate annotate :affix affix :group group
+            :history history :require-match require-match
+            :default default :preview preview :apply apply)
+           directory resolve-paths)))
+       ((fboundp 'fzfa-helm--async-read)
+        (cl-return-from fzfa-async-completing-read
+          (fzfa--maybe-expand
+           (fzfa-helm--async-read
+            :prompt prompt :command command :directory directory
+            :skip-executable-check skip-executable-check
+            :category category :preview preview :apply apply)
+           directory resolve-paths)))))
     (let* ((completion-styles '(fzfa))
            (dir (expand-file-name directory))
            (dir-abbrev (abbreviate-file-name directory))
@@ -1773,7 +1832,10 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
            (table
             (lambda (str _pred action)
               (pcase action
-                ('metadata (fzfa--completion-metadata category :group group))
+                ('metadata (fzfa--completion-metadata category
+                                                       :annotate annotate
+                                                       :affix affix
+                                                       :group group))
                 (`(boundaries . ,_) (cons 0 0))
                 ('t
                  (let* ((input (fzfa--current-query str))
@@ -1787,7 +1849,13 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                        (funcall do-restart cmd))
                      (cond
                       ((null snapshot) nil)
-                      ((string-empty-p query) snapshot)
+                      ((string-empty-p query)
+                       ;; Empty FILTER under ivy with :history set —
+                       ;; reorder by recency, matching former sync
+                       ;; behavior.
+                       (if (and history (bound-and-true-p ivy-mode))
+                           (fzfa--history-rank snapshot history)
+                         snapshot))
                       (t (let ((r (while-no-input
                                     (fzfa--bridge-defcustoms
                                      #'fzf-native-score-all
@@ -2023,7 +2091,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                             (fzfa--frontend-index)
                                             last-filtered last-total)))))
                (setq selection
-                     (completing-read prompt table nil nil init-text nil))))
+                     (completing-read prompt table nil require-match
+                                      init-text history default))))
          (when poll-timer (cancel-timer poll-timer))
          (when retry-timer (cancel-timer retry-timer))
          (when restart-timer (cancel-timer restart-timer))
@@ -2861,7 +2930,8 @@ Per-source plist keys:
       (let* ((src      (aref sources-v i))
              (cmd      (plist-get src :command))
              (items    (plist-get src :items))
-             (cands-fn (plist-get src :candidates)))
+             (cands-fn (fzfa--normalize-candidates
+                        (plist-get src :candidates))))
         (cond
          (cmd
           (aset handles i
