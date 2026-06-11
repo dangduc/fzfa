@@ -23,7 +23,6 @@
 ;;; Code:
 
 (require 'fzfa)
-(require 'flymake)
 (eval-when-compile (require 'cl-lib))
 
 (declare-function project-current "project")
@@ -139,12 +138,14 @@ PROMPT is the minibuffer prompt string."
 (defun fzfa-flymake ()
   "Jump to a flymake diagnostic in the current buffer."
   (interactive)
+  (require 'flymake)
   (fzfa-flymake--read (flymake-diagnostics) "flymake: "))
 
 ;;;###autoload
 (defun fzfa-flymake-project ()
   "Jump to a flymake diagnostic from any buffer in the current project."
   (interactive)
+  (require 'flymake)
   (let ((pr (or (project-current)
                 (user-error "No current project"))))
     (fzfa-flymake--read (flymake--project-diagnostics pr)
