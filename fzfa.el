@@ -1770,7 +1770,7 @@ on it identically regardless of which container holds it."
   source-name)                  ; string or nil
 
 (cl-defun fzfa-make-source (&key spec command candidates directory
-                                 history (display 'hidden) name)
+                                 history display name)
   "Build a `fzfa-source' from SPEC plus hoisted args.
 
 SPEC is the keyword-args plist consumed by `fzfa-completing-read'
@@ -1782,6 +1782,10 @@ spec's `:name' (used by multi-source name assignment).
 
 The async handle is NOT started here — the caller decides whether
 to eager-start via `fzf-native-async-start' or to defer."
+  ;; All hoisted args default to nil so the `or' chain falls through
+  ;; to the spec plist before the final default.  Using cl-defun
+  ;; keyword defaults (e.g. (display 'hidden)) would short-circuit
+  ;; the `or' and mask the spec value.
   (let* ((command    (or command (plist-get spec :command) ""))
          (candidates (or candidates (plist-get spec :candidates)))
          (directory  (or directory (plist-get spec :directory)))

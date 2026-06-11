@@ -1078,5 +1078,203 @@ even when their extension is excluded from `fzfa-extensions'."
           (should-not (autoloadp (symbol-function 'fzfa-syncauttest3-loaded))))
       (dolist (s syms) (when (intern-soft s) (unintern s nil))))))
 
+;;; fzfa-source — struct + helpers
+
+(ert-deftest fzfa-source-make-from-hoisted-args ()
+  "Constructor with hoisted args (single-source path) populates slots."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "rg foo"
+                                :directory "/tmp/"
+                                :history 'my-history
+                                :display 'compact)))
+    (should (fzfa-source-p src))
+    (should (equal (fzfa-source-command src) "rg foo"))
+    (should (equal (fzfa-source-directory src) "/tmp/"))
+    (should (eq (fzfa-source-history src) 'my-history))
+    (should (eq (fzfa-source-display-state src) 'compact))
+    (should (null (fzfa-source-handle src)))
+    (should (null (fzfa-source-current-cmd src)))
+    (should (= (fzfa-source-last-gen src) -1))
+    (should (= (fzfa-source-rank src) 0))
+    (should (= (fzfa-source-total src) 0))
+    (should (= (fzfa-source-filtered src) 0))
+    (should (eq (fzfa-source-prod-input src) :unfetched))))
+
+(ert-deftest fzfa-source-make-from-spec-plist ()
+  "Constructor with :spec (multi-source path) extracts keys from plist."
+  (let* ((default-directory "/tmp/")
+         (spec '(:name "my-src" :command "fd ." :directory "/tmp/"
+                 :history my-hist :display full))
+         (src (fzfa-make-source :spec spec)))
+    (should (fzfa-source-p src))
+    (should (equal (fzfa-source-name src) "my-src"))
+    (should (equal (fzfa-source-command src) "fd ."))
+    (should (equal (fzfa-source-directory src) "/tmp/"))
+    (should (eq (fzfa-source-history src) 'my-hist))
+    (should (eq (fzfa-source-display-state src) 'full))
+    ;; Spec preserved for closures that need non-hot keys.
+    (should (equal (fzfa-source-spec src) spec))))
+
+(ert-deftest fzfa-source-defaults-display-to-hidden ()
+  "Display state defaults to `hidden' when no :display in spec or args."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls")))
+    (should (eq (fzfa-source-display-state src) 'hidden))))
+
+(ert-deftest fzfa-source-cands-fn-normalized ()
+  "Producer-fn constructor normalizes a list into a 2-arg producer."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :candidates '("a" "b" "c"))))
+    (should (functionp (fzfa-source-cands-fn src)))
+    ;; Firing the normalized producer should yield the list back.
+    (let (got)
+      (funcall (fzfa-source-cands-fn src) "ignored"
+               (lambda (cands) (setq got cands)))
+      (should (equal got '("a" "b" "c"))))))
+
+(ert-deftest fzfa-source-directory-falls-back-to-default ()
+  "Constructor falls back to `default-directory' when none provided."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls")))
+    (should (equal (fzfa-source-directory src) "/tmp/"))))
+
+(ert-deftest fzfa-source-display-clear-removes-overlays ()
+  "`fzfa-source--display-clear' deletes display-overlays and clears slot."
+  (with-temp-buffer
+    (insert "hello")
+    (let* ((default-directory "/tmp/")
+           (src (fzfa-make-source :command "ls"))
+           (ov1 (make-overlay 1 2))
+           (ov2 (make-overlay 3 5)))
+      (setf (fzfa-source-display-overlays src) (list ov1 ov2))
+      (fzfa-source--display-clear src)
+      (should (null (fzfa-source-display-overlays src)))
+      ;; Overlays should be detached.
+      (should (null (overlay-buffer ov1)))
+      (should (null (overlay-buffer ov2))))))
+
+(ert-deftest fzfa-source-stop-is-idempotent ()
+  "`fzfa-source--stop' is safe to call twice."
+  (with-temp-buffer
+    (let* ((default-directory "/tmp/")
+           (src (fzfa-make-source :command "ls")))
+      ;; Call twice; should not error.
+      (fzfa-source--stop src)
+      (fzfa-source--stop src)
+      (should (null (fzfa-source-handle src)))
+      (should (null (fzfa-source-restart-timer src)))
+      (should (null (fzfa-source-retry-timer src))))))
+
+(ert-deftest fzfa-source-stop-cancels-timers ()
+  "`fzfa-source--stop' cancels restart-timer and retry-timer slots."
+  (with-temp-buffer
+    (let* ((default-directory "/tmp/")
+           (src (fzfa-make-source :command "ls"))
+           (rt (run-with-timer 3600 nil #'ignore))
+           (yt (run-with-timer 3600 nil #'ignore)))
+      (setf (fzfa-source-restart-timer src) rt
+            (fzfa-source-retry-timer src) yt)
+      (fzfa-source--stop src)
+      (should (null (fzfa-source-restart-timer src)))
+      (should (null (fzfa-source-retry-timer src)))
+      ;; Cancelled timers are no longer in timer-list.
+      (should-not (memq rt timer-list))
+      (should-not (memq yt timer-list)))))
+
+(ert-deftest fzfa-source-stop-bumps-producer-token ()
+  "For producer-kind sources, `fzfa-source--stop' bumps prod-token."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :candidates '("a" "b")))
+         (initial (fzfa-source-prod-token src)))
+    (fzfa-source--stop src)
+    (should (> (fzfa-source-prod-token src) initial))))
+
+(ert-deftest fzfa-source-restart-producer-fires-callback ()
+  "`fzfa-source--restart' on a producer source fires the producer and
+updates snapshot, total, filtered, last-result."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :candidates '("x" "y" "z")))
+         (refresh-fired 0))
+    (fzfa-source--restart src "ignored"
+                          (lambda () (cl-incf refresh-fired)))
+    (should (equal (fzfa-source-snapshot src) '("x" "y" "z")))
+    (should (= (fzfa-source-total src) 3))
+    (should (= (fzfa-source-filtered src) 3))
+    (should (equal (fzfa-source-last-result src) '("x" "y" "z")))
+    (should (= refresh-fired 1))
+    (should (equal (fzfa-source-current-cmd src) "ignored"))))
+
+(ert-deftest fzfa-source-restart-producer-stale-callback-dropped ()
+  "Later prod-token bump invalidates an in-flight producer callback."
+  ;; Use an async-firing producer (captures the callback for deferred firing).
+  (let* ((default-directory "/tmp/")
+         (deferred-cb nil)
+         (src (fzfa-make-source
+               :candidates (lambda (_input cb)
+                             (setq deferred-cb cb)))))
+    ;; Fire restart; producer captures cb but doesn't call it.
+    (fzfa-source--restart src "first" #'ignore)
+    (let ((stashed-cb deferred-cb))
+      ;; Bump token so the next restart invalidates the stashed callback.
+      (fzfa-source--restart src "second" #'ignore)
+      ;; Invoke the stashed (now-stale) callback.
+      (funcall stashed-cb '("stale"))
+      ;; Snapshot should not have updated from the stale callback.
+      (should-not (equal (fzfa-source-snapshot src) '("stale"))))))
+
+(ert-deftest fzfa-source-display-cycle-hidden-to-compact ()
+  "Hidden→compact transition materializes #CMD# in the buffer."
+  (with-temp-buffer
+    ;; Set up minibuffer-like environment: prompt-end is the buffer start.
+    (let* ((default-directory "/tmp/")
+           (fzfa-separator ?#)
+           (src (fzfa-make-source :command "ls -la")))
+      ;; Stub `minibuffer-prompt-end' for the helper.
+      (cl-letf (((symbol-function 'minibuffer-prompt-end) #'point-min))
+        (fzfa-source--display-cycle src ?#)
+        (should (eq (fzfa-source-display-state src) 'compact))
+        ;; Buffer now contains "#ls -la#".
+        (should (string-match-p "^#ls -la#" (buffer-string)))
+        (should (= 2 (length (fzfa-source-separator-overlays src))))))))
+
+(ert-deftest fzfa-source-display-cycle-compact-to-full ()
+  "Compact→full transition keeps separators and clears display-overlays."
+  (with-temp-buffer
+    (let* ((default-directory "/tmp/")
+           (fzfa-separator ?#)
+           (src (fzfa-make-source :command "ls -la")))
+      (cl-letf (((symbol-function 'minibuffer-prompt-end) #'point-min))
+        (fzfa-source--display-cycle src ?#)   ; hidden → compact
+        (let ((sep-ovs-before (fzfa-source-separator-overlays src)))
+          (fzfa-source--display-cycle src ?#) ; compact → full
+          (should (eq (fzfa-source-display-state src) 'full))
+          ;; Separator overlays survive compact→full.
+          (should (equal (fzfa-source-separator-overlays src)
+                         sep-ovs-before))
+          ;; Display-overlays cleared (compact-mode only).
+          (should (null (fzfa-source-display-overlays src))))))))
+
+(ert-deftest fzfa-source-display-cycle-full-to-hidden ()
+  "Full→hidden transition extracts CMD and removes separators."
+  (with-temp-buffer
+    (let* ((default-directory "/tmp/")
+           (fzfa-separator ?#)
+           (src (fzfa-make-source :command "ls -la")))
+      (cl-letf (((symbol-function 'minibuffer-prompt-end) #'point-min))
+        (fzfa-source--display-cycle src ?#)   ; hidden → compact
+        (fzfa-source--display-cycle src ?#)   ; compact → full
+        ;; Simulate user editing the CMD region.
+        (goto-char (point-min))
+        (search-forward "ls -la")
+        (insert " --color")
+        (fzfa-source--display-cycle src ?#)   ; full → hidden
+        (should (eq (fzfa-source-display-state src) 'hidden))
+        ;; Edited CMD captured back into the source.
+        (should (equal (fzfa-source-command src) "ls -la --color"))
+        ;; Separator overlays removed.
+        (should (null (fzfa-source-separator-overlays src)))
+        ;; Buffer no longer has #...# prefix.
+        (should-not (string-match-p "^#" (buffer-string)))))))
+
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here
