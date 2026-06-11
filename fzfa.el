@@ -1889,7 +1889,19 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                       ((string-empty-p query)
                        ;; Empty FILTER under ivy with :history set —
                        ;; reorder by recency, matching former sync
-                       ;; behavior.
+                       ;; behavior.  Also ensure the stats overlay is
+                       ;; installed so the prompt shows the count from
+                       ;; the first frame; otherwise vertico / icomplete
+                       ;; users see no count until the first keystroke
+                       ;; triggers the scoring branch below.
+                       (when-let* ((win (active-minibuffer-window)))
+                         (with-selected-window win
+                           (unless stats-overlay
+                             (setq stats-overlay
+                                   (make-overlay
+                                    (point-min)
+                                    (minibuffer-prompt-end))))
+                           (funcall refresh-overlay)))
                        (if (and history (bound-and-true-p ivy-mode))
                            (fzfa--history-rank snapshot history)
                          snapshot))
@@ -2068,7 +2080,16 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                      (run-with-idle-timer
                       0 nil #'fzfa--frontend-push ivy-push)))))))
       (add-hook 'post-command-hook refresh-overlay)
-      (sit-for fzfa-refresh-delay)
+      ;; The sit-for gives a freshly-spawned async producer (subprocess
+      ;; or 2-arg async-firing fn) time to deliver its first batch
+      ;; before the minibuffer paints, so the initial frame isn't
+      ;; empty.  Skip it when the source already produced candidates
+      ;; synchronously — a static list, a zero-arg fn, or a 2-arg fn
+      ;; whose callback fired inline during pre-seed.  In those cases
+      ;; `snapshot' is already populated and the delay is perceivable
+      ;; as a stutter.
+      (unless (and candidates snapshot)
+        (sit-for fzfa-refresh-delay))
       (fzfa--maybe-expand
        (unwind-protect
            (minibuffer-with-setup-hook
