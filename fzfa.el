@@ -228,9 +228,9 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(ag chrome company eglot emacs embark evil fd find flymake git grep helm hg
-       hungry imenu info ivy locate mail make music notmuch org pass project
-       regexp rg shell spotlight ugrep vertico vc)
+  '(ag chrome company eglot emacs embark evil fd find firefox flymake git grep
+       helm hg hungry imenu info ivy locate mail make music notmuch org pass
+       project regexp rg safari shell spotlight ugrep vertico vc)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
@@ -243,6 +243,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "Evil-mode marks + registers" evil)
               (const :tag "fd (find alternative)" fd)
               (const :tag "POSIX find" find)
+              (const :tag "Firefox bookmarks" firefox)
               (const :tag "Flymake diagnostics" flymake)
               (const :tag "Git" git)
               (const :tag "POSIX grep" grep)
@@ -262,6 +263,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "project.el" project)
               (const :tag "Regexp (buffer-line picker)" regexp)
               (const :tag "ripgrep (rg)" rg)
+              (const :tag "Safari bookmarks + history (macOS)" safari)
               (const :tag "Shell command + history" shell)
               (const :tag "macOS Spotlight (mdfind)" spotlight)
               (const :tag "ugrep" ugrep)
