@@ -141,7 +141,7 @@ pauses typing the display always self-heals regardless of this value."
   :type 'float
   :group 'fzfa)
 
-(defcustom fzfa-preview-delay 0.8
+(defcustom fzfa-preview-delay 0.9
   "Seconds of idle time before live preview fires after a candidate change.
 Used by commands that preview the highlighted candidate as the selection
 moves (e.g. `fzfa-theme' loading the theme under point).  Implemented with
