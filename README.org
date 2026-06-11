@@ -7,9 +7,9 @@
 #+HTML: <video src="https://github.com/user-attachments/assets/383a2f07-6778-4e4e-89c8-68c540d8b404" controls style="max-width: 100%; height: auto;"></video>
 
 This package provides async fuzzy completion for Emacs backed by
-[[https://github.com/dangduc/fzf-native][~fzf-native~]].
+[[https://github.com/dangduc/fzf-native][fzf-native]].
 A shell command streams candidates into a background reader thread;
-[[https://github.com/junegunn/fzf][~fzf~]] scores and sorts them in parallel
+[[https://github.com/junegunn/fzf][fzf]] scores and sorts them in parallel
 across all available CPU cores; results land in a standard ~completing-read~
 UI incrementally as the shell command is still running.
 
@@ -100,10 +100,10 @@ other hand, has smart fuzzy matching, multithreading, and multi
 component matching, while also being an industry standard matching
 algorithm.
 
-- [[https://github.com/junegunn/fzf][~fzf~]] — original ~fzf~ written in Go
+- [[https://github.com/junegunn/fzf][fzf]] — original ~fzf~ written in Go
 - [[https://github.com/nvim-telescope/telescope-fzf-native.nvim][telescope-fzf-native.nvim]]
   — C port of ~fzf~
-- [[https://github.com/dangduc/fzf-native][~fzf-native~]] — Emacs wrapper
+- [[https://github.com/dangduc/fzf-native][fzf-native]] — Emacs wrapper
 
 ** Multi-component query syntax
 
@@ -133,7 +133,7 @@ Refer to:
 ** Performance / Speed
 
 Scoring runs in a C dynamic module
-([[https://github.com/dangduc/fzf-native][~fzf-native~]]) with worker
+([[https://github.com/dangduc/fzf-native][fzf-native]]) with worker
 threads across all available cores.  The shell command streams
 candidates into the scoring pool incrementally rather than blocking
 on a full materialization, so a million-line ~rg~ output is
@@ -188,7 +188,7 @@ the comparison.
 
 * Installation
 
-Required dependency: [[https://github.com/dangduc/fzf-native][~fzf-native~]] (provides the C scoring module).
+Required dependency: [[https://github.com/dangduc/fzf-native][fzf-native]] (provides the C scoring module).
 
 #+begin_src emacs-lisp :tangle yes
   (use-package fzf-native
@@ -681,10 +681,10 @@ and also does not affect other style packages (e.g. ~orderless~, ~hotfuzz~,
 * Companion package — ~fussy~
 
 The recommended companion package is
-[[https://github.com/jojojames/fussy][~fussy~]],
+[[https://github.com/jojojames/fussy][fussy]],
 for general ~completing-read~ and ~completion-at-point~ (e.g. code
 completion).  Both ~fussy~ and ~fzfa~ are backed by the same
-[[https://github.com/dangduc/fzf-native][~fzf-native~]]
+[[https://github.com/dangduc/fzf-native][fzf-native]]
 module, giving you consistent fuzzy matching semantics with ~fzf~ across
 both synchronous and asynchronous contexts.
 
@@ -1595,7 +1595,7 @@ themselves render in ~helm~'s UI when ~helm-mode~ is on.
   where you can set a specific ripgrep shell command to run and a
   separate query to filter.
 
-- *[[https://github.com/minad/affe][~affe~]]*: closest architectural
+- *[[https://github.com/minad/affe][affe]]*: closest architectural
   cousin to ~fzfa~ — background producer + async filter.
   Matching can integrate with ~orderless~ or take advantage of any
   of the Emacs plumbing. Filtering is single-threaded Elisp;
@@ -1607,7 +1607,7 @@ themselves render in ~helm~'s UI when ~helm-mode~ is on.
   (in the context of fuzzy matching, not prefix matching)
   compared to newer alternatives (e.g. ~fff~, ~fzf~).
 
-- *[[https://github.com/bling/fzf.el][~fzf.el~]]*: shells out to the
+- *[[https://github.com/bling/fzf.el][fzf.el]]*: shells out to the
   =fzf= command-line binary as its UI.  Doesn't participate in
   Emacs's completion machinery (no =completing-read= integration, no
   ~embark~, no marginalia, no category dispatch).  Works if you want
@@ -1640,8 +1640,8 @@ For ~fussy~, the broader fuzzy completion-style framework that
 
 * Acknowledgements
 
-- [[https://github.com/abo-abo/swiper][~counsel~]]
-- [[https://github.com/emacs-helm/helm][~helm~]]
-- [[https://github.com/minad/consult][~consult~]]
-- [[https://github.com/minad/affe][~affe~]]
-- [[https://github.com/bling/fzf.el][~fzf.el~]]
+- [[https://github.com/abo-abo/swiper][counsel]]
+- [[https://github.com/emacs-helm/helm][helm]]
+- [[https://github.com/minad/consult][consult]]
+- [[https://github.com/minad/affe][affe]]
+- [[https://github.com/bling/fzf.el][fzf.el]]
