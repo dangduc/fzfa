@@ -3,7 +3,7 @@
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Maintainer: James Nguyen <james@jojojames.com>
 ;; URL: https://github.com/jojojames/fzfa
-;; Package-Requires: ((emacs "30.1") (fzfa "0.1"))
+;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, matching
 ;; Version: 0.1
 

@@ -4,6 +4,7 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
+;; Package-Requires: ((emacs "29.1"))
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -30,7 +31,7 @@
 (declare-function imenu--make-index-alist "imenu")
 (declare-function imenu--subalist-p "imenu")
 
-(defun fzfa--imenu (scope)
+(defun fzfa-imenu--impl (scope)
   "Implementation of `fzfa-imenu' / `fzfa-imenu-all'.
 
 SCOPE selects which buffers to walk:
@@ -152,7 +153,7 @@ Display differences:
 (defun fzfa-imenu ()
   "Jump to an imenu entry in the current buffer using fzf."
   (interactive)
-  (fzfa--imenu 'current))
+  (fzfa-imenu--impl 'current))
 
 ;;;###autoload
 (defun fzfa-imenu-all ()
@@ -161,7 +162,7 @@ Display differences:
 Buffers without an imenu index (or whose major mode does not support
 imenu) are skipped silently."
   (interactive)
-  (fzfa--imenu 'all))
+  (fzfa-imenu--impl 'all))
 
 ;;;###autoload
 (defun fzfa-imenu-all-but-current ()
@@ -170,7 +171,7 @@ imenu) are skipped silently."
 Buffers without an imenu index (or whose major mode does not support
 imenu) are skipped silently."
   (interactive)
-  (fzfa--imenu 'others))
+  (fzfa-imenu--impl 'others))
 
 (provide 'fzfa-imenu)
 ;;; fzfa-imenu.el ends here

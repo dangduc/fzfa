@@ -4,6 +4,7 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0
+;; Package-Requires: ((emacs "29.1"))
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -104,19 +105,19 @@ become `fboundp' once the file is loaded and pick up
 `helm-mode' automatically.")
 
 (defun fzfa-helm--wrap-apply (apply-fn dir origin-window origin-buffer)
-  "Return APPLY-FN wrapped so each fire runs against a stable baseline.
+  "Wrap APPLY-FN with a stable origin baseline restored on each fire.
 
 DIR / ORIGIN-WINDOW / ORIGIN-BUFFER are captured at session-start.
 
 Helm fires `:persistent-action' in whatever buffer is currently shown
 in its persistent-action-display-window.  When the apply is something
-like `find-file', the first fire mutates that window (opens dired for
+like `find-file', the first fire mutates that window (opens Dired for
 a directory candidate, opens an unrelated buffer for a file
 candidate, etc.).  Every subsequent fire then inherits the mutated
 buffer's `default-directory', and `expand-file-name' on a relative
 candidate compounds the corruption.  Under `:follow 1' this cascades
 into completely bogus paths within one or two scroll steps
-\(e.g. `~/.emacs.d/user-lisp-30/user-lisp-30/extra/transient.el').
+\(e.g. nested `user-lisp-30/user-lisp-30/' duplicated path segments).
 
 This wrapper restores the captured origin window/buffer/dir before
 each fire — mirroring `fzfa--preview-call''s baseline reset — so the
@@ -366,7 +367,7 @@ Display cycling: `fzfa-display-key' (default `>') is bound in
 the source's keymap and cycles `hidden' → `compact' → `full' →
 `hidden' using the shared `fzfa--display-{materialize,extract}'
 helpers.  Editing the CMD region in compact / full debounce-restarts
-the subprocess with the new command.  Same UX as the completing-read
+the subprocess with the new command.  Same UX as the `completing-read'
 path.
 
 Internal — used by both `fzfa-helm-make-async-source' (single-source)
@@ -558,7 +559,7 @@ directly and DISPLAY is ignored.
 
 Producer-kind detection runs once at source construction (a test fire
 with empty input observes whether the callback arrives synchronously).
-Async-firing producers (jsonrpc, url-retrieve) keep their snapshot in
+Async-firing producers (jsonrpc, `url-retrieve') keep their snapshot in
 source-local closure state and trigger `helm-force-update' from the
 callback so helm re-reads candidates with the fresh snapshot."
   (fzfa-helm--ensure-loaded)
@@ -835,11 +836,11 @@ Source-kind routing:
                         callbacks update a closure-scoped snapshot
                         and schedule `helm-force-update'.
 
-Shared scaffolding: PROMPT, CATEGORY, PREVIEW, APPLY, HISTORY,
-DEFAULT, DIRECTORY, SKIP-EXECUTABLE-CHECK behave as in
-`fzfa-completing-read'.  ANNOTATE, AFFIX, GROUP, REQUIRE-MATCH are
-accepted for signature parity but unused — helm sources don't
-consume completion-read metadata.
+Shared scaffolding: PROMPT, COMMAND, CANDIDATES, CATEGORY, PREVIEW,
+APPLY, HISTORY, DEFAULT, DIRECTORY, DISPLAY, SKIP-EXECUTABLE-CHECK
+behave as in `fzfa-completing-read'.  ANNOTATE, AFFIX, GROUP,
+REQUIRE-MATCH are accepted for signature parity but unused — helm
+sources don't consume completion-read metadata.
 
 PREVIEW (with CATEGORY for registry lookup) wires the preview
 lifecycle — handler resolved via `fzfa--preview-handler', session
@@ -1221,10 +1222,12 @@ for fuzzy-multi-source UX."
                                                     (when (= my-token
                                                              (fzfa-source-prod-token
                                                               source))
-                                                      (setf (fzfa-source-snapshot source)
-                                                            cands-result)
-                                                      (when (and (boundp 'helm-alive-p)
-                                                                 helm-alive-p)
+                                                      (setf
+                                                       (fzfa-source-snapshot source)
+                                                       cands-result)
+                                                      (when
+                                                          (and (boundp 'helm-alive-p)
+                                                               helm-alive-p)
                                                         (run-with-idle-timer
                                                          0 nil
                                                          #'helm-force-update)))))))

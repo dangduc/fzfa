@@ -3,7 +3,7 @@
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Maintainer: James Nguyen <james@jojojames.com>
 ;; URL: https://github.com/jojojames/fzfa
-;; Package-Requires: ((emacs "30.1") (fzfa "0.1") (eglot "1.17"))
+;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, languages
 ;; Version: 0.1
 

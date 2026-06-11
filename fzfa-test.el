@@ -1047,7 +1047,7 @@ included extensions are left alone."
         (progn
           (dolist (s syms) (autoload s "fzfa-test-nonexistent"))
           (dolist (s syms) (should (autoloadp (symbol-function s))))
-          (let ((fzfa--extension-registry registry)
+          (let ((fzfa-extension-registry registry)
                 (fzfa-extensions '(syncauttest1)))
             (fzfa-sync-autoloads))
           ;; Included extension: stubs preserved.
@@ -1068,7 +1068,7 @@ even when their extension is excluded from `fzfa-extensions'."
         (progn
           (autoload 'fzfa-syncauttest3 "fzfa-test-nonexistent")
           (defalias 'fzfa-syncauttest3-loaded (lambda () "loaded"))
-          (let ((fzfa--extension-registry registry)
+          (let ((fzfa-extension-registry registry)
                 (fzfa-extensions '()))
             (fzfa-sync-autoloads))
           ;; Autoload stub: pruned.

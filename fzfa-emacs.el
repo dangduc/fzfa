@@ -680,7 +680,7 @@ originating window, so the picker keeps focus while you browse."
     (unless candidates
       (user-error "No other frames"))
     (cl-labels
-        ((focus-frame (cand)
+        ((select-cand-frame (cand)
            (when-let* ((f (gethash cand lookup)) ((frame-live-p f)))
              (when (eq (frame-visible-p f) 'icon)
                (make-frame-visible f))
@@ -697,9 +697,9 @@ originating window, so the picker keeps focus while you browse."
                            :candidates candidates
                            :prompt "frame: "
                            :category 'fzfa-frame
-                           :apply #'focus-frame
+                           :apply #'select-cand-frame
                            :preview #'preview-frame)))
-        (focus-frame result)))))
+        (select-cand-frame result)))))
 
 ;;;###autoload
 (defun fzfa-tabs ()

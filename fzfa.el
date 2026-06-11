@@ -238,7 +238,7 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 ;;;###autoload
-(defconst fzfa--extension-registry
+(defconst fzfa-extension-registry
   '((ag        . "ag (the_silver_searcher)")
     (chrome    . "Chrome bookmarks + passwords")
     (company   . "company-mode completions")
@@ -283,7 +283,7 @@ all derive from this alist.")
 
 ;;;###autoload
 (defcustom fzfa-extensions
-  (mapcar #'car fzfa--extension-registry)
+  (mapcar #'car fzfa-extension-registry)
   "List of fzfa extensions to load from `fzfa-setup'.
 
 Each SYMBOL causes `fzfa-setup' to call `fzfa-SYMBOL-setup' if
@@ -296,14 +296,14 @@ after setting this variable — typically in a
 `use-package' `:init' clause.  See its docstring for the pattern."
   :type `(set ,@(mapcar (lambda (cell)
                           `(const :tag ,(cdr cell) ,(car cell)))
-                        fzfa--extension-registry))
+                        fzfa-extension-registry))
   :group 'fzfa)
 
 ;;;###autoload
 (defun fzfa-sync-autoloads ()
   "Unbind autoload stubs for extensions not in `fzfa-extensions'.
 
-Iterates `fzfa--extension-registry'; for every extension EXT not
+Iterates `fzfa-extension-registry'; for every extension EXT not
 present in `fzfa-extensions', `fmakunbound's any symbol whose name
 matches `fzfa-EXT' or `fzfa-EXT-...' — but only when the symbol's
 current function binding is still an autoload stub (`autoloadp').
@@ -327,7 +327,7 @@ that this function can only prune; it cannot resurrect stubs for
 extensions added back to the list.  Re-evaluate `fzfa-autoloads.el'
 or restart Emacs for that case."
   (interactive)
-  (pcase-dolist (`(,ext . ,_) fzfa--extension-registry)
+  (pcase-dolist (`(,ext . ,_) fzfa-extension-registry)
     (unless (memq ext fzfa-extensions)
       (let ((prefix (format "fzfa-%s" ext)))
         (mapatoms
@@ -732,7 +732,7 @@ Set to 0 to disable file preview entirely without dropping the
 
 The tramp regex bails on `/method:host:' paths before
 `expand-file-name' would consult `file-name-handler-alist' and
-autoload tramp.  The `.gpg' entry avoids `epa-file-handler' firing
+autoload tramp.  The `.gpg' entry avoids function `epa-file-handler' firing
 during preview, which would prompt for a passphrase."
   :type '(repeat regexp)
   :group 'fzfa)
@@ -903,6 +903,7 @@ stashed state and the captured `default-directory'."
 (defun fzfa--filter-find-file-hook (orig &rest hooks)
   "Advice for `run-hooks': filter `vc-refresh-*' from `find-file-hook'.
 
+ORIG is the advised `run-hooks'; HOOKS are its arguments.
 Active only while `fzfa-with-quiet-find-file' is on the stack.
 Mutating both the default and current value via `cl-letf' so nested
 `run-hooks' calls (the load path is not a single direct invocation)
@@ -919,7 +920,7 @@ see the same filtered list."
     (apply orig hooks)))
 
 (defmacro fzfa-with-quiet-find-file (&rest body)
-  "Run BODY with file-loading prompts and `vc-refresh-*' hooks suppressed.
+  "Run BODY with file-loading prompt activity and `vc-refresh-*' hooks suppressed.
 
 `find-file-noselect' can trigger minibuffer prompts via file-local
 variables, `find-file-hook', or warnings — inside an active completion
@@ -927,7 +928,7 @@ those signal \"Command attempted to use minibuffer while in minibuffer\".
 Custom `:preview' handlers that load files should wrap the call in this
 macro.
 
-`delay-mode-hooks' is bound so user-extension mode hooks (e.g.
+Variable `delay-mode-hooks' is bound so user-extension mode hooks (e.g.
 `eglot-ensure' on `prog-mode-hook') don't spawn LSP servers during
 preview.  Major mode structural setup still happens.
 
@@ -949,14 +950,14 @@ under `unwind-protect' so a non-local exit can't strand the filter."
 (defun fzfa--disassociate (buf)
   "Schedule BUF to be disassociated from its file on the next command.
 
-Setting `buffer-file-name' to nil makes the buffer invisible to
-`find-buffer-visiting' / `get-file-buffer', so the post-selection
+Setting variable `buffer-file-name' to nil makes the buffer invisible
+to `find-buffer-visiting' / `get-file-buffer', so the post-selection
 action on the candidate opens a fresh, fully-hooked buffer via
 `find-file' instead of reusing the partial-init preview buffer.
 
 Disassociation is delayed to `pre-command-hook' rather than done
-immediately because some major modes (pdf-view-mode, doc-view-mode)
-read `buffer-file-name' during their own setup."
+immediately because some major modes (`pdf-view-mode', `doc-view-mode')
+read variable `buffer-file-name' during their own setup."
   (let ((hook (make-symbol "fzfa--disassociate-hook")))
     (fset hook
           (lambda ()
@@ -1052,7 +1053,7 @@ command (`buffer-file-name' set to nil) so the post-selection
 `find-file' on the candidate opens a fresh, fully-hooked buffer
 rather than reusing the partial-init preview buffer.
 `font-lock-ensure' is called so previews are fontified even
-though `delay-mode-hooks' suppresses `global-font-lock-mode'."
+though variable `delay-mode-hooks' suppresses `global-font-lock-mode'."
   (let (ephemerals)  ;; alist of (PATH . BUF)
     (lambda (&optional path)
       (cond
@@ -1498,7 +1499,7 @@ Suggested values:
   :group 'fzfa)
 
 (defcustom fzfa-shell-command-debounce 0.2
-  "Seconds of typing silence before a shell-command restart fires.
+  "Seconds of typing silence before a shell command restart fires.
 
 Each keystroke that changes the command portion of the minibuffer
 reschedules a fresh restart timer; the producer process is not
@@ -1508,7 +1509,7 @@ keystrokes ends with exactly one restart on the final cmd value."
   :group 'fzfa)
 
 (defcustom fzfa-shell-command-throttle 0.5
-  "Minimum seconds between shell-command restarts."
+  "Minimum seconds between shell command restarts."
   :type 'float
   :group 'fzfa)
 
@@ -1538,7 +1539,7 @@ helm/multi analogue), so the split is trivial: CMD = COMMAND, FILTER
 = INPUT.  In any other display state, `fzfa--split-input'
 parses INPUT against `fzfa-separator'.
 
-Frontend-agnostic — the table-lambda in completing-read sessions
+Frontend-agnostic — the table-lambda in `completing-read' sessions
 calls it with `(fzfa--current-query str)' as INPUT; helm's
 `:candidates' callback calls it with `helm-pattern'.  Same body for
 both."
@@ -1614,7 +1615,7 @@ only spans are left alone."
     overlays))
 
 (defun fzfa--display-next-state (state)
-  "Return the display state cycled one step forward.
+  "Return the display STATE cycled one step forward.
 
 The cycle is `hidden' → `compact' → `full' → `hidden'.  Any unknown
 input falls back to `hidden' (defensive default for an unknown
@@ -1680,6 +1681,9 @@ Operates on `current-buffer'."
 (defun fzfa--separator-heal-hook (overlay is-after _beg _end
                                           &optional _prelength)
   "Re-insert OVERLAY's separator char if the overlay's range collapsed.
+
+IS-AFTER is non-nil when called after the modification.  _BEG, _END,
+and _PRELENGTH are the standard `modification-hooks' args, ignored.
 
 Used as a `modification-hooks' entry on the protective overlays placed
 over the `#…#' splitter separators.  Fires for both content changes and
@@ -1774,7 +1778,7 @@ on it identically regardless of which container holds it."
   "Build a `fzfa-source' from SPEC plus hoisted args.
 
 SPEC is the keyword-args plist consumed by `fzfa-completing-read'
-(extracted via `:extract' mode, or built directly by the substrate).
+\(extracted via `:extract' mode, or built directly by the substrate).
 COMMAND, CANDIDATES, DIRECTORY, HISTORY, and DISPLAY are pulled
 from SPEC when not passed explicitly — the explicit-arg form lets
 callers reuse already-normalized values.  NAME overrides the
@@ -1844,7 +1848,7 @@ shows it verbatim — both are pure no-ops after clear."
 INITIAL-CHAR is the session's `fzfa-separator'.  Mutates buffer
 content on transitions across the hidden boundary via the
 frontend-agnostic `fzfa--display-{materialize,extract}' primitives
-(operate on `current-buffer' from `minibuffer-prompt-end').
+\(operate on `current-buffer' from `minibuffer-prompt-end').
 
 The compact / full visual overlay is then re-applied via
 `fzfa-source--display-apply'.  Caller is responsible for any
@@ -1869,7 +1873,7 @@ post-cycle frontend sync (e.g. updating `helm-pattern' under helm)."
 
 For producer-fn sources (CANDS-FN non-nil), re-fires the producer
 with NEW-CMD and discards stale callbacks via a per-source
-incrementing token.  For shell-command sources, stops the existing
+incrementing token.  For shell command sources, stops the existing
 fzf-native handle and starts a new one against SOURCE's DIRECTORY.
 
 REFRESH-FN is a 0-arg function called after the restart (or after
@@ -1989,7 +1993,7 @@ place via fzf-native against the current snapshot.
                         `fzfa-file' for :COMMAND, `fzfa-misc' for
                         :CANDIDATES.  Common explicit values: `fzfa-grep'
                         for FILE:LINE:CONTENT, `fzfa-buffer' for
-                        buffer-name pickers, `fzfa-bookmark' for
+                        `buffer-name' pickers, `fzfa-bookmark' for
                         bookmarks, etc.
 :ANNOTATE               Optional (CANDIDATE) -> string function exposed as
                         `annotation-function' completion metadata.
@@ -3363,8 +3367,9 @@ Per-source plist keys:
                                         :directory nil
                                         :command nil
                                         :index (fzfa--frontend-index)
-                                        :filtered (cl-loop for s across sources
-                                                           sum (fzfa-source-filtered s))
+                                        :filtered
+                                        (cl-loop for s across sources
+                                                 sum (fzfa-source-filtered s))
                                         :total (cl-loop for s across sources
                                                         sum (fzfa-source-total s))
                                         :narrow-name
@@ -3518,9 +3523,12 @@ Per-source plist keys:
                                             (fzfa-source-rank src)
                                             (fzfa--multi-rank out query h))
                                       (cond
-                                       (h (when-let* ((stats (fzf-native-async-stats h)))
-                                            (setf (fzfa-source-filtered src) (car stats)
-                                                  (fzfa-source-total src) (cdr stats))))
+                                       (h (when-let*
+                                              ((stats (fzf-native-async-stats h)))
+                                            (setf (fzfa-source-filtered src)
+                                                  (car stats)
+                                                  (fzfa-source-total src)
+                                                  (cdr stats))))
                                        (t (setf (fzfa-source-filtered src)
                                                 (length out))))))))))
                             (when interrupted
@@ -3547,8 +3555,10 @@ Per-source plist keys:
                                         order
                                       (sort order
                                             (lambda (a b)
-                                              (> (fzfa-source-rank (aref sources a))
-                                                 (fzfa-source-rank (aref sources b))))))))
+                                              (> (fzfa-source-rank
+                                                  (aref sources a))
+                                                 (fzfa-source-rank
+                                                  (aref sources b))))))))
                               (apply #'append
                                      (mapcar
                                       (lambda (i)
@@ -3557,8 +3567,9 @@ Per-source plist keys:
                                                ;; Per-source recency only on
                                                ;; empty input — when scoring
                                                ;; ran, fzf order wins.
-                                               (hist (and empty-q
-                                                          (fzfa-source-history src))))
+                                               (hist
+                                                (and empty-q
+                                                     (fzfa-source-history src))))
                                           (if hist
                                               (fzfa--history-rank slot hist)
                                             slot)))
