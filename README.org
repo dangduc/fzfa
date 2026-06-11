@@ -107,7 +107,7 @@ algorithm.
 
 ** Multi-component query syntax
 
-[[https://github.com/junegunn/fzf#search-syntax][~fzf~ syntax]] is supported:
+[[https://github.com/junegunn/fzf#search-syntax][fzf syntax]] is supported:
 
 | Token       | Match type                 | Description                          |
 |-------------+----------------------------+--------------------------------------|
@@ -1109,7 +1109,7 @@ I use this config when using ~fzfa~ with ~icomplete-vertical~.
 
 ** ~transient~
 
-A [[https://github.com/jojojames/matcha/blob/master/matcha-fzfa.el][~matcha~ transient]]
+A [[https://github.com/jojojames/matcha/blob/master/matcha-fzfa.el][matcha transient]]
 is defined for invoking all ~fzfa~ commands from a single keybinding
 via [[https://github.com/jojojames/matcha][matcha]].
 
@@ -1618,9 +1618,9 @@ themselves render in ~helm~'s UI when ~helm-mode~ is on.
 ** Prior discussions
 
 - [[https://github.com/abo-abo/swiper/pull/1151][swiper: add counsel-fzf]]
-- [[https://github.com/abo-abo/swiper/issues/848][swiper: ~fzf~ integration]]
-- [[https://github.com/minad/consult/issues/587][~consult~: ~fzf~ integration]]
-- [[https://github.com/minad/consult/discussions/1312][~consult~: async ~fzf~]]
+- [[https://github.com/abo-abo/swiper/issues/848][swiper: fzf integration]]
+- [[https://github.com/minad/consult/issues/587][consult: fzf integration]]
+- [[https://github.com/minad/consult/discussions/1312][consult: async fzf]]
 
 * Architecture
 
@@ -1630,13 +1630,13 @@ abstraction, timer model, prompt overlay — see
 [[file:architecture.org][architecture.org]].
 
 The C scoring module under ~fzfa~ is documented separately in
-[[https://github.com/dangduc/fzf-native/blob/HEAD/architecture.org][~fzf-native~'s architecture overview]]
+[[https://github.com/dangduc/fzf-native/blob/HEAD/architecture.org][fzf-native's architecture overview]]
 (thread/lock model, ~AsyncSession~, arena allocator, counting sort,
 ~score_abort~ rule).
 
 For ~fussy~, the broader fuzzy completion-style framework that
 ~fzfa~ deliberately bypasses, see
-[[https://github.com/jojojames/fussy/blob/HEAD/architecture.org][~fussy~'s architecture overview]].
+[[https://github.com/jojojames/fussy/blob/HEAD/architecture.org][fussy's architecture overview]].
 
 * Acknowledgements
 
