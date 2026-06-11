@@ -121,7 +121,7 @@ the Info viewer opens at \"(MANUAL)NODE\"."
              display))))
     (unless candidates
       (user-error "No index entries in manual %s" manual))
-    (when-let* ((r    (fzfa-sync-completing-read
+    (when-let* ((r    (fzfa-completing-read
                        :candidates candidates
                        :prompt prompt
                        :category 'fzfa-info))

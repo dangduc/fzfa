@@ -34,7 +34,7 @@ Run from `default-directory'; stdout lines become file candidates."
   "Find a file under `default-directory' using find.
 The command is configurable via `fzfa-find-command'."
   (interactive)
-  (when-let* ((result (fzfa-async-completing-read :command fzfa-find-command)))
+  (when-let* ((result (fzfa-completing-read :command fzfa-find-command)))
     (fzfa-with-visit (find-file result))))
 
 (provide 'fzfa-find)

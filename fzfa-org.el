@@ -169,7 +169,7 @@ of one argument (the marker); defaults to `fzfa-org--jump'."
              display))))
     (unless candidates
       (user-error "No matching org headings"))
-    (when-let* ((r (fzfa-sync-completing-read
+    (when-let* ((r (fzfa-completing-read
                     :candidates candidates
                     :prompt prompt
                     :category 'fzfa-grep
@@ -249,7 +249,7 @@ the second prompt picks an entry filtered to that tag via an
   (let ((tags (fzfa-org--all-tags 'agenda)))
     (unless tags
       (user-error "No tags found across agenda files"))
-    (when-let* ((tag (fzfa-sync-completing-read
+    (when-let* ((tag (fzfa-completing-read
                       :candidates tags
                       :prompt "tag: "
                       :category 'fzfa-misc)))

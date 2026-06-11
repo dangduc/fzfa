@@ -65,7 +65,7 @@ Candidate set comes from `project-files', so membership respects
          (files (project-files pr)))
     (unless files
       (user-error "No files in current project"))
-    (when-let* ((sel (fzfa-sync-completing-read
+    (when-let* ((sel (fzfa-completing-read
                       :candidates (mapcar
                                    (lambda (f) (file-relative-name f root))
                                    files)
@@ -90,7 +90,7 @@ the project root itself."
           (puthash d t seen)
           (push (file-relative-name d root) dirs))))
     (unless (member "./" dirs) (push "./" dirs))
-    (when-let* ((sel (fzfa-sync-completing-read
+    (when-let* ((sel (fzfa-completing-read
                       :candidates (sort dirs #'string<)
                       :prompt (format "project dir [%s]: "
                                       (fzfa-project--label root))
@@ -110,7 +110,7 @@ the project root itself."
                          collect name)))
     (unless names
       (user-error "No buffers in current project"))
-    (when-let* ((sel (fzfa-sync-completing-read
+    (when-let* ((sel (fzfa-completing-read
                       :candidates names
                       :prompt (format "project buffer [%s]: "
                                       (fzfa-project--label root))
@@ -133,7 +133,7 @@ current project's root."
                          collect (file-relative-name ef root))))
     (unless files
       (user-error "No recent files under %s" (abbreviate-file-name root)))
-    (when-let* ((sel (fzfa-sync-completing-read
+    (when-let* ((sel (fzfa-completing-read
                       :candidates files
                       :prompt (format "project recentf [%s]: "
                                       (fzfa-project--label root))
@@ -149,7 +149,7 @@ user's `project-switch-commands' menu kicks in."
   (let ((roots (project-known-project-roots)))
     (unless roots
       (user-error "No known projects"))
-    (when-let* ((sel (fzfa-sync-completing-read
+    (when-let* ((sel (fzfa-completing-read
                       :candidates (mapcar #'abbreviate-file-name roots)
                       :prompt "switch project: "
                       :category 'fzfa-file)))

@@ -113,7 +113,7 @@ to filter."
                         (puthash display char map)
                         display))
                     entries)))
-      (when-let* ((sel (fzfa-sync-completing-read
+      (when-let* ((sel (fzfa-completing-read
                         :candidates cands
                         :prompt "evil mark: "
                         :category 'fzfa-evil-mark
@@ -168,7 +168,7 @@ other values are inserted via `evil-paste-from-register'."
                        (concat "  "
                                (propertize (cdr (gethash cand map))
                                            'face 'completions-annotations))))
-           (sel (fzfa-sync-completing-read
+           (sel (fzfa-completing-read
                  :candidates cands
                  :prompt "evil register: "
                  :category 'fzfa-evil-register
@@ -229,7 +229,7 @@ the fzf scorer can match against the preview text."
                    and collect (car formatted))))
     (unless cands
       (user-error "Evil jump list is empty"))
-    (when-let* ((sel (fzfa-sync-completing-read
+    (when-let* ((sel (fzfa-completing-read
                       :candidates cands
                       :prompt "evil jump: "
                       :category 'fzfa-evil-jump
@@ -258,7 +258,7 @@ the fzf scorer can match against the preview text."
   (require 'evil)
   (unless evil-ex-history
     (user-error "Evil ex history is empty"))
-  (when-let* ((sel (fzfa-sync-completing-read
+  (when-let* ((sel (fzfa-completing-read
                     :candidates (delete-dups (copy-sequence evil-ex-history))
                     :prompt ": "
                     :category 'fzfa-evil-ex-history)))
@@ -279,7 +279,7 @@ the fzf scorer can match against the preview text."
   (require 'evil)
   (unless evil-ex-search-history
     (user-error "Evil search history is empty"))
-  (when-let* ((sel (fzfa-sync-completing-read
+  (when-let* ((sel (fzfa-completing-read
                     :candidates (delete-dups
                                  (copy-sequence evil-ex-search-history))
                     :prompt "/"
@@ -308,7 +308,7 @@ the evil search."
                       (?/ "Search"))))))
     (unless cands
       (user-error "No evil ex or search history"))
-    (when-let* ((sel (fzfa-sync-completing-read
+    (when-let* ((sel (fzfa-completing-read
                       :candidates cands
                       :prompt "evil: "
                       :category 'fzfa-evil-command-window

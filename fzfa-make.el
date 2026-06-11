@@ -367,7 +367,7 @@ A numeric prefix ARG overrides `fzfa-make-nproc' for the `-j' flag."
       (when fzfa-make--target-history
         (setq fzfa-make--target-history
               (delete-dups fzfa-make--target-history)))
-      (when-let* ((target (fzfa-sync-completing-read
+      (when-let* ((target (fzfa-completing-read
                            :candidates targets
                            :prompt
                            (format "%s (%s): "

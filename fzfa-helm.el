@@ -160,7 +160,7 @@ before the idle delay elapses -> timer fires post-cleanup ->
 (declare-function fzf-native-async-stats "fzf-native")
 (declare-function fzf-native-score-all "fzf-native")
 (declare-function fzfa--history-rank "fzfa")
-(declare-function fzfa--async-extract-args "fzfa")
+(declare-function fzfa--extract-args "fzfa")
 (declare-function fzfa--commas "fzfa")
 (declare-function fzfa--preview-handler "fzfa")
 (declare-function fzfa--preview-call "fzfa")
@@ -334,9 +334,9 @@ APPLY, when non-nil, is a (CAND) -> ANY function bound to `helm''s
 `:follow' tracks `fzfa-helm-apply-follow' — auto-fire on every
 selection move (default) or on `helm-execute-persistent-action'.
 
-Display cycling: `fzfa-async-display-key' (default `>') is bound in
+Display cycling: `fzfa-display-key' (default `>') is bound in
 the source's keymap and cycles `hidden' → `compact' → `full' →
-`hidden' using the shared `fzfa--async-display-{materialize,extract}'
+`hidden' using the shared `fzfa--display-{materialize,extract}'
 helpers.  Editing the CMD region in compact / full debounce-restarts
 the subprocess with the new command.  Same UX as the completing-read
 path.
@@ -344,7 +344,7 @@ path.
 Internal — used by both `fzfa-helm-make-async-source' (single-source)
 and `fzfa-helm--multi-read' (batch with bulk-stop)."
   (let* ((dir (expand-file-name (or directory default-directory)))
-         (initial-char fzfa-async-separator)
+         (initial-char fzfa-separator)
          (handle (fzf-native-async-start command dir))
          ;; Display-state machinery.  `command' is the cl-defun arg —
          ;; mutated in place by `display-cycle' when the user edits and
@@ -381,23 +381,23 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
             ;; `display-apply' closure in the completing-read body.
             (funcall display-clear)
             (when (eq display-state 'compact)
-              (when-let* ((bounds (fzfa--async-display-cmd-bounds
+              (when-let* ((bounds (fzfa--display-cmd-bounds
                                    initial-char)))
                 (setq display-overlays
-                      (fzfa--async-display-make-overlays
+                      (fzfa--display-make-overlays
                        (car bounds) (cdr bounds)))))))
          (display-cycle
           (lambda ()
             (interactive)
             (let* ((from display-state)
-                   (to (fzfa--async-display-next-state from)))
+                   (to (fzfa--display-next-state from)))
               (cond
                ((and (eq from 'hidden) (eq to 'compact))
                 (setq separator-overlays
-                      (fzfa--async-display-materialize
+                      (fzfa--display-materialize
                        command initial-char)))
                ((eq to 'hidden)
-                (setq command (fzfa--async-display-extract
+                (setq command (fzfa--display-extract
                                separator-overlays))
                 (setq separator-overlays nil)))
               (setq display-state to)
@@ -445,15 +445,15 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
                       (and handle (fzfa-helm--async-stats-suffix handle))))
             :keymap (let ((map (make-sparse-keymap)))
                       (set-keymap-parent map helm-map)
-                      (when fzfa-async-display-key
-                        (define-key map (kbd fzfa-async-display-key)
+                      (when fzfa-display-key
+                        (define-key map (kbd fzfa-display-key)
                                     display-cycle))
                       map)
             :candidates
             (lambda ()
               (unless stopped
                 (pcase-let* ((`(,cmd . ,filter)
-                              (fzfa--async-split
+                              (fzfa--split
                                (or helm-pattern "") display-state command)))
                   (when (not (equal cmd current-cmd))
                     ;; Debounce-then-restart, mirroring the completing-
@@ -641,7 +641,7 @@ mirroring the HIST push the inner `completing-read' would have done,
 which is skipped when we bypass it via `:inject' mode."
   (let* ((name        (or (plist-get plist :name) "fzfa"))
          (cmd         (plist-get plist :command))
-         (items       (plist-get plist :items))
+         (cands       (plist-get plist :candidates))
          (directory   (or (plist-get plist :directory) default-directory))
          (history     (plist-get plist :history))
          (annotate    (plist-get plist :annotate))
@@ -661,12 +661,12 @@ which is skipped when we bypass it via `:inject' mode."
       (fzfa-helm-make-async-source
        :name name :command cmd :directory directory :action action
        :annotate annotate :apply apply))
-     (items
+     (cands
       (fzfa-helm-make-sync-source
-       :name name :items items :history history :action action
+       :name name :items cands :history history :action action
        :annotate annotate :apply apply))
      (t
-      (error "Fzfa source plist has neither :command nor :items: %S" plist)))))
+      (error "Fzfa source plist has neither :command nor :candidates: %S" plist)))))
 
 (cl-defun fzfa-helm-source-from-command (cmd &rest overrides)
   "Return a LIST of helm sources built from arg-less fzfa command CMD.
@@ -704,7 +704,7 @@ is faster.  Composition into helm-mini-style sessions is the
 intended use case.
 
 Errors if CMD is not an extract-capable fzfa command."
-  (let ((args (fzfa--async-extract-args cmd)))
+  (let ((args (fzfa--extract-args cmd)))
     (unless args
       (user-error "`%s' is not an extract-capable fzfa command" cmd))
     (cond
@@ -722,8 +722,8 @@ Errors if CMD is not an extract-capable fzfa command."
                                                  (symbol-name cmd))))
              (cmd-shell (or (plist-get overrides :command)
                             (plist-get args :command)))
-             (items (or (plist-get overrides :items)
-                        (plist-get args :items)))
+             (cands (or (plist-get overrides :candidates)
+                        (plist-get args :candidates)))
              (directory (or (plist-get overrides :directory)
                             (plist-get args :directory)
                             default-directory))
@@ -734,16 +734,16 @@ Errors if CMD is not an extract-capable fzfa command."
                            (let ((fzfa--multi-mode (cons :inject cand)))
                              (funcall cmd))))))
         (list (fzfa-helm--source-from-plist
-               (list :name name :command cmd-shell :items items
+               (list :name name :command cmd-shell :candidates cands
                      :directory directory :history history
                      :action action))))))))
 
-;;; Async handler — dispatched from `fzfa-async-completing-read'
+;;; Async handler — dispatched from `fzfa-completing-read'
 
 (cl-defun fzfa-helm--async-read (&key prompt command directory
                                       skip-executable-check
                                       category preview apply)
-  "Helm dispatch for `fzfa-async-completing-read'.
+  "Helm dispatch for `fzfa-completing-read'.
 
 PROMPT, COMMAND, DIRECTORY, SKIP-EXECUTABLE-CHECK as per the caller.
 APPLY is forwarded to `fzfa-helm-make-async-source' for
@@ -970,7 +970,7 @@ for fuzzy-multi-source UX."
            (let* ((i           src-idx)
                   (name        (or (plist-get src :name) "fzfa"))
                   (cmd         (plist-get src :command))
-                  (items       (plist-get src :items))
+                  (cands       (plist-get src :candidates))
                   (directory   (or (plist-get src :directory)
                                    default-directory))
                   (history     (plist-get src :history))
@@ -1084,7 +1084,7 @@ for fuzzy-multi-source UX."
                                  (fzfa-helm--make-debounced-preview-fn
                                   preview-cell)
                                  :follow 1))))))
-              (items
+              (cands
                ;; Sync source inlined here (rather than via
                ;; `fzfa-helm-make-sync-source') so its `:candidates'
                ;; can update the multi handler's per-source rank slot.
@@ -1106,9 +1106,18 @@ for fuzzy-multi-source UX."
                                             last-filtered last-total)))
                         :candidates
                         (lambda ()
-                          (let* ((all (if (functionp items)
-                                          (funcall items)
-                                        items))
+                          (let* ((all
+                                  (cond
+                                   ((listp cands) cands)
+                                   ((functionp cands)
+                                    (if (>= (car (func-arity cands)) 1)
+                                        ;; Sync-firing 2-arg producer.
+                                        (let (snap)
+                                          (funcall cands
+                                                   (or helm-pattern "")
+                                                   (lambda (x) (setq snap x)))
+                                          snap)
+                                      (funcall cands)))))
                                  (q (or helm-pattern ""))
                                  (r (while-no-input
                                       (if (string-empty-p q)
@@ -1155,7 +1164,7 @@ for fuzzy-multi-source UX."
                                  :follow 1))))))
               (t
                (error
-                "Fzfa helm multi source has neither :command nor :items: %S"
+                "Fzfa helm multi source has neither :command nor :candidates: %S"
                 src))))))
          ;; Cursor-follows-leader hook.  Runs after every helm update
          ;; (pattern change or force-update).  When the source with the

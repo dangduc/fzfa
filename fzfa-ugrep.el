@@ -40,7 +40,7 @@ Streams all file contents as FILE:LINE:CONTENT; type to
 Selecting a candidate opens the file at that line.
 The command is configurable via `fzfa-ugrep-command'."
   (interactive)
-  (when-let* ((r (fzfa-async-completing-read
+  (when-let* ((r (fzfa-completing-read
                   :command (format fzfa-ugrep-command
                                    (fzfa--max-columns-flag 'ugrep))
                   :category 'fzfa-grep

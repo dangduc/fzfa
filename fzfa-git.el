@@ -92,7 +92,7 @@ The command is configurable via `fzfa-git-grep-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
     (error "Not a Git repo"))
-  (when-let* ((r (fzfa-async-completing-read
+  (when-let* ((r (fzfa-completing-read
                   :command fzfa-git-grep-command
                   :category 'fzfa-grep
                   :group #'fzfa--grep-group)))
@@ -105,7 +105,7 @@ The command is configurable via `fzfa-git-ls-files-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
     (error "Not a Git repo"))
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :prompt "git ls files: "
                        :command fzfa-git-ls-files-command)))
     (fzfa-with-visit (find-file result))))
@@ -117,7 +117,7 @@ The command is configurable via `fzfa-git-modified-locally-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
     (error "Not a Git repo"))
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :prompt "git modified: "
                        :command fzfa-git-modified-locally-command)))
     (fzfa-with-visit (find-file result))))
@@ -129,7 +129,7 @@ The command is configurable via `fzfa-git-added-files-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
     (error "Not a Git repo"))
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :prompt "git added: "
                        :command fzfa-git-added-files-command)))
     (fzfa-with-visit (find-file result))))
@@ -141,7 +141,7 @@ The command is configurable via `fzfa-git-staged-for-commit-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
     (error "Not a Git repo"))
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :prompt "git staged: "
                        :command fzfa-git-staged-for-commit-command)))
     (fzfa-with-visit (find-file result))))
@@ -153,7 +153,7 @@ The command is configurable via `fzfa-git-modified-in-head-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
     (error "Not a Git repo"))
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :prompt "git HEAD: "
                        :command fzfa-git-modified-in-head-command)))
     (fzfa-with-visit (find-file result))))
@@ -192,7 +192,7 @@ The command is configurable via `fzfa-git-log-grep-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".git")
     (error "Not a Git repo"))
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :prompt "git log: "
                        :command fzfa-git-log-grep-command
                        :category 'fzfa-misc

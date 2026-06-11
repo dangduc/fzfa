@@ -51,7 +51,7 @@
   (let ((entries (password-store-list (password-store-dir))))
     (unless entries
       (user-error "No password-store entries found"))
-    (fzfa-sync-completing-read
+    (fzfa-completing-read
      :candidates entries
      :prompt prompt
      :category 'fzfa-pass)))

@@ -59,7 +59,7 @@ The command is configurable via `fzfa-hg-files-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".hg")
     (error "Not a Mercurial repo"))
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :prompt "hg files: "
                        :command fzfa-hg-files-command)))
     (fzfa-with-visit (find-file result))))
@@ -71,7 +71,7 @@ The command is configurable via `fzfa-hg-modified-locally-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".hg")
     (error "Not a Mercurial repo"))
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :prompt "hg modified: "
                        :command fzfa-hg-modified-locally-command)))
     (fzfa-with-visit (find-file result))))
@@ -83,7 +83,7 @@ The command is configurable via `fzfa-hg-added-files-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".hg")
     (error "Not a Mercurial repo"))
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :prompt "hg added: "
                        :command fzfa-hg-added-files-command)))
     (fzfa-with-visit (find-file result))))
@@ -95,7 +95,7 @@ The command is configurable via `fzfa-hg-modified-in-head-command'."
   (interactive)
   (unless (locate-dominating-file default-directory ".hg")
     (error "Not a Mercurial repo"))
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :prompt "hg HEAD: "
                        :command fzfa-hg-modified-in-head-command)))
     (fzfa-with-visit (find-file result))))

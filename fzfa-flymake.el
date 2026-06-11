@@ -114,7 +114,7 @@ PROMPT is the minibuffer prompt string."
   (let* ((pair (fzfa-flymake--candidates diags))
          (candidates (car pair))
          (lookup (cdr pair)))
-    (when-let* ((result (fzfa-sync-completing-read
+    (when-let* ((result (fzfa-completing-read
                          :candidates candidates
                          :prompt prompt
                          :category 'fzfa-flymake

@@ -180,7 +180,7 @@ GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
                   (format "%s — %s"
                           (plist-get p :album) (plist-get p :name)))
                  (t cand)))))))
-    (when-let* ((sel (fzfa-sync-completing-read
+    (when-let* ((sel (fzfa-completing-read
                       :candidates cands
                       :prompt prompt
                       :category 'fzfa-music
@@ -214,7 +214,7 @@ GROUP-KEY is one of nil, `:artist', or `:genre'.  When non-nil:
                           (let ((n (plist-get p :name)))
                             (puthash n p map) n))
                         playlists)))
-    (when-let* ((sel (fzfa-sync-completing-read
+    (when-let* ((sel (fzfa-completing-read
                       :candidates cands
                       :prompt prompt
                       :category 'fzfa-music)))

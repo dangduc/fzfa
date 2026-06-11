@@ -72,7 +72,7 @@ Selecting a match opens the file and jumps to the line."
                            " -Rn '' "
                            dir-args))
              (t (user-error "Neither rg nor grep found in exec-path")))))
-      (when-let* ((r (fzfa-async-completing-read
+      (when-let* ((r (fzfa-completing-read
                       :prompt "hungry swiper: "
                       :command command
                       :directory default-directory
@@ -107,7 +107,7 @@ by a shallower parent, then streams fd (or find) output through fzf."
                            dir-args
                            " -type f"))
              (t (user-error "Neither fd nor find found in exec-path")))))
-      (when-let* ((result (fzfa-async-completing-read
+      (when-let* ((result (fzfa-completing-read
                            :prompt "hungry find: "
                            :command command
                            :directory default-directory)))

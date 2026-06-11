@@ -38,7 +38,7 @@ Set to nil to search the whole index."
   "Find a file system-wide using Spotlight (mdfind).
 .app bundles are opened with `open'; all other results open with `find-file'."
   (interactive)
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :prompt "spotlight: "
                        :command "mdfind 'kMDItemFSName != \"\"'")))
     (if (string-suffix-p ".app" result)
@@ -52,7 +52,7 @@ Opens the selection with `open'."
   (interactive)
   (when-let*
       ((result
-        (fzfa-async-completing-read
+        (fzfa-completing-read
          :prompt "spotlight: "
          :command
          (concat "mdfind 'kMDItemContentTypeTree"
@@ -75,7 +75,7 @@ Constrained to `fzfa-spotlight-audio-directories'."
                fzfa-spotlight-audio-directories
                "; ")
             (concat "mdfind " query))))
-    (when-let* ((result (fzfa-async-completing-read
+    (when-let* ((result (fzfa-completing-read
                          :prompt "spotlight: "
                          :command command)))
       (start-process "default-app" nil "open" result))))

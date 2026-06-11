@@ -111,7 +111,7 @@ Each entry is a plist with `:id', `:date', `:from', and `:subject' keys.")
                                            (plist-get m :subject))))
                             (puthash d m map) d))
                         msgs)))
-    (when-let* ((sel (fzfa-sync-completing-read
+    (when-let* ((sel (fzfa-completing-read
                       :candidates cands
                       :prompt "mail: "
                       :category 'fzfa-mail))

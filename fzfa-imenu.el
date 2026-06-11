@@ -101,7 +101,7 @@ Display differences:
                        ((buffer-live-p buffer)))
              (cons buffer (cdr hit)))))
       (when-let* ((result
-                   (fzfa-sync-completing-read
+                   (fzfa-completing-read
                     :candidates (nreverse entries)
                     :prompt (pcase scope
                               ('all    "imenu-all: ")

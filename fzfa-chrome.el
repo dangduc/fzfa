@@ -133,7 +133,7 @@ without the trailing ID field."
 
 (defun fzfa-chrome--pick (prompt)
   "Fuzzy-select a bookmark with PROMPT; return the raw tab-encoded candidate."
-  (fzfa-sync-completing-read
+  (fzfa-completing-read
    :candidates (fzfa-chrome--bookmarks)
    :prompt    prompt
    :category  'fzfa-chrome-bookmark
@@ -344,7 +344,7 @@ display without revealing the encrypted blob."
 
 (defun fzfa-chrome-pass--pick (prompt)
   "Fuzzy-select a Chrome login with PROMPT; return raw tab-encoded candidate."
-  (fzfa-sync-completing-read
+  (fzfa-completing-read
    :candidates (fzfa-chrome-pass--candidates)
    :prompt    prompt
    :category  'fzfa-chrome-pass

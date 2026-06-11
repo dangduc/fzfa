@@ -58,7 +58,7 @@
   (recentf-mode 1)
   (unless recentf-list
     (user-error "No recent files"))
-  (when-let* ((result (fzfa-sync-completing-read :candidates recentf-list
+  (when-let* ((result (fzfa-completing-read :candidates recentf-list
                                                 :prompt "recent: "
                                                 :category 'fzfa-file)))
     (fzfa-with-visit (find-file result))))
@@ -71,7 +71,7 @@
                          unless (or (minibufferp b)
                                     (string-prefix-p " " (buffer-name b)))
                          collect (buffer-name b))))
-    (when-let* ((result (fzfa-sync-completing-read
+    (when-let* ((result (fzfa-completing-read
                          :candidates names :prompt "buffer: "
                          :category 'fzfa-buffer)))
       (fzfa-with-visit (switch-to-buffer result)))))
@@ -105,7 +105,7 @@ yanked text with the selection (mirroring `yank-pop' / `consult-yank-pop')."
                (setq display (concat display " ")))
              (puthash display s lookup)
              display))))
-    (when-let* ((result (fzfa-sync-completing-read
+    (when-let* ((result (fzfa-completing-read
                          :candidates entries
                          :prompt "yank-pop: "))
                 (text (gethash result lookup)))
@@ -137,7 +137,7 @@ yanked text with the selection (mirroring `yank-pop' / `consult-yank-pop')."
     (unless names
       (user-error "No bookmarks defined"))
     (when-let* ((result
-                 (fzfa-sync-completing-read
+                 (fzfa-completing-read
                   :candidates names :prompt "bookmark: "
                   :category 'fzfa-bookmark
                   :preview
@@ -196,7 +196,7 @@ SYM nil means leave nothing enabled."
 Aborting (e.g. \\[keyboard-quit]) restores the themes that were enabled
 when the command was invoked.  Selecting \"default\" disables all themes."
   (interactive)
-  (fzfa-sync-completing-read
+  (fzfa-completing-read
    :candidates (cons "default"
                      (mapcar #'symbol-name (custom-available-themes)))
    :prompt "theme: "
@@ -237,7 +237,7 @@ when the command was invoked.  Selecting \"default\" disables all themes."
                   (nreverse hosts))))
     (when-let* ((hosts (or (ssh-hosts)
                            (user-error "No SSH hosts in ~/.ssh/config")))
-                (host (fzfa-sync-completing-read
+                (host (fzfa-completing-read
                        :candidates hosts :prompt "ssh: ")))
       (fzfa-with-visit (find-file (concat "/ssh:" host ":"))))))
 
@@ -264,7 +264,7 @@ when the command was invoked.  Selecting \"default\" disables all themes."
             (nreverse lines))))
     (fzfa-with-visit
       (fzfa--location-jump
-       (fzfa-sync-completing-read :candidates candidates
+       (fzfa-completing-read :candidates candidates
                                   :prompt "swiper: "
                                   :category 'fzfa-location)))))
 
@@ -308,7 +308,7 @@ LINE:CONTENT — buffer names never enter the search input."
                       (nreverse lines))))))
     (fzfa-with-visit
       (fzfa--location-jump
-       (fzfa-sync-completing-read
+       (fzfa-completing-read
         :candidates candidates
         :prompt "swiper-all: "
         :category 'fzfa-location
@@ -338,7 +338,7 @@ Records it like \\[execute-extended-command]."
 (defun fzfa-M-x ()
   "Run an extended command using fzf, like \\[execute-extended-command]."
   (interactive)
-  (when-let* ((result (fzfa-sync-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :candidates (fzfa--commands)
                        :prompt "M-x: "
                        :category 'command
@@ -356,7 +356,7 @@ mirroring `execute-extended-command-for-buffer'."
           (when (fboundp 'command-completion-default-include-p)
             (lambda (sym)
               (command-completion-default-include-p sym buffer)))))
-    (when-let* ((result (fzfa-sync-completing-read
+    (when-let* ((result (fzfa-completing-read
                          :candidates (fzfa--commands predicate)
                          :prompt (format "M-x [%s]: " major-mode)
                          :category 'command
@@ -396,7 +396,7 @@ the global state for global modes."
                       cs))))
       (unless cands
         (user-error "No minor modes available"))
-      (when-let* ((sel (fzfa-sync-completing-read
+      (when-let* ((sel (fzfa-completing-read
                         :candidates cands
                         :prompt "minor mode: "
                         :category 'fzfa-minor-mode
@@ -447,7 +447,7 @@ position is recoverable with \\[set-mark-command] \\[set-mark-command]."
                                        (fzfa--mark-candidates markers))))
     (unless candidates
       (user-error "No marks in this buffer"))
-    (when-let* ((r (fzfa-sync-completing-read
+    (when-let* ((r (fzfa-completing-read
                     :candidates candidates
                     :prompt "mark: "
                     :category 'fzfa-location
@@ -469,7 +469,7 @@ silently skipped."
                                        global-mark-ring))))
     (unless candidates
       (user-error "No live global marks"))
-    (when-let* ((r (fzfa-sync-completing-read
+    (when-let* ((r (fzfa-completing-read
                     :candidates candidates
                     :prompt "global-mark: "
                     :category 'fzfa-location
@@ -511,7 +511,7 @@ Falls back to `insert-register' when `jump-to-register' signals."
              (puthash display t used)
              (puthash display name lookup)
              display))))
-    (when-let* ((r    (fzfa-sync-completing-read
+    (when-let* ((r    (fzfa-completing-read
                        :candidates candidates
                        :prompt "register: "
                        :category 'fzfa-misc))
@@ -556,7 +556,7 @@ and line number."
               (nreverse out)))))
     (unless candidates
       (user-error "No outline headings in buffer"))
-    (when-let* ((r (fzfa-sync-completing-read
+    (when-let* ((r (fzfa-completing-read
                     :candidates candidates
                     :prompt "outline: "
                     :category 'fzfa-location)))
@@ -608,7 +608,7 @@ as `compile' itself can navigate them."
                   (nreverse out))))))
       (unless candidates
         (user-error "No errors in %s" (buffer-name buffer)))
-      (when-let* ((r   (fzfa-sync-completing-read
+      (when-let* ((r   (fzfa-completing-read
                         :candidates candidates
                         :prompt (format "compile-error[%s]: "
                                         (buffer-name buffer))
@@ -679,7 +679,7 @@ originating window, so the picker keeps focus while you browse."
                        (buf (window-buffer win))
                        ((buffer-live-p buf)))
              (fzfa-preview-show buf (window-point win)))))
-      (when-let* ((result (fzfa-sync-completing-read
+      (when-let* ((result (fzfa-completing-read
                            :candidates candidates
                            :prompt "frame: "
                            :category 'fzfa-frame
@@ -737,7 +737,7 @@ buffer list for the others."
                        (buf (tab-buffer i))
                        ((buffer-live-p buf)))
              (fzfa-preview-show buf))))
-      (when-let* ((result (fzfa-sync-completing-read
+      (when-let* ((result (fzfa-completing-read
                            :candidates candidates
                            :prompt "tab: "
                            :category 'fzfa-tab

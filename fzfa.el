@@ -109,7 +109,7 @@ active minibuffer/mini-window display."
 ;;; Customization
 
 (defcustom fzfa-max-candidates 10000
-  "Max candidates returned to Elisp from `fzfa-async-completing-read'.
+  "Max candidates returned to Elisp from `fzfa-completing-read'.
 The full filtered/total counts are still tracked and shown in the prompt.
 Set to nil or 0 to disable the cap (may be slow for very large result sets)."
   :type '(choice (const  :tag "No cap" nil)
@@ -287,7 +287,7 @@ function   Call the function with no arguments; Returns a directory string."
 Reset to nil to force a re-setup on the next entry-point call.")
 
 (defvar fzfa--multi-mode nil
-  "Dispatch flag for `fzfa-async-completing-read' / `fzfa-sync-completing-read'.
+  "Dispatch flag for `fzfa-completing-read' / `fzfa-sync-completing-read'.
 - `:extract'         — throw `fzfa-extracted' with the call's keyword args.
 - (`:inject' . CAND) — return CAND directly without prompting.
 Bound by `fzfa-multi-read' to derive multi-source sources from
@@ -482,7 +482,7 @@ disable the fallback for that category."
 
 Lambda taking a single CANDIDATE; invoked by `fzfa-apply-current'
 without exiting the session.  `let'-bound by
-`fzfa-async-completing-read' / `fzfa-sync-completing-read' from the
+`fzfa-completing-read' / `fzfa-sync-completing-read' from the
 constructor's `:apply' keyword \(falling back to `fzfa-apply-functions'
 by category).  Multi sessions look up `:apply' per-source via
 `fzfa--resolve-apply' instead.")
@@ -491,7 +491,7 @@ by category).  Multi sessions look up `:apply' per-source via
   "Whether to expand path candidates for the active single-source session.
 
 Mirrors the constructor's `:resolve-paths' argument; `let'-bound by
-`fzfa-async-completing-read'.  Passed
+`fzfa-completing-read'.  Passed
 to `fzfa--maybe-expand' in `fzfa-apply-current'; the directory comes
 from the minibuffer's `default-directory' which the setup hook
 already binds to the constructor's `:directory'.  Multi sessions read
@@ -871,7 +871,7 @@ the preview here and the eventual selection action, avoiding the half-broken
 (defun fzfa--grep-preview (cand)
   "Open the FILE from a FILE:LINE:CONTENT grep CAND at LINE for preview.
 Resolves FILE against the captured `default-directory' (the search root
-when invoked from `fzfa-async-completing-read')."
+when invoked from `fzfa-completing-read')."
   (when (and cand
              (string-match "\\`\\(.+?\\):\\([0-9]+\\):" cand))
     (let* ((file (match-string 1 cand))
@@ -1110,7 +1110,7 @@ Nil disables the cap on the C side."
        (> fzfa-max-candidates 0)
        fzfa-max-candidates))
 
-(defun fzfa--async-final-p (r handle query)
+(defun fzfa--final-p (r handle query)
   "Return non-nil when R is the final answer for QUERY on HANDLE.
 R is the value returned by `fzf-native-async-candidates' for QUERY.
 The result is final in either of two cases:
@@ -1307,7 +1307,7 @@ Priority: `fzfa-directory' >
 
 ;;; Split-style + display infrastructure
 
-(defcustom fzfa-async-separator ?※
+(defcustom fzfa-separator ?※
   "Character delimiting the CMD region in async sessions.
 
 In `compact' and `full' display, the minibuffer text has the shape
@@ -1336,13 +1336,13 @@ keystrokes ends with exactly one restart on the final cmd value."
   :type 'float
   :group 'fzfa)
 
-(defun fzfa--async-split-input (str)
+(defun fzfa--split-input (str)
   "Split STR (\"<sep>CMD<sep>FILTER\" shape) into (CMD . FILTER).
 
-SEP is `fzfa-async-separator'.  When STR doesn't start with SEP, the
+SEP is `fzfa-separator'.  When STR doesn't start with SEP, the
 whole STR is CMD and FILTER is empty.  With one SEP only, the
 trailing text is CMD and FILTER is empty."
-  (let ((sep (char-to-string fzfa-async-separator)))
+  (let ((sep (char-to-string fzfa-separator)))
     (cond
      ((not (string-prefix-p sep str)) (cons str ""))
      (t
@@ -1353,14 +1353,14 @@ trailing text is CMD and FILTER is empty."
                   (substring tail (1+ close)))
           (cons tail "")))))))
 
-(defun fzfa--async-split (input display-state command)
+(defun fzfa--split (input display-state command)
   "Return (CMD . FILTER) for INPUT given the current session state.
 
 In `hidden' DISPLAY-STATE, CMD lives outside the buffer (in COMMAND,
-the closure variable in `fzfa-async-completing-read''s body or its
+the closure variable in `fzfa-completing-read''s body or its
 helm/multi analogue), so the split is trivial: CMD = COMMAND, FILTER
-= INPUT.  In any other display state, `fzfa--async-split-input'
-parses INPUT against `fzfa-async-separator'.
+= INPUT.  In any other display state, `fzfa--split-input'
+parses INPUT against `fzfa-separator'.
 
 Frontend-agnostic — the table-lambda in completing-read sessions
 calls it with `(fzfa--current-query str)' as INPUT; helm's
@@ -1368,9 +1368,9 @@ calls it with `(fzfa--current-query str)' as INPUT; helm's
 both."
   (if (eq display-state 'hidden)
       (cons (or command "") input)
-    (fzfa--async-split-input input)))
+    (fzfa--split-input input)))
 
-(defcustom fzfa-async-display-key ">"
+(defcustom fzfa-display-key ">"
   "Key string that toggles compact view of the CMD portion.
 When compact, only the program name and the quoted-argument slot
 \(if any) are visible; flags are hidden behind a `...' display.
@@ -1380,7 +1380,7 @@ session starts compact.  Set to nil to disable the feature entirely
   :type '(choice (const :tag "Disabled" nil) string)
   :group 'fzfa)
 
-(defun fzfa--async-display-cmd-bounds (sep)
+(defun fzfa--display-cmd-bounds (sep)
   "Return (CMD-BEG . CMD-END) for the CMD region in the current minibuffer.
 SEP is the separator character used by the active split style.  Returns
 nil when the minibuffer does not begin with SEP or no closing SEP is
@@ -1393,7 +1393,7 @@ present yet."
         (when (search-forward (char-to-string sep) nil t)
           (cons beg (1- (point))))))))
 
-(defun fzfa--async-display-make-overlays (cmd-beg cmd-end)
+(defun fzfa--display-make-overlays (cmd-beg cmd-end)
   "Return overlays compacting flag regions between CMD-BEG and CMD-END.
 Uses the *last* balanced `\\='…\\=' / \"…\" pair as anchor (so an
 earlier quoted flag value like `-flag=\\='val\\='' is ignored in favor
@@ -1434,7 +1434,7 @@ only spans are left alone."
         (mk prog-end cmd-end ""))))
     overlays))
 
-(defun fzfa--async-display-next-state (state)
+(defun fzfa--display-next-state (state)
   "Return the display state cycled one step forward.
 
 The cycle is `hidden' → `compact' → `full' → `hidden'.  Any unknown
@@ -1446,7 +1446,7 @@ session state)."
     ((full) 'hidden)
     (otherwise 'hidden)))
 
-(defun fzfa--async-display-materialize (cmd initial-char)
+(defun fzfa--display-materialize (cmd initial-char)
   "Materialize \"<sep>CMD<sep>\" at the start of the editable region.
 
 Inserts INITIAL-CHAR + CMD + INITIAL-CHAR at `minibuffer-prompt-end'
@@ -1471,14 +1471,14 @@ helper is testable in isolation."
     (insert cmd-text)
     (goto-char (+ mbe (length cmd-text) filter-offset))
     (let ((close-pos (+ mbe 1 (length cmd-str))))
-      (list (fzfa--async-protect-separator mbe initial-char)
-            (fzfa--async-protect-separator close-pos initial-char)))))
+      (list (fzfa--protect-separator mbe initial-char)
+            (fzfa--protect-separator close-pos initial-char)))))
 
-(defun fzfa--async-display-extract (separator-overlays)
+(defun fzfa--display-extract (separator-overlays)
   "Parse \"<sep>CMD<sep>FILTER\" at start of editable region, delete the prefix.
 
 Reads the buffer contents from `minibuffer-prompt-end' to
-`point-max', runs `fzfa--async-split-input' on it, and uses the
+`point-max', runs `fzfa--split-input' on it, and uses the
 resulting CMD to delete the leading \"<sep>CMD<sep>\" prefix.
 
 Removes SEPARATOR-OVERLAYS first so their `modification-hooks'
@@ -1491,14 +1491,14 @@ trivial-split picks it up on the next tick.
 Operates on `current-buffer'."
   (let* ((mbe (minibuffer-prompt-end))
          (input (buffer-substring-no-properties mbe (point-max)))
-         (split (fzfa--async-split-input input))
+         (split (fzfa--split-input input))
          (cmd (car split)))
     (mapc #'delete-overlay separator-overlays)
     (delete-region mbe (min (point-max) (+ mbe 2 (length cmd))))
     cmd))
 ;;; Async `completing-read'
 
-(defun fzfa--async-separator-heal-hook (overlay is-after _beg _end
+(defun fzfa--separator-heal-hook (overlay is-after _beg _end
                                                 &optional _prelength)
   "Re-insert OVERLAY's separator char if the overlay's range collapsed.
 
@@ -1516,42 +1516,42 @@ doesn't recurse through this hook."
              (= (overlay-start overlay) (overlay-end overlay)))
     (let ((inhibit-modification-hooks t)
           (p (overlay-start overlay))
-          (sep (overlay-get overlay 'fzfa-async-separator-char)))
+          (sep (overlay-get overlay 'fzfa-separator-char)))
       (when (and p sep)
         (save-excursion
           (goto-char p)
           (insert (char-to-string sep)))
         (move-overlay overlay p (1+ p))))))
 
-(defun fzfa--async-protect-separator (pos sep-char)
+(defun fzfa--protect-separator (pos sep-char)
   "Place a self-healing protective overlay at POS covering SEP-CHAR.
 
 Returns the overlay.  The overlay tracks its single character via
 `front-advance' t / `rear-advance' nil so insertions adjacent to the
 separator don't extend its range; if the covered char is deleted by
-any path, `fzfa--async-separator-heal-hook' restores it."
+any path, `fzfa--separator-heal-hook' restores it."
   (let ((ov (make-overlay pos (1+ pos) nil t nil)))
-    (overlay-put ov 'fzfa-async-separator-char sep-char)
+    (overlay-put ov 'fzfa-separator-char sep-char)
     (overlay-put ov 'cursor-intangible t)
     (overlay-put ov 'modification-hooks
-                 (list #'fzfa--async-separator-heal-hook))
+                 (list #'fzfa--separator-heal-hook))
     ov))
 
 ;;;###autoload
-(cl-defun fzfa-async-completing-read (&key
+(cl-defun fzfa-completing-read (&key
                                       prompt
                                       command
                                       candidates
                                       (directory (fzfa--default-dir))
-                                      (category 'fzfa-file)
+                                      (category 'auto)
                                       annotate
                                       affix
                                       group
                                       history
-                                      require-match
+                                      (require-match 'auto)
                                       default
                                       initial-input
-                                      (resolve-paths t)
+                                      (resolve-paths 'auto)
                                       (display 'hidden)
                                       skip-executable-check
                                       preview
@@ -1559,12 +1559,12 @@ any path, `fzfa--async-separator-heal-hook' restores it."
   "Run shell COMMAND with asynchronous `completing-read'.
 
 The minibuffer input is split into a shell-CMD part and an
-fzf-FILTER part on `fzfa-async-separator': the buffer text has
+fzf-FILTER part on `fzfa-separator': the buffer text has
 shape \"<sep>CMD<sep>FILTER\".  Changing CMD restarts the
 subprocess; changing FILTER rescores in place via fzf-native.
 
 :DISPLAY controls how much of the CMD region is visible.  Press
-`fzfa-async-display-key' (default \">\") to cycle:
+`fzfa-display-key' (default \">\") to cycle:
   hidden  — entire \"<sep>CMD<sep>\" prefix is invisible; only FILTER
             appears editable.  This is the default for legacy async
             callers.
@@ -1581,9 +1581,9 @@ subprocess; changing FILTER rescores in place via fzf-native.
                         `fzfa--default-dir' (respects
                         `fzfa-project-backend').
 :CATEGORY               Completion category symbol.  Defaults to
-                        `fzfa-file' (most async commands return file
-                        paths).  Pass `fzfa-grep' for FILE:LINE:CONTENT
-                        candidates, `fzfa-misc' for non-file output, etc.
+                        `fzfa-file' for :COMMAND sources, `fzfa-misc' for
+                        :CANDIDATES sources.  Pass an explicit value to
+                        override.
 :GROUP                  Optional grouping function for completion metadata.
 :INITIAL-INPUT          Optional initial minibuffer text overriding the
                         auto-built \"<sep>COMMAND<sep>\".  Either a string
@@ -1622,7 +1622,18 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
   (fzfa--ensure-setup)
   (when (and command candidates)
     (user-error
-     "fzfa-async-completing-read: :command and :candidates are mutually exclusive"))
+     "fzfa-completing-read: :command and :candidates are mutually exclusive"))
+  ;; Smart defaults keyed on source kind.  :command sources behave like
+  ;; the old async path (file-category, free-form input, path
+  ;; resolution); :candidates sources behave like the old sync path
+  ;; (misc category, require-match, no path resolution).  Callers
+  ;; override by passing an explicit value.
+  (when (eq resolve-paths 'auto)
+    (setq resolve-paths (and command t)))
+  (when (eq category 'auto)
+    (setq category (if command 'fzfa-file 'fzfa-misc)))
+  (when (eq require-match 'auto)
+    (setq require-match (and candidates t)))
   (unless (or skip-executable-check candidates)
     (when-let* ((prog (and command (car (split-string command nil t)))))
       (unless (executable-find prog)
@@ -1630,7 +1641,10 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
   (let ((prompt (or prompt
                     (when command
                       (concat (car (split-string command nil t)) ": "))
-                    (when candidates "candidates: "))))
+                    ;; Match former sync default when no command/explicit
+                    ;; prompt — used by list-shape callers and any fn-form
+                    ;; candidates session that didn't set its own prompt.
+                    (when candidates "fzf > "))))
     (cond
      ((eq fzfa--multi-mode :extract)
       (throw 'fzfa-extracted
@@ -1649,7 +1663,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
       ;; multi-mode = nil instead of replaying our inject value.
       (let ((cand (cdr fzfa--multi-mode)))
         (setq fzfa--multi-mode nil)
-        (cl-return-from fzfa-async-completing-read
+        (cl-return-from fzfa-completing-read
           (fzfa--maybe-expand cand directory resolve-paths)))))
     ;; Normalize :candidates (list / zero-arg fn / 2-arg fn) to the
     ;; producer shape that the rest of the body consumes.  Done after
@@ -1668,8 +1682,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
           (funcall candidates "" (lambda (_x) (setq fired t)))
           (unless fired
             (user-error
-             "fzfa-async-completing-read: async-firing :candidates not supported under helm-mode")))
-        (cl-return-from fzfa-async-completing-read
+             "fzfa-completing-read: async-firing :candidates not supported under helm-mode")))
+        (cl-return-from fzfa-completing-read
           (fzfa--maybe-expand
            (fzfa-helm--sync-read
             :candidates candidates :prompt prompt :category category
@@ -1678,7 +1692,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
             :default default :preview preview :apply apply)
            directory resolve-paths)))
        ((fboundp 'fzfa-helm--async-read)
-        (cl-return-from fzfa-async-completing-read
+        (cl-return-from fzfa-completing-read
           (fzfa--maybe-expand
            (fzfa-helm--async-read
             :prompt prompt :command command :directory directory
@@ -1693,7 +1707,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
            (fzfa--session-apply
             (or apply (plist-get (alist-get category fzfa-apply-functions) :apply)))
            (fzfa--session-resolve-paths resolve-paths)
-           (initial-char fzfa-async-separator)
+           (initial-char fzfa-separator)
            ;; Build initial input.  Hidden mode keeps the CMD region OUT
            ;; of the minibuffer entirely — CMD lives in the `command'
            ;; closure variable (mutated in place by the display-cycle
@@ -1751,32 +1765,32 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
               ;; CMD region to hide; full shows it verbatim.
               (funcall display-clear)
               (when (eq display-state 'compact)
-                (when-let* ((bounds (fzfa--async-display-cmd-bounds
+                (when-let* ((bounds (fzfa--display-cmd-bounds
                                      initial-char)))
                   (setq display-overlays
-                        (fzfa--async-display-make-overlays
+                        (fzfa--display-make-overlays
                          (car bounds) (cdr bounds)))))))
            (display-cycle
             (lambda ()
               (interactive)
               (let* ((from display-state)
-                     (to (fzfa--async-display-next-state from)))
+                     (to (fzfa--display-next-state from)))
                 ;; Transitions across the hidden boundary mutate the
                 ;; buffer via the shared materialize / extract helpers
-                ;; (see `fzfa--async-display-materialize' and
-                ;; `fzfa--async-display-extract').  Both helpers are
+                ;; (see `fzfa--display-materialize' and
+                ;; `fzfa--display-extract').  Both helpers are
                 ;; frontend-agnostic — they operate on `current-buffer'
                 ;; using `minibuffer-prompt-end' as the start anchor, so
                 ;; the same logic powers the helm `>' key when that
-                ;; lands.  See `fzfa--async-display-next-state' for the
+                ;; lands.  See `fzfa--display-next-state' for the
                 ;; cycle order.
                 (cond
                  ((and (eq from 'hidden) (eq to 'compact))
                   (setq separator-overlays
-                        (fzfa--async-display-materialize
+                        (fzfa--display-materialize
                          command initial-char)))
                  ((eq to 'hidden)
-                  (setq command (fzfa--async-display-extract
+                  (setq command (fzfa--display-extract
                                  separator-overlays))
                   (setq separator-overlays nil)))
                 (setq display-state to)
@@ -1839,7 +1853,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                 (`(boundaries . ,_) (cons 0 0))
                 ('t
                  (let* ((input (fzfa--current-query str))
-                        (split (fzfa--async-split
+                        (split (fzfa--split
                                 input display-state command))
                         (cmd (car split))
                         (query (cdr split)))
@@ -1896,7 +1910,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                      (let ((r (and handle
                                    (fzf-native-async-candidates
                                     handle query limit))))
-                       (when (and handle (fzfa--async-final-p r handle query))
+                       (when (and handle (fzfa--final-p r handle query))
                          (setq last-result r))
                        last-result))
                     ((null handle) last-result)
@@ -1925,7 +1939,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                      (make-overlay (point-min)
                                                    (minibuffer-prompt-end))))
                              (funcall refresh-overlay)))
-                         (when (fzfa--async-final-p r handle query)
+                         (when (fzfa--final-p r handle query)
                            (setq last-result r))
                          last-result)))))))
                 (_ t)))))
@@ -1940,7 +1954,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                (ivy-state-dynamic-collection ivy-last)))
                           (query (and (boundp 'ivy-text) ivy-text)))
                 (with-selected-window win
-                  (let* ((split (fzfa--async-split
+                  (let* ((split (fzfa--split
                                  query display-state command))
                          (cmd    (car split))
                          (filter (cdr split)))
@@ -1978,7 +1992,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                     (fzf-native-async-candidates
                                      handle filter limit))))
                         (when (and handle
-                                   (fzfa--async-final-p r handle filter))
+                                   (fzfa--final-p r handle filter))
                           (setq last-result r))))
                      ((null handle) nil)
                      (t
@@ -1991,7 +2005,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                           (when-let* ((stats (fzf-native-async-stats handle)))
                             (setq last-filtered (car stats)
                                   last-total    (cdr stats)))
-                          (when (fzfa--async-final-p r handle filter)
+                          (when (fzfa--final-p r handle filter)
                             (setq last-result r)))))))
                     (when last-result
                       (ivy--set-candidates last-result)
@@ -2008,13 +2022,13 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                (cond
                 ((and command (not (string-empty-p command))) command)
                 (init-text
-                 (car (fzfa--async-split-input init-text)))
+                 (car (fzfa--split-input init-text)))
                 (t ""))))
           (funcall do-restart (or seed ""))))
        ((and command (not (string-empty-p command)))
         (funcall do-restart command))
        (init-text
-        (let ((cmd (car (fzfa--async-split-input init-text))))
+        (let ((cmd (car (fzfa--split-input init-text))))
           (when (and cmd (not (string-empty-p cmd)))
             (funcall do-restart cmd)))))
       (setq poll-timer
@@ -2057,10 +2071,10 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                  (fzfa--minibuffer-format-reset)
                  (when handler (fzfa--preview-install))
                  (cursor-intangible-mode 1)
-                 (when fzfa-async-display-key
+                 (when fzfa-display-key
                    (let ((map (make-sparse-keymap)))
                      (set-keymap-parent map (current-local-map))
-                     (define-key map (kbd fzfa-async-display-key)
+                     (define-key map (kbd fzfa-display-key)
                                  display-cycle)
                      (use-local-map map)))
                  (funcall display-apply)
@@ -2074,9 +2088,9 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                    (let* ((mbe (minibuffer-prompt-end))
                           (close-pos (+ mbe 1 (length command))))
                      (setq separator-overlays
-                           (list (fzfa--async-protect-separator
+                           (list (fzfa--protect-separator
                                   mbe initial-char)
-                                 (fzfa--async-protect-separator
+                                 (fzfa--protect-separator
                                   close-pos initial-char)))))
                  ;; Place point synchronously at the seeded text's end.
                  (when init-point
@@ -2107,7 +2121,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
          (when handler (fzfa--preview-return selection)))
        directory resolve-paths))))
 
-(defun fzfa--async-extract-args (cmd)
+(defun fzfa--extract-args (cmd)
   "Run CMD in `:extract' mode and return its keyword args plist.
 Returns nil if CMD does not flow through a fzfa `completing-read'."
   (catch 'fzfa-extracted
@@ -2189,113 +2203,6 @@ PATH and whose command symbol is bound: %s."
    (fzfa-grep  :executable "grep"))) ;; -> `fzfa-smart-grep'
 
 ;;; Sync `completing-read'
-
-(cl-defun fzfa-sync-completing-read (&key
-                                     candidates
-                                     (prompt "fzf > ")
-                                     (category 'fzfa-misc)
-                                     annotate
-                                     affix
-                                     group
-                                     history
-                                     (require-match t)
-                                     default
-                                     preview
-                                     apply)
-  "Run `completing-read' over CANDIDATES using fzf-native for scoring.
-
-:CANDIDATES List of strings to score with `fzf-native-score-all'.
-:PROMPT     Minibuffer prompt string.  Defaults to \"fzf > \".
-:CATEGORY   Completion category symbol.  Defaults to `fzfa-misc'.
-            Use `fzfa-file' for file-path candidates so marginalia
-            can annotate them with file metadata.
-:ANNOTATE   Optional function (CANDIDATE) -> string appended after each
-            candidate.  Exposed as `annotation-function' in completion
-            metadata.  Annotations start immediately after the candidate
-            string, so column alignment depends on candidate widths.
-:AFFIX      Optional function (CANDIDATES) -> list of (CANDIDATE PREFIX
-            SUFFIX).  Exposed as `affixation-function'.  Vertico
-            right-pads each candidate to a consistent width before
-            appending SUFFIX, giving true column alignment.  Prefer this
-            over :ANNOTATE when alignment matters.
-:GROUP      Optional function (CANDIDATE TRANSFORM) -> string.  When
-            TRANSFORM is nil return the group name; when non-nil return
-            the display string for CANDIDATE within its group.  Frontends
-            like vertico render group headers between sections.
-:HISTORY    Optional history variable symbol passed to `completing-read'.
-            Selected entries are pushed onto this list and recallable
-            with \\[previous-history-element].
-:REQUIRE-MATCH Forwarded to `completing-read'.  Defaults to t.  Set nil
-            to accept free-form input (treat CANDIDATES as suggestions).
-:DEFAULT    Forwarded to `completing-read'.  Returned when the user
-            submits empty input; also seeded into history.
-:PREVIEW    Per-call live-preview handler that bypasses the
-            `fzfa-preview-functions' registry lookup for CATEGORY.
-            Pass a function that takes a CAND for a simple preview-only
-            handler, or a full handler plist with `:setup',
-            `:preview', `:exit', `:return' slots.  Nil (the default)
-            falls back to the registry.  Set `fzfa-preview-delay' to nil
-            to disable previews.
-:APPLY      Lambda (CAND) -> any.
-            See `fzfa-async-completing-read' for semantics."
-  (fzfa--ensure-setup)
-  (cond
-   ((eq fzfa--multi-mode :extract)
-    (throw 'fzfa-extracted
-           ;; Translate :candidates → :items so multi consumes one key.
-           (list :items candidates :prompt prompt :category category
-                 :annotate annotate :affix affix :group group
-                 :history history :preview preview)))
-   ((eq (car-safe fzfa--multi-mode) :inject)
-    (let ((cand (cdr fzfa--multi-mode)))
-      (setq fzfa--multi-mode nil)
-      (cl-return-from fzfa-sync-completing-read cand))))
-  (when (and (bound-and-true-p helm-mode) (fboundp 'fzfa-helm--sync-read))
-    (cl-return-from fzfa-sync-completing-read
-      (fzfa-helm--sync-read
-       :candidates candidates :prompt prompt :category category
-       :annotate annotate :affix affix :group group
-       :history history :require-match require-match
-       :default default :preview preview :apply apply)))
-  (let* ((completion-styles '(fzfa))
-         (ivy-completing-read-dynamic-collection t) ;; Don't let `ivy' filter.
-         (handler (fzfa--preview-handler preview category))
-         (fzfa--preview-session (and handler (list handler)))
-         (fzfa--session-apply
-          (or apply (plist-get (alist-get category fzfa-apply-functions) :apply)))
-         ;; Ivy ignores `display-sort-function' in completion metadata,
-         ;; so apply the history sort ourselves on the empty-query
-         ;; branch.  Vertico/icomplete reach this via the metadata, so
-         ;; gating on `ivy-mode' avoids a double sort there.
-         (ivy-history-sort-p (and history (bound-and-true-p ivy-mode)))
-         (selection nil))
-    (unwind-protect
-        (minibuffer-with-setup-hook
-            (lambda ()
-              (fzfa--minibuffer-format-reset)
-              (when handler (fzfa--preview-install)))
-          (setq selection
-                (completing-read
-                 prompt
-                 (lambda (str _pred action)
-                   (pcase action
-                     ('metadata (fzfa--completion-metadata category
-                                                           :annotate annotate
-                                                           :affix affix
-                                                           :group group))
-                     (`(boundaries . ,_) (cons 0 0))
-                     ('lambda t)
-                     ('t (let ((query (fzfa--current-query str)))
-                           (cond
-                            ((not (string-empty-p query))
-                             (fzfa--bridge-defcustoms
-                              #'fzf-native-score-all candidates query))
-                            (ivy-history-sort-p
-                             (fzfa--history-rank candidates history))
-                            (t candidates))))))
-                 nil require-match nil history default)))
-      (when handler (fzfa--preview-return selection)))
-    selection))
 
 ;;; Multi-source `completing-read'
 
@@ -2621,14 +2528,13 @@ falls back to declared source order.
 
 Per-source plist keys:
   :name      Group header (required).
-  :items     Sync items: list of strings, or zero-arg function returning one.
-             Mutually exclusive with :command and :candidates.
   :command   Async source: shell command string.
-             Mutually exclusive with :items and :candidates.
-  :candidates  Elisp producer: (lambda (INPUT CALLBACK) ...).  Called per
-             query change; CALLBACK delivers a full candidate snapshot.
-             May fire synchronously or asynchronously.  Mutually
-             exclusive with :items and :command.
+             Mutually exclusive with :candidates.
+  :candidates  List of strings, a zero-arg function returning one,
+             or a 2-arg `(lambda (INPUT CALLBACK) ...)' producer.
+             Lists and zero-arg fns are wrapped as constant producers
+             via `fzfa--normalize-candidates'.  Mutually exclusive
+             with :command.
   :directory Working directory for :command (default `default-directory').
   :annotate  Optional (cand) -> string annotation function.
   :action    Optional (cand) -> any.  Called with the selection.  When
@@ -2662,11 +2568,12 @@ Per-source plist keys:
   (let* ((n            (length sources))
          (sources-v    (vconcat sources))
          (handles      (make-vector n nil))
-         (sync-items   (make-vector n nil))
          ;; Producer sources: per-source snapshot list, fn closure,
          ;; the last input the producer was called with (track so we
          ;; refetch on change), and a monotonic token for stale-
-         ;; callback discard.
+         ;; callback discard.  Static-list sources land here too —
+         ;; `fzfa--normalize-candidates' wraps them into a constant
+         ;; producer at source iteration.
          (cands-fns    (make-vector n nil))
          (snapshots    (make-vector n nil))
          (prod-tokens  (make-vector n 0))
@@ -2747,7 +2654,6 @@ Per-source plist keys:
                           (aset filtered i 0)
                           (aset rank i 0))
                       (let* ((h     (aref handles i))
-                             (items (aref sync-items i))
                              (prod  (aref cands-fns i))
                              (out
                               (cond
@@ -2765,17 +2671,10 @@ Per-source plist keys:
                                    (t (while-no-input
                                         (fzfa--bridge-defcustoms
                                          #'fzf-native-score-all
-                                         snap query))))))
-                               (items
-                                (if (string-empty-p query)
-                                    items
-                                  (while-no-input
-                                    (fzfa--bridge-defcustoms
-                                     #'fzf-native-score-all
-                                     items query)))))))
+                                         snap query)))))))))
                         (cond
                          ((eq out t) (setq interrupted t))
-                         ((and h (not (fzfa--async-final-p out h query)))
+                         ((and h (not (fzfa--final-p out h query)))
                           (when-let* ((s (fzf-native-async-stats h)))
                             (aset totals i (cdr s))))
                          (t
@@ -2929,7 +2828,6 @@ Per-source plist keys:
     (dotimes (i n)
       (let* ((src      (aref sources-v i))
              (cmd      (plist-get src :command))
-             (items    (plist-get src :items))
              (cands-fn (fzfa--normalize-candidates
                         (plist-get src :candidates))))
         (cond
@@ -2942,15 +2840,7 @@ Per-source plist keys:
          (cands-fn
           ;; Record the producer fn; first dispatch tick fires the
           ;; initial fetch via `fzfa--multi-candidates-fetch'.
-          (aset cands-fns i cands-fn))
-         (items
-          (let ((tagged
-                 (mapcar (lambda (s)
-                           (fzfa--multi-tag (copy-sequence s) i cand->src))
-                         (if (functionp items) (funcall items) items))))
-            (aset sync-items i tagged)
-            (aset totals i (length tagged))
-            (aset filtered i (length tagged)))))))
+          (aset cands-fns i cands-fn)))))
     (unwind-protect
         (progn
           (setq timer
@@ -3135,7 +3025,6 @@ Per-source plist keys:
                                     (aset filtered i 0)
                                     (aset rank i 0))
                                 (let* ((h     (aref handles i))
-                                       (items (aref sync-items i))
                                        (prod  (aref cands-fns i))
                                        (out
                                         (cond
@@ -3153,21 +3042,14 @@ Per-source plist keys:
                                              (t (while-no-input
                                                   (fzfa--bridge-defcustoms
                                                    #'fzf-native-score-all
-                                                   snap query))))))
-                                         (items
-                                          (if (string-empty-p query)
-                                              items
-                                            (while-no-input
-                                              (fzfa--bridge-defcustoms
-                                               #'fzf-native-score-all
-                                               items query)))))))
+                                                   snap query)))))))))
                                   (cond
                                    ((eq out t) (setq interrupted t))
                                    ;; Async source whose result is not yet
                                    ;; final — keep the prior per-source slot;
                                    ;; refresh `totals' so the overlay still
                                    ;; reflects the live pool.
-                                   ((and h (not (fzfa--async-final-p
+                                   ((and h (not (fzfa--final-p
                                                  out h query)))
                                     (when-let* ((s (fzf-native-async-stats h)))
                                       (aset totals i (cdr s))))
@@ -3269,7 +3151,7 @@ Each command is funcalled twice per multi session — once in
 `:extract' mode (capture keyword args, abort), once in `:inject' mode after
 the user picks (so the command's post-action runs).  OPTIONS is forwarded
 to `fzfa--multi-read'.  Commands whose body does not reach
-`fzfa-async-completing-read' or `fzfa-sync-completing-read' are skipped.
+`fzfa-completing-read' or `fzfa-sync-completing-read' are skipped.
 Commands must be arg-less (no interactive `read-*' prompts in their body).
 
 Composes: if a command in COMMANDS itself calls `fzfa--multi-read'
@@ -3516,7 +3398,7 @@ render."
   "Install fzfa's registrations exactly once.
 
  e.g.
- `fzfa-async-completing-read',`fzfa-sync-completing-read',`fzfa-multi-read'."
+ `fzfa-completing-read',`fzfa-sync-completing-read',`fzfa-multi-read'."
   (unless fzfa--setup-done
     (setq fzfa--setup-done t)
     (when (fboundp 'fzf-native-ensure-loaded)

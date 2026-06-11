@@ -45,7 +45,7 @@ directory; otherwise it is placed in the kill ring."
          (dir (or directory default-directory)))
     (when (string-empty-p cmd)
       (user-error "Command cannot be empty"))
-    (when-let* ((result (fzfa-async-completing-read
+    (when-let* ((result (fzfa-completing-read
                          :prompt (format "%s » " cmd)
                          :command cmd
                          :directory dir
@@ -119,7 +119,7 @@ kill ring instead.  Override the location via
                           (user-error "Cannot read shell history: %s" file))
                       (or (read-entries file)
                           (user-error "Shell history is empty")))))
-      (when-let* ((result (fzfa-sync-completing-read
+      (when-let* ((result (fzfa-completing-read
                            :candidates cmds :prompt "shell-history: ")))
         (if buffer-read-only
             (progn (kill-new result) (message "Copied: %s" result))

@@ -106,7 +106,7 @@ original point is restored as well."
           (unless company-candidates
             (user-error "No company candidates available"))
           (let ((fzfa-company--source-buffer (current-buffer)))
-            (let ((selection (fzfa-sync-completing-read
+            (let ((selection (fzfa-completing-read
                               :candidates company-candidates
                               :prompt "Company: "
                               :category 'fzfa-company

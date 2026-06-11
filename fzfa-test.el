@@ -153,21 +153,21 @@ Mocks `expand-file-name' so `fzfa-tramp' reads the temp file."
   (fzfa-test--with-ssh-config
       "Host foo\n  HostName foo.example.com\nHost bar\n"
     (let ((args (fzfa-test--extract #'fzfa-tramp)))
-      (should (equal (plist-get args :items) '("foo" "bar"))))))
+      (should (equal (plist-get args :candidates) '("foo" "bar"))))))
 
 (ert-deftest fzfa-tramp-hosts-skips-wildcards ()
   "Wildcard Host patterns (*, ?, !) are excluded."
   (fzfa-test--with-ssh-config
       "Host *\nHost prod\nHost *.internal\nHost dev\n"
     (let ((args (fzfa-test--extract #'fzfa-tramp)))
-      (should (equal (plist-get args :items) '("prod" "dev"))))))
+      (should (equal (plist-get args :candidates) '("prod" "dev"))))))
 
 (ert-deftest fzfa-tramp-hosts-multiple-on-one-line ()
   "Multiple hosts on a single Host line are each returned."
   (fzfa-test--with-ssh-config
       "Host alpha beta gamma\n"
     (let ((args (fzfa-test--extract #'fzfa-tramp)))
-      (should (equal (plist-get args :items)
+      (should (equal (plist-get args :candidates)
                      '("alpha" "beta" "gamma"))))))
 
 (ert-deftest fzfa-tramp-missing-config ()
@@ -192,7 +192,7 @@ surfaced via `fzfa--location-group' as the section header."
             (insert "hello\n"))
           (cl-letf (((symbol-function 'buffer-list) (lambda () (list buf))))
             (let* ((args (fzfa-test--extract #'fzfa-swiper-all))
-                   (cands (plist-get args :items))
+                   (cands (plist-get args :candidates))
                    (cand (car (cl-member "1:hello" cands :test #'equal))))
               (should cand)
               (should (equal (get-text-property 0 'fzfa-location cand)
@@ -872,57 +872,57 @@ inside `fzfa-multi-read' (`:extract')."
   (should (fboundp 'fzfa-smart-grep))
   (should (commandp 'fzfa-smart-grep)))
 
-;;; fzfa--async-split
+;;; fzfa--split
 ;;
-;; Tests bind `fzfa-async-separator' to ?# for readable ASCII fixtures;
+;; Tests bind `fzfa-separator' to ?# for readable ASCII fixtures;
 ;; the splitter is generic and works for any character.
 
 (ert-deftest fzfa-async-split-hidden-empty-input ()
   "Hidden mode + empty input returns (COMMAND . \"\")."
-  (let ((fzfa-async-separator ?#))
-    (should (equal (fzfa--async-split "" 'hidden "find .")
+  (let ((fzfa-separator ?#))
+    (should (equal (fzfa--split "" 'hidden "find .")
                    '("find ." . "")))))
 
 (ert-deftest fzfa-async-split-hidden-with-filter ()
   "Hidden mode treats the whole INPUT as FILTER and CMD = COMMAND."
-  (let ((fzfa-async-separator ?#))
-    (should (equal (fzfa--async-split "foo" 'hidden "find .")
+  (let ((fzfa-separator ?#))
+    (should (equal (fzfa--split "foo" 'hidden "find .")
                    '("find ." . "foo")))))
 
 (ert-deftest fzfa-async-split-hidden-nil-command ()
   "Hidden mode + nil COMMAND coerces CMD to the empty string."
-  (let ((fzfa-async-separator ?#))
-    (should (equal (fzfa--async-split "foo" 'hidden nil)
+  (let ((fzfa-separator ?#))
+    (should (equal (fzfa--split "foo" 'hidden nil)
                    '("" . "foo")))))
 
 (ert-deftest fzfa-async-split-hidden-empty-string-command ()
   "Hidden mode + empty-string COMMAND keeps CMD as empty string."
-  (let ((fzfa-async-separator ?#))
-    (should (equal (fzfa--async-split "foo" 'hidden "")
+  (let ((fzfa-separator ?#))
+    (should (equal (fzfa--split "foo" 'hidden "")
                    '("" . "foo")))))
 
 (ert-deftest fzfa-async-split-compact-delegates-to-splitter ()
   "Compact mode ignores COMMAND and delegates to the splitter."
-  (let ((fzfa-async-separator ?#))
-    (should (equal (fzfa--async-split "#find .#foo" 'compact "ignored")
+  (let ((fzfa-separator ?#))
+    (should (equal (fzfa--split "#find .#foo" 'compact "ignored")
                    '("find ." . "foo")))))
 
 (ert-deftest fzfa-async-split-full-delegates-to-splitter ()
   "Full mode behaves identically to compact."
-  (let ((fzfa-async-separator ?#))
-    (should (equal (fzfa--async-split "#find .#foo" 'full "ignored")
-                   (fzfa--async-split "#find .#foo" 'compact "ignored")))))
+  (let ((fzfa-separator ?#))
+    (should (equal (fzfa--split "#find .#foo" 'full "ignored")
+                   (fzfa--split "#find .#foo" 'compact "ignored")))))
 
 (ert-deftest fzfa-async-split-compact-no-leading-separator ()
   "Compact mode + input without a leading separator → whole string as CMD."
-  (let ((fzfa-async-separator ?#))
-    (should (equal (fzfa--async-split "plain-text" 'compact "ignored")
+  (let ((fzfa-separator ?#))
+    (should (equal (fzfa--split "plain-text" 'compact "ignored")
                    '("plain-text" . "")))))
 
 (ert-deftest fzfa-async-split-compact-empty-cmd-region ()
   "Compact mode + `##filter' (empty CMD region) → (\"\" . \"filter\")."
-  (let ((fzfa-async-separator ?#))
-    (should (equal (fzfa--async-split "##bar" 'compact "ignored")
+  (let ((fzfa-separator ?#))
+    (should (equal (fzfa--split "##bar" 'compact "ignored")
                    '("" . "bar")))))
 
 (ert-deftest fzfa-async-split-hidden-state-takes-priority ()
@@ -930,35 +930,35 @@ inside `fzfa-multi-read' (`:extract')."
 INPUT that looks like a separator-delimited shape is NOT parsed when
 the session is hidden — the whole INPUT (including literal separator
 characters) is the FILTER."
-  (let ((fzfa-async-separator ?#))
-    (should (equal (fzfa--async-split "#fake#filter" 'hidden "real")
+  (let ((fzfa-separator ?#))
+    (should (equal (fzfa--split "#fake#filter" 'hidden "real")
                    '("real" . "#fake#filter")))))
 
 (ert-deftest fzfa-async-split-honors-custom-separator ()
-  "Splitter follows whatever character `fzfa-async-separator' is set to."
-  (let ((fzfa-async-separator ?▌))
-    (should (equal (fzfa--async-split "▌find .▌foo" 'compact "ignored")
+  "Splitter follows whatever character `fzfa-separator' is set to."
+  (let ((fzfa-separator ?▌))
+    (should (equal (fzfa--split "▌find .▌foo" 'compact "ignored")
                    '("find ." . "foo")))))
 
-;;; fzfa--async-display-next-state
+;;; fzfa--display-next-state
 
 (ert-deftest fzfa-async-display-next-state-cycle ()
   "State cycles hidden → compact → full → hidden."
-  (should (eq (fzfa--async-display-next-state 'hidden)  'compact))
-  (should (eq (fzfa--async-display-next-state 'compact) 'full))
-  (should (eq (fzfa--async-display-next-state 'full)    'hidden)))
+  (should (eq (fzfa--display-next-state 'hidden)  'compact))
+  (should (eq (fzfa--display-next-state 'compact) 'full))
+  (should (eq (fzfa--display-next-state 'full)    'hidden)))
 
 (ert-deftest fzfa-async-display-next-state-fallback ()
   "Unknown input falls back to `hidden'."
-  (should (eq (fzfa--async-display-next-state 'bogus) 'hidden))
-  (should (eq (fzfa--async-display-next-state nil)    'hidden)))
+  (should (eq (fzfa--display-next-state 'bogus) 'hidden))
+  (should (eq (fzfa--display-next-state nil)    'hidden)))
 
-;;; fzfa--async-display-materialize / extract
+;;; fzfa--display-materialize / extract
 
 (ert-deftest fzfa-async-display-materialize-empty-filter ()
   "Materialize on empty FILTER inserts `#CMD#' and lands point at end."
   (with-temp-buffer
-    (fzfa--async-display-materialize "find ." ?#)
+    (fzfa--display-materialize "find ." ?#)
     (should (equal (buffer-string) "#find .#"))
     (should (= (point) (point-max)))))
 
@@ -968,7 +968,7 @@ characters) is the FILTER."
     (insert "abc")
     (goto-char (point-max))  ; point at position 4 (after `c`)
     (let ((offset-before (- (point) (minibuffer-prompt-end))))
-      (fzfa--async-display-materialize "find ." ?#)
+      (fzfa--display-materialize "find ." ?#)
       (should (equal (buffer-string) "#find .#abc"))
       ;; Point should be at the same offset within the new FILTER region.
       (let* ((mbe (minibuffer-prompt-end))
@@ -979,13 +979,13 @@ characters) is the FILTER."
 (ert-deftest fzfa-async-display-materialize-nil-cmd ()
   "Nil CMD coerces to empty string — buffer ends up as `##'."
   (with-temp-buffer
-    (fzfa--async-display-materialize nil ?#)
+    (fzfa--display-materialize nil ?#)
     (should (equal (buffer-string) "##"))))
 
 (ert-deftest fzfa-async-display-materialize-returns-overlays ()
   "Returns a list of two protective overlays covering the two separators."
   (with-temp-buffer
-    (let ((overlays (fzfa--async-display-materialize "find ." ?#)))
+    (let ((overlays (fzfa--display-materialize "find ." ?#)))
       (should (= (length overlays) 2))
       (should (cl-every #'overlayp overlays))
       ;; First overlay covers the opening `#' at position 1.
@@ -999,8 +999,8 @@ characters) is the FILTER."
   "Extract returns CMD and deletes the `#CMD#' prefix from the buffer."
   (with-temp-buffer
     (insert "#find .#filter")
-    (let* ((fzfa-async-separator ?#)
-           (cmd (fzfa--async-display-extract nil)))
+    (let* ((fzfa-separator ?#)
+           (cmd (fzfa--display-extract nil)))
       (should (equal cmd "find ."))
       (should (equal (buffer-string) "filter")))))
 
@@ -1008,8 +1008,8 @@ characters) is the FILTER."
   "Extract handles `##filter' (empty CMD region)."
   (with-temp-buffer
     (insert "##filter")
-    (let* ((fzfa-async-separator ?#)
-           (cmd (fzfa--async-display-extract nil)))
+    (let* ((fzfa-separator ?#)
+           (cmd (fzfa--display-extract nil)))
       (should (equal cmd ""))
       (should (equal (buffer-string) "filter")))))
 
@@ -1018,22 +1018,22 @@ characters) is the FILTER."
 \(Their `modification-hooks' would otherwise self-heal the deletion.)"
   (with-temp-buffer
     (insert "#find .#abc")
-    (let* ((fzfa-async-separator ?#)
+    (let* ((fzfa-separator ?#)
            (overlays
-            (list (fzfa--async-protect-separator 1 ?#)
-                  (fzfa--async-protect-separator 8 ?#))))
+            (list (fzfa--protect-separator 1 ?#)
+                  (fzfa--protect-separator 8 ?#))))
       (should (= (length (overlays-in 1 9)) 2))
-      (fzfa--async-display-extract overlays)
+      (fzfa--display-extract overlays)
       (should (equal (buffer-string) "abc")))))
 
 (ert-deftest fzfa-async-display-materialize-extract-roundtrip ()
   "Materialize then extract restores the original buffer + cmd."
   (with-temp-buffer
     (insert "abc")
-    (let* ((fzfa-async-separator ?#)
-           (overlays (fzfa--async-display-materialize "find ." ?#)))
+    (let* ((fzfa-separator ?#)
+           (overlays (fzfa--display-materialize "find ." ?#)))
       (should (equal (buffer-string) "#find .#abc"))
-      (let ((cmd (fzfa--async-display-extract overlays)))
+      (let ((cmd (fzfa--display-extract overlays)))
         (should (equal cmd "find ."))
         (should (equal (buffer-string) "abc"))))))
 

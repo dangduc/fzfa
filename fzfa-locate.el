@@ -34,7 +34,7 @@ Stdout lines become file candidates."
   "Find a file system-wide using locate.
 The command is configurable via `fzfa-locate-command'."
   (interactive)
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :command fzfa-locate-command)))
     (fzfa-with-visit (find-file result))))
 

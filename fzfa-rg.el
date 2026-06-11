@@ -43,7 +43,7 @@ A `%s' placeholder is filled with the max-columns flag derived from
   "Find a file under `default-directory' using rg --files.
 The command is configurable via `fzfa-rg-files-command'."
   (interactive)
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :prompt "rg files: " :command fzfa-rg-files-command)))
     (fzfa-with-visit (find-file result))))
 
@@ -55,7 +55,7 @@ Streams all file contents as FILE:LINE:CONTENT; type to
 Selecting a candidate opens the file at that line.
 The command is configurable via `fzfa-rg-command'."
   (interactive)
-  (when-let* ((r (fzfa-async-completing-read
+  (when-let* ((r (fzfa-completing-read
                   :command (format fzfa-rg-command
                                    (fzfa--max-columns-flag 'rg))
                   :category 'fzfa-grep

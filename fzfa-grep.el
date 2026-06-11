@@ -45,7 +45,7 @@ Streams all file contents as FILE:LINE:CONTENT; type
 Selecting a candidate opens the file at that line.
 The command is configurable via `fzfa-grep-command'."
   (interactive)
-  (when-let* ((r (fzfa-async-completing-read
+  (when-let* ((r (fzfa-completing-read
                   :command fzfa-grep-command
                   :category 'fzfa-grep
                   :group #'fzfa--grep-group)))
@@ -60,7 +60,7 @@ The command is configurable via `fzfa-grep-current-file-command'."
   (interactive)
   (unless buffer-file-name
     (user-error "Buffer is not visiting a file"))
-  (when-let* ((r (fzfa-async-completing-read
+  (when-let* ((r (fzfa-completing-read
                   :command (format fzfa-grep-current-file-command
                                    (shell-quote-argument buffer-file-name))
                   :category 'fzfa-grep)))
