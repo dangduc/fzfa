@@ -1513,6 +1513,7 @@ any path, `fzfa--async-separator-heal-hook' restores it."
 (cl-defun fzfa-async-completing-read (&key
                                       prompt
                                       command
+                                      candidates
                                       (directory (fzfa--default-dir))
                                       (category 'fzfa-file)
                                       group
@@ -1586,17 +1587,21 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
   FILTERED — candidates matching the current query
   TOTAL    — total candidates collected so far"
   (fzfa--ensure-setup)
-  (unless skip-executable-check
+  (when (and command candidates)
+    (user-error
+     "fzfa-async-completing-read: :command and :candidates are mutually exclusive"))
+  (unless (or skip-executable-check candidates)
     (when-let* ((prog (and command (car (split-string command nil t)))))
       (unless (executable-find prog)
         (user-error "%s not found in exec-path" prog))))
   (let ((prompt (or prompt
                     (when command
-                      (concat (car (split-string command nil t)) ": ")))))
+                      (concat (car (split-string command nil t)) ": "))
+                    (when candidates "candidates: "))))
     (cond
      ((eq fzfa--multi-mode :extract)
       (throw 'fzfa-extracted
-             (list :prompt prompt :command command
+             (list :prompt prompt :command command :candidates candidates
                    :directory directory :category category :group group
                    :initial-input initial-input
                    :resolve-paths resolve-paths
@@ -1610,6 +1615,9 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
         (setq fzfa--multi-mode nil)
         (cl-return-from fzfa-async-completing-read
           (fzfa--maybe-expand cand directory resolve-paths)))))
+    (when (and candidates (bound-and-true-p helm-mode))
+      (user-error
+       "fzfa-async-completing-read: :candidates not yet supported under helm-mode"))
     (when (and (bound-and-true-p helm-mode) (fboundp 'fzfa-helm--async-read))
       (cl-return-from fzfa-async-completing-read
         (fzfa--maybe-expand
@@ -1640,13 +1648,23 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
              ((and command initial-char (memq display '(compact full)))
               (concat (char-to-string initial-char) command
                       (char-to-string initial-char)))
+             ;; Producer with no preset CMD in compact/full: seed
+             ;; "<sep><sep>" so cursor lands inside the CMD slot.
+             ((and candidates (not command) initial-char
+                   (memq display '(compact full)))
+              (concat (char-to-string initial-char)
+                      (char-to-string initial-char)))
              (t nil)))
            ;; Place point at the end of the seeded text (start of the
            ;; FILTER region in compact/full; same physical position as
-           ;; start of an empty editable region in hidden).
+           ;; start of an empty editable region in hidden).  For
+           ;; candidates sessions with no preset CMD, drop the point
+           ;; between the two separators so typing fills CMD.
            (init-point
             (cond
              ((consp initial-input) (cdr initial-input))
+             ((and candidates (not command) init-text
+                   (memq display '(compact full))) 1)
              (init-text (length init-text))
              (t nil)))
            (limit (fzfa--candidate-limit))
@@ -1715,21 +1733,43 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                        (fzfa--frontend-index)
                                        last-filtered last-total))))
               (fzfa--insert-prompt-if-ivy)))
+           ;; Producer-mode session state.  Snapshot is the latest list
+           ;; delivered by PRODUCER's callback; token discards stale
+           ;; callbacks when the user changes CMD before a prior fetch
+           ;; resolves.
+           (snapshot nil)
+           (cand-token 0)
            (do-restart
             (lambda (cmd)
-              (when handle
-                (fzfa--defer-async-stop handle)
-                (setq handle nil))
-              ;; Keep `last-result' across restarts so the display stays
-              ;; populated with stale candidates until new ones stream in.
-              (setq current-cmd cmd
-                    last-gen -1
-                    last-filtered 0
-                    last-total 0
-                    last-restart-time (float-time))
-              (when (and cmd (not (string-empty-p cmd)))
-                (setq handle (fzf-native-async-start cmd dir)))
-              (fzfa--frontend-push ivy-push)))
+              (cond
+               (candidates
+                (cl-incf cand-token)
+                (setq current-cmd cmd
+                      last-gen -1
+                      last-restart-time (float-time))
+                (let ((my-token cand-token))
+                  (funcall candidates (or cmd "")
+                           (lambda (cands)
+                             (when (= my-token cand-token)
+                               (setq snapshot (or cands '())
+                                     last-total (length snapshot)
+                                     last-filtered (length snapshot)
+                                     last-result snapshot)
+                               (fzfa--frontend-push ivy-push))))))
+               (t
+                (when handle
+                  (fzfa--defer-async-stop handle)
+                  (setq handle nil))
+                ;; Keep `last-result' across restarts so the display stays
+                ;; populated with stale candidates until new ones stream in.
+                (setq current-cmd cmd
+                      last-gen -1
+                      last-filtered 0
+                      last-total 0
+                      last-restart-time (float-time))
+                (when (and cmd (not (string-empty-p cmd)))
+                  (setq handle (fzf-native-async-start cmd dir)))
+                (fzfa--frontend-push ivy-push)))))
            (table
             (lambda (str _pred action)
               (pcase action
@@ -1742,6 +1782,29 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                         (cmd (car split))
                         (query (cdr split)))
                    (cond
+                    (candidates
+                     (unless (equal cmd current-cmd)
+                       (funcall do-restart cmd))
+                     (cond
+                      ((null snapshot) nil)
+                      ((string-empty-p query) snapshot)
+                      (t (let ((r (while-no-input
+                                    (fzfa--bridge-defcustoms
+                                     #'fzf-native-score-all
+                                     snapshot query))))
+                           (cond
+                            ((eq r t) (or last-result snapshot))
+                            (t (setq last-result r
+                                     last-filtered (length r))
+                               (when-let* ((win (active-minibuffer-window)))
+                                 (with-selected-window win
+                                   (unless stats-overlay
+                                     (setq stats-overlay
+                                           (make-overlay
+                                            (point-min)
+                                            (minibuffer-prompt-end))))
+                                   (funcall refresh-overlay)))
+                               r))))))
                     ((not (equal cmd current-cmd))
                      ;; Cancel any pending restart and reschedule.  Each
                      ;; keystroke debounces; the throttle term is the
@@ -1814,6 +1877,21 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                          (cmd    (car split))
                          (filter (cdr split)))
                     (cond
+                     (candidates
+                      (unless (equal cmd current-cmd)
+                        (funcall do-restart cmd))
+                      (let ((scored
+                             (cond
+                              ((null snapshot) nil)
+                              ((string-empty-p filter) snapshot)
+                              (t (let ((r (while-no-input
+                                            (fzfa--bridge-defcustoms
+                                             #'fzf-native-score-all
+                                             snapshot filter))))
+                                   (if (eq r t) nil r))))))
+                        (when scored
+                          (setq last-result scored
+                                last-filtered (length scored)))))
                      ((not (equal cmd current-cmd))
                       (when restart-timer
                         (cancel-timer restart-timer)
@@ -1851,10 +1929,20 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                       (ivy--set-candidates last-result)
                       (ivy--exhibit)
                       (ivy--insert-prompt)))))))
-      ;; Pre-arm the subprocess so candidates start streaming before the
-      ;; minibuffer is even shown.  Prefer :COMMAND; fall back to parsing
-      ;; init-text (covers callers that pass :INITIAL-INPUT without :COMMAND).
+      ;; Pre-arm the subprocess (or candidates) so candidates start
+      ;; populating before the minibuffer is even shown.  Prefer
+      ;; :COMMAND; fall back to parsing init-text (covers callers that
+      ;; pass :INITIAL-INPUT without :COMMAND).  For producers, fire
+      ;; with empty CMD so the snapshot is seeded.
       (cond
+       (candidates
+        (let ((seed
+               (cond
+                ((and command (not (string-empty-p command))) command)
+                (init-text
+                 (car (fzfa--async-split-input init-text)))
+                (t ""))))
+          (funcall do-restart (or seed ""))))
        ((and command (not (string-empty-p command)))
         (funcall do-restart command))
        (init-text
@@ -1943,7 +2031,10 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
          (when stats-overlay (delete-overlay stats-overlay))
          (mapc #'delete-overlay separator-overlays)
          (funcall display-clear)
-         (fzfa--defer-async-stop handle)
+         (when handle (fzfa--defer-async-stop handle))
+         ;; Invalidate any in-flight candidates callbacks so a late
+         ;; arrival can't write into a torn-down session.
+         (when candidates (cl-incf cand-token))
          (when handler (fzfa--preview-return selection)))
        directory resolve-paths))))
 
@@ -2188,8 +2279,14 @@ Returns S unchanged when there is no tofu suffix."
 Appends an invisible tofu suffix so cross-source duplicates remain
 `string='-distinct, sets a `fzfa-src-idx' text property at position 0
 for in-band dispatch, and records the tagged string in HASH as a
-fallback lookup when text properties are stripped."
-  (let ((tagged (concat cand (fzfa--tofu-suffix idx))))
+fallback lookup when text properties are stripped.
+
+Idempotent: strips any pre-existing TOFU suffix from CAND first,
+so calling on an already-tagged string yields the same content
+\(safe to re-tag producer-path output after `fzf-native-score-all'
+preserves the snapshot's TOFU suffix but drops its text property)."
+  (let* ((clean (fzfa--tofu-hide cand))
+         (tagged (concat clean (fzfa--tofu-suffix idx))))
     (when (> (length tagged) 0)
       (put-text-property 0 1 'fzfa-src-idx idx tagged))
     (puthash tagged idx hash)
@@ -2300,6 +2397,35 @@ the property set by `fzf-native-score-all'.  Returns 0 on empty input."
               #'fzf-native-score (car results) query))
         0))
    (t (or (get-text-property 0 'completion-score (car results)) 0))))
+
+(defun fzfa--multi-candidates-fetch (idx query cands-fn
+                                       snapshots tokens inputs totals
+                                       cand->src)
+  "Refetch source IDX's PRODUCER for QUERY iff QUERY changed.
+
+SNAPSHOTS, TOKENS, INPUTS, TOTALS are the per-source vectors
+maintained by `fzfa--multi-read'.  CAND->SRC is the candidate-to-
+source hash so cands-fn-delivered strings can be tagged via
+`fzfa--multi-tag'.  The callback closes over IDX, TOKENS,
+SNAPSHOTS, TOTALS, CAND->SRC and discards stale arrivals via the
+token check.
+
+Returns non-nil iff a fetch was actually issued."
+  (unless (equal query (aref inputs idx))
+    (aset inputs idx query)
+    (cl-incf (aref tokens idx))
+    (let ((my-token (aref tokens idx)))
+      (funcall cands-fn (or query "")
+               (lambda (cands)
+                 (when (= my-token (aref tokens idx))
+                   (let ((tagged
+                          (mapcar
+                           (lambda (s)
+                             (fzfa--multi-tag (copy-sequence s) idx cand->src))
+                           (or cands '()))))
+                     (aset snapshots idx tagged)
+                     (aset totals idx (length tagged)))))))
+    t))
 
 (defun fzfa--multi-narrow->string (k)
   "Coerce narrow key value K (symbol, character, or string) to length-1 string."
@@ -2427,8 +2553,13 @@ falls back to declared source order.
 Per-source plist keys:
   :name      Group header (required).
   :items     Sync items: list of strings, or zero-arg function returning one.
-             Mutually exclusive with :command.
+             Mutually exclusive with :command and :candidates.
   :command   Async source: shell command string.
+             Mutually exclusive with :items and :candidates.
+  :candidates  Elisp producer: (lambda (INPUT CALLBACK) ...).  Called per
+             query change; CALLBACK delivers a full candidate snapshot.
+             May fire synchronously or asynchronously.  Mutually
+             exclusive with :items and :command.
   :directory Working directory for :command (default `default-directory').
   :annotate  Optional (cand) -> string annotation function.
   :action    Optional (cand) -> any.  Called with the selection.  When
@@ -2463,6 +2594,14 @@ Per-source plist keys:
          (sources-v    (vconcat sources))
          (handles      (make-vector n nil))
          (sync-items   (make-vector n nil))
+         ;; Producer sources: per-source snapshot list, fn closure,
+         ;; the last input the producer was called with (track so we
+         ;; refetch on change), and a monotonic token for stale-
+         ;; callback discard.
+         (cands-fns    (make-vector n nil))
+         (snapshots    (make-vector n nil))
+         (prod-tokens  (make-vector n 0))
+         (prod-inputs  (make-vector n :unfetched))
          (last-results (make-vector n nil))
          (rank         (make-vector n 0))
          (totals       (make-vector n 0))
@@ -2540,11 +2679,24 @@ Per-source plist keys:
                           (aset rank i 0))
                       (let* ((h     (aref handles i))
                              (items (aref sync-items i))
+                             (prod  (aref cands-fns i))
                              (out
                               (cond
                                (h (while-no-input
                                     (fzf-native-async-candidates
                                      h query limit)))
+                               (prod
+                                (fzfa--multi-candidates-fetch
+                                 i query prod snapshots prod-tokens
+                                 prod-inputs totals cand->src)
+                                (let ((snap (aref snapshots i)))
+                                  (cond
+                                   ((null snap) '())
+                                   ((string-empty-p query) snap)
+                                   (t (while-no-input
+                                        (fzfa--bridge-defcustoms
+                                         #'fzf-native-score-all
+                                         snap query))))))
                                (items
                                 (if (string-empty-p query)
                                     items
@@ -2558,7 +2710,13 @@ Per-source plist keys:
                           (when-let* ((s (fzf-native-async-stats h)))
                             (aset totals i (cdr s))))
                          (t
-                          (when h
+                          ;; Re-tag returned candidates.  Async handles
+                          ;; emit fresh strings each call; producer-path
+                          ;; output may also lose text properties through
+                          ;; the fzf-native scorer.  Tagging is idempotent
+                          ;; on content (TOFU suffix stays as content),
+                          ;; so this is safe to do for both kinds.
+                          (when (or h prod)
                             (setq out
                                   (mapcar
                                    (lambda (c)
@@ -2700,9 +2858,10 @@ Per-source plist keys:
                (list router :multi-cand->src cand->src)))
          retry-timer timer result)
     (dotimes (i n)
-      (let* ((src   (aref sources-v i))
-             (cmd   (plist-get src :command))
-             (items (plist-get src :items)))
+      (let* ((src      (aref sources-v i))
+             (cmd      (plist-get src :command))
+             (items    (plist-get src :items))
+             (cands-fn (plist-get src :candidates)))
         (cond
          (cmd
           (aset handles i
@@ -2710,6 +2869,10 @@ Per-source plist keys:
                  cmd
                  (expand-file-name
                   (or (plist-get src :directory) default-directory)))))
+         (cands-fn
+          ;; Record the producer fn; first dispatch tick fires the
+          ;; initial fetch via `fzfa--multi-candidates-fetch'.
+          (aset cands-fns i cands-fn))
          (items
           (let ((tagged
                  (mapcar (lambda (s)
@@ -2903,11 +3066,24 @@ Per-source plist keys:
                                     (aset rank i 0))
                                 (let* ((h     (aref handles i))
                                        (items (aref sync-items i))
+                                       (prod  (aref cands-fns i))
                                        (out
                                         (cond
                                          (h (while-no-input
                                               (fzf-native-async-candidates
                                                h query limit)))
+                                         (prod
+                                          (fzfa--multi-candidates-fetch
+                                           i query prod snapshots prod-tokens
+                                           prod-inputs totals cand->src)
+                                          (let ((snap (aref snapshots i)))
+                                            (cond
+                                             ((null snap) '())
+                                             ((string-empty-p query) snap)
+                                             (t (while-no-input
+                                                  (fzfa--bridge-defcustoms
+                                                   #'fzf-native-score-all
+                                                   snap query))))))
                                          (items
                                           (if (string-empty-p query)
                                               items
@@ -2926,10 +3102,15 @@ Per-source plist keys:
                                     (when-let* ((s (fzf-native-async-stats h)))
                                       (aset totals i (cdr s))))
                                    (t
-                                    ;; Async returns fresh strings each call;
-                                    ;; re-tag them so group/action lookup works.
-                                    ;; out may be nil (zero matches) — still ok.
-                                    (when h
+                                    ;; Re-tag returned candidates.  Async
+                                    ;; handles emit fresh strings each
+                                    ;; call; producer-path output may also
+                                    ;; lose text properties through the
+                                    ;; fzf-native scorer.  Idempotent on
+                                    ;; content (TOFU suffix stays as
+                                    ;; content), safe for both kinds.
+                                    ;; out may be nil (zero matches) — ok.
+                                    (when (or h prod)
                                       (setq out
                                             (mapcar
                                              (lambda (c)
