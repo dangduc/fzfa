@@ -144,6 +144,7 @@ no-op)."
              (not (equal ivy--old-cands ivy--all-candidates)))
     (setq ivy--old-cands ivy--all-candidates)))
 
+;;;###autoload
 (defun fzfa-ivy-setup ()
   "Wire fzfa's ivy integration into the current session."
   (with-eval-after-load 'ivy
