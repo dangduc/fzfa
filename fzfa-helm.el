@@ -363,104 +363,65 @@ Internal — used by both `fzfa-helm-make-async-source' (single-source)
 and `fzfa-helm--multi-read' (batch with bulk-stop)."
   (let* ((dir (expand-file-name (or directory default-directory)))
          (initial-char fzfa-separator)
-         (handle (fzf-native-async-start command dir))
-         ;; Display-state machinery.  `command' is the cl-defun arg —
-         ;; mutated in place by `display-cycle' when the user edits and
-         ;; demotes back to hidden.  `current-cmd' is what the running
-         ;; subprocess is using; differs from `command' between the user
-         ;; editing and the debounced restart actually firing.
-         (display-state 'hidden)
-         (current-cmd command)
-         (separator-overlays nil)
-         (display-overlays nil)
-         (restart-timer nil)
-         (last-restart-time 0.0)
-         (last-gen -1)
+         ;; Per-source state lives on the struct.  `command' slot is
+         ;; what we want running; `current-cmd' is what the handle IS
+         ;; running.  They differ between user editing and the
+         ;; debounced restart firing.
+         (source (fzfa-make-source :command command
+                                   :directory dir
+                                   :display 'hidden))
          (stopped nil)
          (timer nil)
+         (refresh-fn
+          (lambda () (when helm-alive-p (helm-force-update))))
          (do-restart
-          (lambda (cmd)
-            (when handle (fzfa--defer-async-stop handle))
-            (setq handle (and cmd (not (string-empty-p cmd))
-                              (fzf-native-async-start cmd dir))
-                  current-cmd cmd
-                  last-gen -1
-                  last-restart-time (float-time))
-            (when helm-alive-p (helm-force-update))))
-         (display-clear
-          (lambda ()
-            (mapc #'delete-overlay display-overlays)
-            (setq display-overlays nil)))
-         (display-apply
-          (lambda ()
-            ;; Only `compact' installs an overlay (flags collapse to
-            ;; `…').  `hidden' has no CMD region in the buffer and
-            ;; `full' shows the cmd verbatim — both no-op.  Mirrors the
-            ;; `display-apply' closure in the completing-read body.
-            (funcall display-clear)
-            (when (eq display-state 'compact)
-              (when-let* ((bounds (fzfa--display-cmd-bounds
-                                   initial-char)))
-                (setq display-overlays
-                      (fzfa--display-make-overlays
-                       (car bounds) (cdr bounds)))))))
+          (lambda (cmd) (fzfa-source--restart source cmd refresh-fn)))
          (display-cycle
           (lambda ()
             (interactive)
-            (let* ((from display-state)
-                   (to (fzfa--display-next-state from)))
-              (cond
-               ((and (eq from 'hidden) (eq to 'compact))
-                (setq separator-overlays
-                      (fzfa--display-materialize
-                       command initial-char)))
-               ((eq to 'hidden)
-                (setq command (fzfa--display-extract
-                               separator-overlays))
-                (setq separator-overlays nil)))
-              (setq display-state to)
-              (funcall display-apply)
-              ;; Sync `helm-pattern' to the post-mutation
-              ;; minibuffer-contents.  Otherwise post-command-hook's
-              ;; `helm-check-minibuffer-input' would see the mutation
-              ;; as a pattern change and fire `helm-update' — which
-              ;; erases the helm-buffer and re-renders the entire
-              ;; candidate list, even though the filter portion (and
-              ;; therefore the candidates) is unchanged.  Real CMD
-              ;; edits in compact/full happen via `self-insert-command'
-              ;; and DO trigger the natural helm-update path because
-              ;; `helm-pattern' is stale by the time post-command-hook
-              ;; runs.
-              (when helm-alive-p
-                (setq helm-pattern (minibuffer-contents))))))
+            (fzfa-source--display-cycle source initial-char)
+            ;; Sync `helm-pattern' to the post-mutation
+            ;; minibuffer-contents.  Otherwise post-command-hook's
+            ;; `helm-check-minibuffer-input' would see the mutation
+            ;; as a pattern change and fire `helm-update' — which
+            ;; erases the helm-buffer and re-renders the entire
+            ;; candidate list, even though the filter portion (and
+            ;; therefore the candidates) is unchanged.  Real CMD
+            ;; edits in compact/full happen via `self-insert-command'
+            ;; and DO trigger the natural helm-update path because
+            ;; `helm-pattern' is stale by the time post-command-hook
+            ;; runs.
+            (when helm-alive-p
+              (setq helm-pattern (minibuffer-contents)))))
          (stop
           (lambda ()
             (unless stopped
               (setq stopped t)
               (when timer (cancel-timer timer) (setq timer nil))
-              (when restart-timer
-                (cancel-timer restart-timer)
-                (setq restart-timer nil))
-              (mapc #'delete-overlay separator-overlays)
-              (mapc #'delete-overlay display-overlays)
-              (setq separator-overlays nil
-                    display-overlays nil)
-              (fzfa--defer-async-stop handle)))))
+              (fzfa-source--stop source)))))
+    ;; Pre-arm: start the initial handle and mark `current-cmd' so the
+    ;; first `:candidates' tick doesn't trigger a debounced restart.
+    (setf (fzfa-source-handle source)
+          (fzf-native-async-start command dir)
+          (fzfa-source-current-cmd source) command)
     (setq timer
           (run-with-timer
            0 fzfa-refresh-delay
            (lambda ()
              (when (and helm-alive-p (not stopped))
-               (let ((gen (and handle (fzf-native-async-generation handle))))
-                 (when (and gen (> gen last-gen))
-                   (setq last-gen gen)
+               (let* ((h (fzfa-source-handle source))
+                      (gen (and h (fzf-native-async-generation h))))
+                 (when (and gen (> gen (fzfa-source-last-gen source)))
+                   (setf (fzfa-source-last-gen source) gen)
                    (helm-force-update)))))))
     (cons
      (apply #'helm-make-source (or name "fzfa") 'helm-source-sync
             :header-name
             (lambda (n)
               (format "%s [%s]%s" n (abbreviate-file-name dir)
-                      (and handle (fzfa-helm--async-stats-suffix handle))))
+                      (and (fzfa-source-handle source)
+                           (fzfa-helm--async-stats-suffix
+                            (fzfa-source-handle source)))))
             :keymap (let ((map (make-sparse-keymap)))
                       (set-keymap-parent map helm-map)
                       (when fzfa-display-key
@@ -472,27 +433,30 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
               (unless stopped
                 (pcase-let* ((`(,cmd . ,filter)
                               (fzfa--split
-                               (or helm-pattern "") display-state command)))
-                  (when (not (equal cmd current-cmd))
+                               (or helm-pattern "")
+                               (fzfa-source-display-state source)
+                               (fzfa-source-command source))))
+                  (when (not (equal cmd (fzfa-source-current-cmd source)))
                     ;; Debounce-then-restart, mirroring the completing-
                     ;; read path's `do-restart' scheduling.  Floor on the
                     ;; restart gap is `fzfa-shell-command-throttle' so
                     ;; rapid edits don't fork a process per keystroke.
-                    (when restart-timer
-                      (cancel-timer restart-timer)
-                      (setq restart-timer nil))
-                    (let* ((elapsed (- (float-time) last-restart-time))
+                    (when-let* ((tm (fzfa-source-restart-timer source)))
+                      (cancel-timer tm)
+                      (setf (fzfa-source-restart-timer source) nil))
+                    (let* ((elapsed (- (float-time)
+                                       (fzfa-source-last-restart-time source)))
                            (delay (max fzfa-shell-command-debounce
                                        (- fzfa-shell-command-throttle
                                           elapsed))))
-                      (setq restart-timer
+                      (setf (fzfa-source-restart-timer source)
                             (run-with-timer
                              (max 0.01 delay) nil
                              (lambda ()
-                               (setq restart-timer nil)
+                               (setf (fzfa-source-restart-timer source) nil)
                                (funcall do-restart cmd))))))
-                  (and handle
-                       (fzf-native-async-candidates handle filter limit)))))
+                  (when-let* ((h (fzfa-source-handle source)))
+                    (fzf-native-async-candidates h filter limit)))))
             :match-dynamic t
             :nohighlight t
             :candidate-number-limit limit
@@ -589,13 +553,6 @@ source-local closure state and trigger `helm-force-update' from the
 callback so helm re-reads candidates with the fresh snapshot."
   (fzfa-helm--ensure-loaded)
   (let* ((limit (or candidate-number-limit 10000))
-         (last-filtered nil)
-         (last-total nil)
-         (last-result nil)
-         (retry-timer nil)
-         (prod-snapshot nil)
-         (prod-last-cmd :unfired)
-         (prod-token 0)
          (kind
           (cond
            ((listp items) 'list)
@@ -606,72 +563,36 @@ callback so helm re-reads candidates with the fresh snapshot."
                   (if fired 'sync 'async))
               'zero))))
          (producer-kind-p (memq kind '(sync async)))
-         ;; Display-state machinery for producer kinds.  `command'
-         ;; stores the CMD half when display-state is `hidden' (it
-         ;; lives in this closure, not the minibuffer); compact/full
-         ;; materialize it into the buffer.  `display-cycle' is bound
-         ;; to `fzfa-display-key' below.  Mirrors
-         ;; `fzfa-helm-make-async-source' and the substrate body in
-         ;; `fzfa-completing-read'.
          (initial-char fzfa-separator)
-         (display-state (or display 'hidden))
-         (command "")
-         (separator-overlays nil)
-         (display-overlays nil)
-         (display-clear
-          (lambda ()
-            (mapc #'delete-overlay display-overlays)
-            (setq display-overlays nil)))
-         (display-apply
-          (lambda ()
-            ;; Only `compact' installs an overlay (flags collapse to
-            ;; `…').  `hidden' has no CMD region; `full' shows the cmd
-            ;; verbatim.  Same dispatch as the async source.
-            (funcall display-clear)
-            (when (eq display-state 'compact)
-              (when-let* ((bounds (fzfa--display-cmd-bounds
-                                   initial-char)))
-                (setq display-overlays
-                      (fzfa--display-make-overlays
-                       (car bounds) (cdr bounds)))))))
+         ;; Per-source state (display-state machinery, producer state,
+         ;; result/score, retry-timer) on the struct.  Static kinds
+         ;; (list / zero) don't use the display-state or producer
+         ;; slots but the source still bundles the per-source state
+         ;; uniformly.
+         (source (fzfa-make-source :directory default-directory
+                                   :display (or display 'hidden)))
          (display-cycle
           (lambda ()
             (interactive)
-            (let* ((from display-state)
-                   (to (fzfa--display-next-state from)))
-              (cond
-               ((and (eq from 'hidden) (eq to 'compact))
-                (setq separator-overlays
-                      (fzfa--display-materialize
-                       command initial-char)))
-               ((eq to 'hidden)
-                (setq command (fzfa--display-extract
-                               separator-overlays))
-                (setq separator-overlays nil)))
-              (setq display-state to)
-              (funcall display-apply)
-              ;; Sync `helm-pattern' to the post-mutation
-              ;; minibuffer-contents.  Otherwise post-command-hook's
-              ;; `helm-check-minibuffer-input' would see the mutation
-              ;; as a pattern change and fire `helm-update', erasing
-              ;; the helm-buffer and re-rendering candidates even
-              ;; though the FILTER (and therefore the candidates) is
-              ;; unchanged.
-              (when helm-alive-p
-                (setq helm-pattern (minibuffer-contents))))))
+            (fzfa-source--display-cycle source initial-char)
+            (when helm-alive-p
+              (setq helm-pattern (minibuffer-contents)))))
          (stop (lambda ()
-                 (when retry-timer
-                   (cancel-timer retry-timer)
-                   (setq retry-timer nil))
-                 (mapc #'delete-overlay separator-overlays)
-                 (mapc #'delete-overlay display-overlays)
-                 (setq separator-overlays nil
-                       display-overlays nil))))
+                 (when-let* ((tm (fzfa-source-retry-timer source)))
+                   (cancel-timer tm)
+                   (setf (fzfa-source-retry-timer source) nil))
+                 (mapc #'delete-overlay
+                       (fzfa-source-separator-overlays source))
+                 (mapc #'delete-overlay
+                       (fzfa-source-display-overlays source))
+                 (setf (fzfa-source-separator-overlays source) nil
+                       (fzfa-source-display-overlays source) nil))))
     (apply #'helm-make-source (or name "fzfa") 'helm-source-sync
            :header-name
            (lambda (n)
              (format "%s%s" n (fzfa-helm--sync-stats-suffix
-                               last-filtered last-total)))
+                               (fzfa-source-filtered source)
+                               (fzfa-source-total source))))
            :keymap (let ((map (make-sparse-keymap)))
                      (set-keymap-parent map helm-map)
                      (when (and producer-kind-p fzfa-display-key)
@@ -685,7 +606,9 @@ callback so helm re-reads candidates with the fresh snapshot."
                     ;; route CMD to the producer; for static kinds the
                     ;; whole pattern is the FILTER.
                     (split (and producer-kind-p
-                                (fzfa--split pat display-state command)))
+                                (fzfa--split pat
+                                             (fzfa-source-display-state source)
+                                             (fzfa-source-command source))))
                     (cmd (and split (car split)))
                     (filter (if split (cdr split) pat))
                     (all
@@ -697,19 +620,22 @@ callback so helm re-reads candidates with the fresh snapshot."
                                         (lambda (x) (setq snap x)))
                                snap))
                        (async
-                        (unless (equal cmd prod-last-cmd)
-                          (setq prod-last-cmd cmd)
-                          (let ((my-token (cl-incf prod-token)))
+                        (unless (equal cmd (fzfa-source-prod-input source))
+                          (setf (fzfa-source-prod-input source) cmd)
+                          (let ((my-token
+                                 (cl-incf (fzfa-source-prod-token source))))
                             (funcall items (or cmd "")
                                      (lambda (cands-result)
-                                       (when (= my-token prod-token)
-                                         (setq prod-snapshot cands-result)
+                                       (when (= my-token
+                                                (fzfa-source-prod-token source))
+                                         (setf (fzfa-source-snapshot source)
+                                               cands-result)
                                          (when (and (boundp 'helm-alive-p)
                                                     helm-alive-p)
                                            (run-with-idle-timer
                                             0 nil
                                             #'helm-force-update)))))))
-                        prod-snapshot)))
+                        (fzfa-source-snapshot source))))
                     (r (while-no-input
                          (if (string-empty-p filter)
                              (if history (fzfa--history-rank all history) all)
@@ -717,22 +643,23 @@ callback so helm re-reads candidates with the fresh snapshot."
                             #'fzf-native-score-all all filter)))))
                (cond
                 ((eq r t)
-                 (when retry-timer (cancel-timer retry-timer))
-                 (setq retry-timer
+                 (when-let* ((tm (fzfa-source-retry-timer source)))
+                   (cancel-timer tm))
+                 (setf (fzfa-source-retry-timer source)
                        (run-with-idle-timer
                         fzfa-input-debounce nil
                         (lambda ()
-                          (setq retry-timer nil)
+                          (setf (fzfa-source-retry-timer source) nil)
                           (when helm-alive-p
                             (helm-force-update)))))
-                 last-result)
+                 (fzfa-source-last-result source))
                 (t
-                 (when retry-timer
-                   (cancel-timer retry-timer)
-                   (setq retry-timer nil))
-                 (setq last-total (length all)
-                       last-filtered (length r)
-                       last-result r)
+                 (when-let* ((tm (fzfa-source-retry-timer source)))
+                   (cancel-timer tm)
+                   (setf (fzfa-source-retry-timer source) nil))
+                 (setf (fzfa-source-total source) (length all)
+                       (fzfa-source-filtered source) (length r)
+                       (fzfa-source-last-result source) r)
                  r))))
            :match-dynamic t
            :nohighlight t
@@ -1057,8 +984,12 @@ for fuzzy-multi-source UX."
                      fzfa-helm-multi-source-candidate-limit))
          (result nil)
          (n-sources (length sources))
-         ;; Per-source rank tracking — leader = argmax of `ranks'.
-         (ranks        (make-vector n-sources 0))
+         ;; Per-source runtime state — handle, snapshot, prod-token,
+         ;; prod-input, last-result, rank, total, filtered, last-gen,
+         ;; retry-timer — lives on each struct.  Populated inside the
+         ;; `cl-loop' body via `fzfa-make-source' + `aset'.  Leader
+         ;; detection reads `fzfa-source-rank' across this vector.
+         (sources-v    (make-vector n-sources nil))
          (source-names (make-vector n-sources nil))
          (last-leader  nil)
          ;; Per-source preview session cells — one per source.  A cell
@@ -1139,65 +1070,52 @@ for fuzzy-multi-source UX."
              (cond
               (cmd
                (let* ((dir (expand-file-name directory))
-                      (handle (fzf-native-async-start cmd dir))
+                      (source (fzfa-make-source :command cmd
+                                                :directory dir))
                       (stopped nil)
-                      ;; Per-source `last-result' cache: when
-                      ;; `:candidates' is interrupted by pending
-                      ;; input (via `while-no-input'), return the
-                      ;; previous good list so the display doesn't
-                      ;; blank — same convention as the
-                      ;; completing-read multi (fzfa.el:~2336).
-                      (last-result nil)
-                      ;; Idle retry: when an interrupt leaves us
-                      ;; showing stale candidates, re-exhibit once
-                      ;; typing settles.  Without this the polling
-                      ;; timer's generation-based firing never
-                      ;; refreshes (the producer process is
-                      ;; quiescent post-typing, so no new generation
-                      ;; ticks), and the stale display persists
-                      ;; until the user types again.  Mirrors the
-                      ;; `retry-timer' in `fzfa--multi-read'.
-                      (retry-timer nil)
                       (stop
                        (lambda ()
                          (unless stopped
                            (setq stopped t)
-                           (when retry-timer
-                             (cancel-timer retry-timer)
-                             (setq retry-timer nil))
-                           (fzfa--defer-async-stop handle)))))
-                 (push handle handles)
+                           (fzfa-source--stop source)))))
+                 (setf (fzfa-source-handle source)
+                       (fzf-native-async-start cmd dir))
+                 (aset sources-v i source)
+                 (push (fzfa-source-handle source) handles)
                  (push stop stops)
                  (apply #'helm-make-source name 'helm-source-sync
                         :header-name
                         (lambda (n)
                           (format "%s [%s]%s" n (abbreviate-file-name dir)
-                                  (fzfa-helm--async-stats-suffix handle)))
+                                  (fzfa-helm--async-stats-suffix
+                                   (fzfa-source-handle source))))
                         :candidates
                         (lambda ()
                           (unless stopped
                             (let ((r (while-no-input
                                        (fzf-native-async-candidates
-                                        handle helm-pattern limit))))
+                                        (fzfa-source-handle source)
+                                        helm-pattern limit))))
                               (cond
                                ((eq r t)
-                                (when retry-timer (cancel-timer retry-timer))
-                                (setq retry-timer
+                                (when-let* ((tm (fzfa-source-retry-timer source)))
+                                  (cancel-timer tm))
+                                (setf (fzfa-source-retry-timer source)
                                       (run-with-idle-timer
                                        fzfa-input-debounce nil
                                        (lambda ()
-                                         (setq retry-timer nil)
+                                         (setf (fzfa-source-retry-timer source) nil)
                                          (when helm-alive-p
                                            (helm-force-update)))))
                                 ;; Don't update rank — cached
                                 ;; `last-result' is for an earlier query.
-                                last-result)
+                                (fzfa-source-last-result source))
                                (t
-                                (when retry-timer
-                                  (cancel-timer retry-timer)
-                                  (setq retry-timer nil))
-                                (setq last-result r)
-                                (aset ranks i
+                                (when-let* ((tm (fzfa-source-retry-timer source)))
+                                  (cancel-timer tm)
+                                  (setf (fzfa-source-retry-timer source) nil))
+                                (setf (fzfa-source-last-result source) r
+                                      (fzfa-source-rank source)
                                       (fzfa--multi-rank
                                        r (or helm-pattern "") t))
                                 r)))))
@@ -1230,13 +1148,7 @@ for fuzzy-multi-source UX."
                ;; firing sources keep their snapshot in source-local
                ;; closure state and trigger `helm-force-update' when
                ;; the callback arrives.
-               (let* ((last-filtered nil)
-                      (last-total nil)
-                      (last-result nil)
-                      (retry-timer nil)
-                      (prod-snapshot nil)
-                      (prod-last-fired :unfired)
-                      (prod-token 0)
+               (let* ((source (fzfa-make-source :directory directory))
                       (kind
                        (cond
                         ((listp cands) 'list)
@@ -1249,14 +1161,16 @@ for fuzzy-multi-source UX."
                            'zero))))
                       (sync-stop
                        (lambda ()
-                         (when retry-timer
-                           (cancel-timer retry-timer)
-                           (setq retry-timer nil)))))
+                         (when-let* ((tm (fzfa-source-retry-timer source)))
+                           (cancel-timer tm)
+                           (setf (fzfa-source-retry-timer source) nil)))))
+                 (aset sources-v i source)
                  (apply #'helm-make-source name 'helm-source-sync
                         :header-name
                         (lambda (n)
                           (format "%s%s" n (fzfa-helm--sync-stats-suffix
-                                            last-filtered last-total)))
+                                            (fzfa-source-filtered source)
+                                            (fzfa-source-total source))))
                         :candidates
                         (lambda ()
                           (let* ((pat (or helm-pattern ""))
@@ -1281,27 +1195,30 @@ for fuzzy-multi-source UX."
                                     (async
                                      ;; Fire producer when CMD changes
                                      ;; since the last fire.  Callback
-                                     ;; updates prod-snapshot and
-                                     ;; schedules a force-update;
+                                     ;; updates source's snapshot slot
+                                     ;; and schedules a force-update;
                                      ;; meanwhile we return the current
                                      ;; snapshot (possibly stale for one
                                      ;; tick).
-                                     (unless (equal cmd prod-last-fired)
-                                       (setq prod-last-fired cmd)
+                                     (unless (equal cmd (fzfa-source-prod-input
+                                                         source))
+                                       (setf (fzfa-source-prod-input source) cmd)
                                        (let ((my-token
-                                              (cl-incf prod-token)))
+                                              (cl-incf
+                                               (fzfa-source-prod-token source))))
                                          (funcall cands (or cmd "")
                                                   (lambda (cands-result)
                                                     (when (= my-token
-                                                             prod-token)
-                                                      (setq prod-snapshot
+                                                             (fzfa-source-prod-token
+                                                              source))
+                                                      (setf (fzfa-source-snapshot source)
                                                             cands-result)
                                                       (when (and (boundp 'helm-alive-p)
                                                                  helm-alive-p)
                                                         (run-with-idle-timer
                                                          0 nil
                                                          #'helm-force-update)))))))
-                                     prod-snapshot)))
+                                     (fzfa-source-snapshot source))))
                                  (r (while-no-input
                                       (if (string-empty-p filter)
                                           (if history
@@ -1311,25 +1228,26 @@ for fuzzy-multi-source UX."
                                          #'fzf-native-score-all all filter)))))
                             (cond
                              ((eq r t)
-                              (when retry-timer (cancel-timer retry-timer))
-                              (setq retry-timer
+                              (when-let* ((tm (fzfa-source-retry-timer source)))
+                                (cancel-timer tm))
+                              (setf (fzfa-source-retry-timer source)
                                     (run-with-idle-timer
                                      fzfa-input-debounce nil
                                      (lambda ()
-                                       (setq retry-timer nil)
+                                       (setf (fzfa-source-retry-timer source) nil)
                                        (when helm-alive-p
                                          (helm-force-update)))))
                               ;; Don't update rank — cache is for an
                               ;; earlier query.
-                              last-result)
+                              (fzfa-source-last-result source))
                              (t
-                              (when retry-timer
-                                (cancel-timer retry-timer)
-                                (setq retry-timer nil))
-                              (setq last-total (length all)
-                                    last-filtered (length r)
-                                    last-result r)
-                              (aset ranks i
+                              (when-let* ((tm (fzfa-source-retry-timer source)))
+                                (cancel-timer tm)
+                                (setf (fzfa-source-retry-timer source) nil))
+                              (setf (fzfa-source-total source) (length all)
+                                    (fzfa-source-filtered source) (length r)
+                                    (fzfa-source-last-result source) r
+                                    (fzfa-source-rank source)
                                     (fzfa--multi-rank r filter nil))
                               r))))
                         :match-dynamic t
@@ -1364,8 +1282,10 @@ for fuzzy-multi-source UX."
               (let ((best-i nil)
                     (best-r 0))
                 (dotimes (i n-sources)
-                  (when (> (aref ranks i) best-r)
-                    (setq best-r (aref ranks i)
+                  (when-let* ((src (aref sources-v i))
+                              (r (fzfa-source-rank src))
+                              ((> r best-r)))
+                    (setq best-r r
                           best-i i)))
                 (when (and best-i (not (eql best-i last-leader)))
                   (setq last-leader best-i)
