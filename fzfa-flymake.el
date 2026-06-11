@@ -29,6 +29,12 @@
 (declare-function flymake--project-diagnostics "flymake")
 (declare-function flymake--severity "flymake")
 (declare-function flymake--lookup-type-property "flymake")
+(declare-function flymake-diagnostic-buffer "flymake")
+(declare-function flymake-diagnostic-type "flymake")
+(declare-function flymake-diagnostic-beg "flymake")
+(declare-function flymake-diagnostic-text "flymake")
+(declare-function flymake-running-backends "flymake")
+(declare-function flymake-reporting-backends "flymake")
 
 (defun fzfa-flymake--collect (diags)
   "Walk DIAGS and return a list of (BUFFER LINE TYPE TEXT MARKER) tuples.
