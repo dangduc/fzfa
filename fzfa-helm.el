@@ -41,8 +41,6 @@
 
 (require 'cl-lib)
 (require 'fzfa)
-(require 'helm nil t)
-(require 'helm-source nil t)
 
 (defcustom fzfa-helm-multi-source-candidate-limit 200
   "Per-source candidate cap inside `fzfa-helm--multi-read'.
@@ -87,6 +85,11 @@ explicit `helm-execute-persistent-action'.  Useful for sources whose
 shouldn't fire on every arrow-key press."
   :type 'boolean
   :group 'fzfa)
+
+(defun fzfa-helm--ensure-loaded ()
+  "Load `helm' and `helm-source'."
+  (require 'helm)
+  (require 'helm-source))
 
 (defun fzfa-helm--wrap-apply (apply-fn dir origin-window origin-buffer)
   "Return APPLY-FN wrapped so each fire runs against a stable baseline.
@@ -518,6 +521,7 @@ rules.
 The producer process and polling timer start eagerly at construction
 time, BEFORE helm activates — matches the original (pre-extraction)
 timing.  The source's `:cleanup' stops it."
+  (fzfa-helm--ensure-loaded)
   (car (fzfa-helm--async-source-and-stop
         name command directory action
         (or candidate-number-limit 10000)
@@ -568,6 +572,7 @@ with empty input observes whether the callback arrives synchronously).
 Async-firing producers (jsonrpc, url-retrieve) keep their snapshot in
 source-local closure state and trigger `helm-force-update' from the
 callback so helm re-reads candidates with the fresh snapshot."
+  (fzfa-helm--ensure-loaded)
   (let* ((limit (or candidate-number-limit 10000))
          (last-filtered nil)
          (last-total nil)
@@ -900,6 +905,7 @@ helm doesn't consult the metadata `display-sort-function' that
 vertico / icomplete rely on.  Side effect: bypassing
 `completing-read' also bypasses its HIST push, so the action wraps
 `add-to-history' to mirror what would have happened."
+  (fzfa-helm--ensure-loaded)
   (ignore annotate affix group require-match)
   (when (and command candidates)
     (user-error
@@ -1026,6 +1032,7 @@ closure stores its top-fzf-score in a `ranks' vector, and a
 it changes.  Replaces helm's default \"first non-empty source\"
 positioning, which is declared-order-arbitrary and structurally wrong
 for fuzzy-multi-source UX."
+  (fzfa-helm--ensure-loaded)
   (let* ((helm-completion-style 'emacs)
          ;; Per-source render cap.  `min' of the multi cap and the
          ;; single cap — multi cap dominates with defaults (200 < 2000),
