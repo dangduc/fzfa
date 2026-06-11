@@ -30,9 +30,14 @@
 ;; querying.  Chrome 127+ may app-bound-encrypt some newer entries;
 ;; those will fail to decrypt with the classic keychain key.
 ;;
+;; All Chrome commands dispatch URLs through
+;; `fzfa-chrome-browser-function' so bookmarks, history, and password
+;; entries open in Chrome even when the OS default browser is
+;; something else.  Override to point at a specific Chromium binary.
+;;
 ;; Bookmark commands (embark category `fzfa-chrome-bookmark'):
 ;;
-;;   `fzfa-chrome-bookmarks'  Open URL with `browse-url' (default)
+;;   `fzfa-chrome-bookmarks'  Open URL in Chrome (default)
 ;;   `fzfa-chrome-edit'       Open the bookmark in Chrome's editor
 ;;                                 (chrome://bookmarks/?id=N) — the
 ;;                                 supported way to rename or delete a
@@ -44,7 +49,7 @@
 ;;
 ;; History commands (embark category `fzfa-chrome-history'):
 ;;
-;;   `fzfa-chrome-history'           Open URL with `browse-url' (default)
+;;   `fzfa-chrome-history'           Open URL in Chrome (default)
 ;;   `fzfa-chrome-history-copy-url'  Copy the URL to the kill ring
 ;;
 ;; History streams from Chrome's `History' SQLite database via an
@@ -60,7 +65,7 @@
 ;;
 ;;   `fzfa-chrome-pass-copy'           Copy password (default)
 ;;   `fzfa-chrome-pass-copy-username'  Copy username
-;;   `fzfa-chrome-pass-url'            Open URL with `browse-url'
+;;   `fzfa-chrome-pass-url'            Open URL in Chrome
 ;;   `fzfa-chrome-pass-refresh'        Drop the cached entry list
 
 ;;; Code:
@@ -72,7 +77,23 @@
 (defvar embark-general-map)
 
 
-;;; Bookmarks
+;;; Browser
+
+(defcustom fzfa-chrome-browser-function
+  (pcase system-type
+    ('darwin    (lambda (url)
+                  (call-process "open" nil 0 nil "-a" "Google Chrome" url)))
+    ('gnu/linux (lambda (url)
+                  (call-process "google-chrome" nil 0 nil url)))
+    (_          #'browse-url))
+  "Function used to open URLs from `fzfa-chrome-*' commands.
+Dispatches bookmark, history, and password entries to Chrome
+explicitly rather than via `browse-url' — which on a non-Chrome
+default would send them to Safari/Firefox.  Override to point at a
+specific Chromium binary or a wrapper that adds flags (e.g. profile
+selection or `--incognito')."
+  :type 'function
+  :group 'fzfa)
 
 (defcustom fzfa-chrome-bookmarks-file
   (pcase system-type
@@ -166,30 +187,27 @@ without the trailing ID field."
 
 ;;;###autoload
 (defun fzfa-chrome-bookmarks (cand)
-  "Open the Chrome bookmark CAND with `browse-url'."
+  "Open the Chrome bookmark CAND via `fzfa-chrome-browser-function'."
   (interactive (list (fzfa-chrome--pick "chrome: ")))
   (when cand
-    (browse-url (nth 2 (split-string cand "\t")))))
+    (funcall fzfa-chrome-browser-function
+             (nth 2 (split-string cand "\t")))))
 
 ;;;###autoload
 (defun fzfa-chrome-edit (cand)
   "Open Chrome's bookmark editor on CAND.
 
-Navigates to `chrome://bookmarks/?id=N' (the URL scheme only Chrome
-understands), so the request is dispatched to Chrome explicitly
-rather than via `browse-url' — which might pick Safari/Firefox.
+Navigates to `chrome://bookmarks/?id=N' — a URL scheme only Chrome
+understands — via `fzfa-chrome-browser-function', so the request is
+dispatched to Chrome explicitly rather than the OS default browser.
 Chrome's UI handles renames and deletions safely, avoiding direct
 edits to the Bookmarks JSON file."
   (interactive (list (fzfa-chrome--pick "edit bookmark: ")))
   (when cand
     (let ((id (nth 3 (split-string cand "\t"))))
       (when (and id (not (string-empty-p id)))
-        (let ((url (format "chrome://bookmarks/?id=%s" id)))
-          (pcase system-type
-            ('darwin    (call-process "open" nil 0 nil
-                                      "-a" "Google Chrome" url))
-            ('gnu/linux (call-process "google-chrome" nil 0 nil url))
-            (_          (browse-url url))))))))
+        (funcall fzfa-chrome-browser-function
+                 (format "chrome://bookmarks/?id=%s" id))))))
 
 ;;;###autoload
 (defun fzfa-chrome-bookmark-copy-url (cand)
@@ -320,10 +338,11 @@ Streams candidates asynchronously from a Python helper."
 
 ;;;###autoload
 (defun fzfa-chrome-history (cand)
-  "Open the Chrome history entry CAND with `browse-url'."
+  "Open the Chrome history entry CAND via `fzfa-chrome-browser-function'."
   (interactive (list (fzfa-chrome-history--pick "chrome-history: ")))
   (when cand
-    (browse-url (nth 1 (split-string cand "\t")))))
+    (funcall fzfa-chrome-browser-function
+             (nth 1 (split-string cand "\t")))))
 
 ;;;###autoload
 (defun fzfa-chrome-history-copy-url (cand)
@@ -553,10 +572,11 @@ When CAND is nil (e.g. called interactively), prompt for one."
 
 ;;;###autoload
 (defun fzfa-chrome-pass-url (cand)
-  "Open the URL of Chrome login CAND with `browse-url'."
+  "Open the URL of Chrome login CAND via `fzfa-chrome-browser-function'."
   (interactive (list (fzfa-chrome-pass--pick "chrome-pass url: ")))
   (when cand
-    (browse-url (nth 0 (split-string cand "\t")))))
+    (funcall fzfa-chrome-browser-function
+             (nth 0 (split-string cand "\t")))))
 
 (defvar-keymap fzfa-chrome-pass-map
   :doc "Embark keymap for `fzfa-chrome-pass' candidates.
