@@ -228,15 +228,16 @@ Read at session start; changing it does not affect running sessions."
   :group 'fzfa)
 
 (defcustom fzfa-extensions
-  '(ag chrome company emacs embark evil fd find flymake git grep helm hg
-       hungry imenu info ivy locate mail make music notmuch org pass project rg
-       shell spotlight ugrep vertico vc)
+  '(ag chrome company eglot emacs embark evil fd find flymake git grep helm hg
+       hungry imenu info ivy locate mail make music notmuch org pass project
+       regexp rg shell spotlight ugrep vertico vc)
   "List of fzfa extensions to load from `fzfa-setup'.
 Each SYMBOL causes `fzfa-setup' to `require' the feature
 `fzfa-SYMBOL' and, if defined, call `fzfa-SYMBOL-setup'."
   :type '(set (const :tag "ag (the_silver_searcher)" ag)
               (const :tag "Chrome bookmarks + passwords" chrome)
               (const :tag "company-mode completions" company)
+              (const :tag "Eglot workspace symbols" eglot)
               (const :tag "Emacs built-in sources" emacs)
               (const :tag "Embark actions" embark)
               (const :tag "Evil-mode marks + registers" evil)
@@ -259,6 +260,7 @@ Each SYMBOL causes `fzfa-setup' to `require' the feature
               (const :tag "Org-mode headings" org)
               (const :tag "password-store (pass)" pass)
               (const :tag "project.el" project)
+              (const :tag "Regexp (buffer-line picker)" regexp)
               (const :tag "ripgrep (rg)" rg)
               (const :tag "Shell command + history" shell)
               (const :tag "macOS Spotlight (mdfind)" spotlight)

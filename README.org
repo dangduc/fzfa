@@ -276,6 +276,7 @@ See *Extensions* below.)
 | ~fzfa-imenu~                  | ~counsel-imenu~                                 | ~consult-imenu~                     | ~helm-imenu~                       |
 | ~fzfa-imenu-all~              | —                                               | ~consult-imenu-multi~               | ~helm-imenu-in-all-buffers~        |
 | ~fzfa-imenu-all-but-current~  | —                                               | —                                   | —                                  |
+| ~fzfa-eglot-symbols~          | —                                               | ~consult-eglot-symbols~             | ~helm-lsp-workspace-symbol~        |
 | ~fzfa-outline~                | ~counsel-outline~                               | ~consult-outline~                   | ~helm-outline~                     |
 | ~fzfa-org-heading~            | ~counsel-org-goto~                              | ~consult-org-heading~               | ~helm-org-in-buffer-headings~      |
 | ~fzfa-org-heading-all~        | ~counsel-org-goto-all~                          | ~consult-org-heading~ (with prefix) | ~helm-org-agenda-files-headings~   |
@@ -313,6 +314,12 @@ the matching line.
 | ~fzfa-ugrep~             | —                  | —                      | —                               |
 | ~fzfa-swiper~            | ~swiper~           | ~consult-line~         | ~helm-occur~                    |
 | ~fzfa-swiper-all~        | ~swiper-all~       | ~consult-line-multi~   | ~helm-occur-visible-buffers~    |
+| ~fzfa-regexp~            | —                  | —                      | —                               |
+
+~fzfa-regexp~ scans the current buffer for an Elisp regexp (the CMD
+half of the prompt); FZF re-scores the matched lines against the
+FILTER half.  ~fzfa-regexp-match~ underlines the matched region.
+Empty CMD emits every line so FZF becomes the primary filter.
 
 ** Hungry variants
 
@@ -347,8 +354,8 @@ fzfa-imenu-all-but-current fzfa-M-x fzfa-hungry-swiper fzfa-locate)~.
 Add any other arg-less ~fzfa~ command to that list and it shows up as
 its own group, with no source plist or factory function to maintain:
 the source is *derived from the command's existing definition* via the
-=:extract= / =:inject= dispatch in ~fzfa-async-completing-read~ and
-~fzfa-sync-completing-read~ (see ~architecture.org~ for the full flow).
+=:extract= / =:inject= dispatch in ~fzfa-completing-read~ (see
+~architecture.org~ for the full flow).
 
 #+begin_src emacs-lisp :tangle yes
   (setq fzfa-find-any-commands
@@ -482,7 +489,7 @@ against the same query as the user types:
 
 | Frontend                     | Mixed async + sync multi-source                                |
 |------------------------------+----------------------------------------------------------------|
-| ~fzfa~ (~fzfa-multi-read~)   | yes — any combination of ~:items~ and ~:command~ sources       |
+| ~fzfa~ (~fzfa-multi-read~)   | yes — any combination of ~:candidates~ and ~:command~ sources  |
 | ~helm~ (~helm :sources~)     | yes — ~candidates~ + ~candidates-process~ sources side by side |
 | ~consult~ (~consult--multi~) | supported; no built-in commands uses it                        |
 | ~ivy~ / ~counsel~            | no multi-source mechanism                                      |
@@ -501,6 +508,7 @@ explicitly).
 |-------------+------------------+--------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | ~chrome~    | ~fzfa-chrome~    | none (bookmarks); macOS dependencies (passwords) | bookmarks: ~fzfa-chrome-bookmarks~ (default), ~-edit~, ~-copy-url~, ~-refresh~ — open Chromium-family bookmarks via ~browse-url~.  passwords (macOS only): ~fzfa-chrome-pass-copy~ (default), ~-copy-username~, ~-url~, ~-refresh~ — decrypts entries from Chrome's Login Data SQLite DB using the keychain entry ~Chrome Safe Storage~                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ~company~   | ~fzfa-company~   | ~company~                                        | ~fzfa-company~ — fuzzy-filter current ~company-mode~ candidates and finish                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ~eglot~     | ~fzfa-eglot~     | ~eglot~                                          | ~fzfa-eglot-symbols~ — workspace-symbol picker via the running eglot server.  Async-firing producer using ~jsonrpc-async-request~; CMD-half is the query string, FZF re-scores the snapshot.  Async producers are not supported under ~helm-mode~                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ~embark~    | ~fzfa-embark~    | ~embark~                                         | Sub-keymap on ~embark-general-map~ under the ~Z~ prefix (mnemonic: f*Z*fa) puts every fzfa command behind a single key chord reachable from any embark target.  Direct (non-prefixed) target-aware bindings on ~embark-region-map~ / ~-identifier-map~ (~R~ rg, ~G~ grep, ~A~ ag, ~U~ ugrep, ~S~ swiper — target seeds the fzf filter), ~embark-file-map~ (~G~ grep this file, ~R~ rg in file's dir), ~embark-buffer-map~ (~I~ imenu, ~S~ swiper in target buffer), ~embark-flymake-map~ (~F~ flymake, ~P~ flymake-project), ~embark-email-map~ (~N~ notmuch, ~T~ notmuch-tree on the address).  Also wires ~Z~ on ~embark-become-match-map~ for sync source-swap.                                                                                                       |
 | ~evil~      | ~fzfa-evil~      | ~evil~                                           | ~fzfa-evil-marks~ (jump to a buffer-local or global mark, candidate includes ~BUFFER:LINE: <content>~ so fzf scores against the line preview), ~fzfa-evil-registers~ (paste text registers / execute macro-vector registers), ~fzfa-evil-jumps~ (window jump list — ~C-o~/~C-i~ history — with line preview when the buffer is loaded), ~fzfa-evil-ex-history~ (re-run an entry from ~evil-ex-history~ via ~evil-ex-execute~), ~fzfa-evil-search-history~ (re-run a pattern from ~evil-ex-search-history~ and update ~evil-ex-search-pattern~ so ~n~/~N~ continue working), ~fzfa-evil-command-window~ (unified ex + search history picker grouped by source), ~fzfa-evil-any~ (multi-source picker over the other commands, configurable via ~fzfa-evil-any-commands~) |
 | ~flymake~   | ~fzfa-flymake~   | none (built-in)                                  | ~fzfa-flymake~ (current buffer), ~fzfa-flymake-project~ (all buffers in the current project)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -512,15 +520,16 @@ explicitly).
 | ~org~       | ~fzfa-org~       | none (built-in)                                  | ~fzfa-org-heading~ (current buffer), ~fzfa-org-heading-all~ (all live org buffers), ~fzfa-org-agenda~ (all `org-agenda-files'), ~fzfa-org-todo~ (TODO-state headings in agenda files, excludes DONE-class), ~fzfa-org-tags-view~ (pick a tag then a tagged entry), ~fzfa-org-insert-link~ (pick an entry, insert an org-link at point), ~fzfa-org-any~ (multi-source over `fzfa-org-any-commands').  Candidates render ~SOURCE:LINE:STARS [TODO] HEADING :tags:~; selection reveals folded entries.                                                                                                                                                                                                                                                                       |
 | ~pass~      | ~fzfa-pass~      | ~password-store~                                 | ~fzfa-pass~ (copy), ~fzfa-pass-edit~, ~-rename~, ~-delete~, ~-add~, ~-generate~, ~-url~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ~project~   | ~fzfa-project~   | none (built-in)                                  | ~fzfa-project-find-file~, ~fzfa-project-find-dir~, ~fzfa-project-buffer~, ~fzfa-project-recentf~, ~fzfa-project-switch-project~ — candidate sets driven by ~project-files~ / ~project-buffers~ / ~project-known-project-roots~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ~regexp~    | ~fzfa-regexp~    | none (built-in)                                  | ~fzfa-regexp~ — scan the current buffer for an Elisp regexp.  Sync-firing producer; CMD-half is the regexp pattern, FZF re-scores matched lines against FILTER.  Empty CMD emits every line.  ~fzfa-regexp-match~ face underlines the match                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ~spotlight~ | ~fzfa-spotlight~ | macOS ~mdfind~                                   | ~fzfa-spotlight~, ~fzfa-spotlight-apps~, ~fzfa-spotlight-audio~ — application launcher                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ~vc~        | ~fzfa-vc~        | none (built-in)                                  | ~fzfa-vc-modified-files~ — multi-source picker over the current repository's modified / added / staged / HEAD files.  Detects the backend with ~vc-responsible-backend~ (cheap — walks parents) and dispatches to per-backend commands shipped by sibling extensions: ~fzfa-git-modified-locally~, ~fzfa-git-added-files~, ~fzfa-git-staged-for-commit~, ~fzfa-git-modified-in-head~ (in ~git~ extension) and ~fzfa-hg-modified-locally~, ~fzfa-hg-added-files~, ~fzfa-hg-modified-in-head~ (in ~hg~ extension).  Per-backend commands are also callable directly without going through the dispatcher.  Extend to other backends via ~fzfa-vc-modified-files-sources~                                                                                                  |
 
 Default value of ~fzfa-extensions~:
 
 #+begin_src elisp
-(ag chrome company emacs embark evil fd find flymake git grep hg
- hungry info locate mail make music notmuch org pass project rg shell
- spotlight ugrep vc)
+(ag chrome company eglot emacs embark evil fd find flymake git grep helm hg
+ hungry imenu info ivy locate mail make music notmuch org pass project
+ regexp rg shell spotlight ugrep vertico vc)
 #+end_src
 
 Each loads without its soft dependency present — the dependency is
@@ -575,7 +584,7 @@ Editing inside ~compact~ or ~full~ replaces the active shell command
 those edits live — there is no commit/discard step; the subprocess
 has already restarted on each meaningful change.
 
-Customize ~fzfa-async-display-key~ to change the cycling key, or
+Customize ~fzfa-display-key~ to change the cycling key, or
 set it to ~nil~ to disable the feature entirely (the session is
 stuck in whatever ~:display~ the caller passed; default = ~hidden~).
 ~<~ remains reserved for ~fzfa-multi-narrow-key~ (source
@@ -776,15 +785,14 @@ actually loaded.
 
 #+HTML: <video src="https://github.com/user-attachments/assets/c10e3407-b59e-41be-b1ce-3164064b5aed" controls style="max-width: 100%; height: auto;"></video>
 
-The four fzfa entry points share their main code path with the
+The fzfa entry points share their main code path with the
 other completing-read frontends, with ivy-specific bypass + push
 plumbing layered on:
 
-| Entry point                  | Ivy plumbing                                                                                 |
-|------------------------------+----------------------------------------------------------------------------------------------|
-| ~fzfa-async-completing-read~ | =:dynamic-collection t= + =ivy-push= closure mirroring the cmd-split + restart logic of the =('t)= body                  |
-| ~fzfa-sync-completing-read~  | =:dynamic-collection t= binding only (sync has no streaming or stats overlay)                          |
-| ~fzfa--multi-read~           | =:dynamic-collection t= + =ivy-push-multi= per-source iterate/score/rank/concat + display transformer + actions for narrow |
+| Entry point              | Ivy plumbing                                                                                                              |
+|--------------------------+---------------------------------------------------------------------------------------------------------------------------|
+| ~fzfa-completing-read~   | =:dynamic-collection t= + =ivy-push= closure mirroring the cmd-split + restart logic of the =('t)= body                   |
+| ~fzfa-multi-read~        | =:dynamic-collection t= + =ivy-push-multi= per-source iterate/score/rank/concat + display transformer + actions for narrow |
 
 Ivy's push model means typing doesn't re-call the collection
 function the way vertico/icomplete do — so the polling timer's
@@ -1172,9 +1180,9 @@ For one-off previews that don't warrant a shared registry entry
 (e.g. ~fzfa-theme~ for theme snapshot/restore, ~fzfa-bookmark~ which
 reuses the file opener for file-targeting bookmarks), pass the
 handler directly via the ~:preview~ keyword to
-~fzfa-sync-completing-read~ or ~fzfa-async-completing-read~.  It
-accepts a function (shorthand for a `:preview'-only handler) or a
-full handler plist, and takes precedence over the registry lookup.
+~fzfa-completing-read~.  It accepts a function (shorthand for a
+`:preview'-only handler) or a full handler plist, and takes
+precedence over the registry lookup.
 
 To customize placement (side window, popup frame, fresh split),
 configure ~display-buffer-alist~ at the Emacs level keyed on the
@@ -1349,25 +1357,57 @@ The prompt overlay shows live status during a search:
 * Writing your own command
 
 ~fzfa~ is designed to be extensible.  New commands are thin wrappers
-around ~fzfa-async-completing-read~, which accepts keyword arguments:
+around ~fzfa-completing-read~.  A session has exactly one source —
+either ~:command~ (shell pipeline, streamed) or ~:candidates~ (Elisp
+side, list / zero-arg fn / 2-arg producer fn).  The two are mutually
+exclusive.
 
-| Argument                 | Default                            | Description                                                                 |
-|--------------------------+------------------------------------+-----------------------------------------------------------------------------|
-| ~:prompt~                | first token of ~:command~ + ~": "~ | Minibuffer prompt string.                                                   |
-| ~:command~               | —                                  | Shell command whose stdout becomes candidates.                              |
-| ~:directory~             | ~default-directory~                | Working directory for the command.                                          |
-| ~:group~                 | ~nil~                              | ~group-function~ for candidate grouping.                                    |
-| ~:skip-executable-check~ | ~nil~                              | Skip the built-in ~executable-find~ guard on the first token of ~:command~. |
+| Argument                 | Default                            | Description                                                                                                                |
+|--------------------------+------------------------------------+----------------------------------------------------------------------------------------------------------------------------|
+| ~:prompt~                | derived from source                | Minibuffer prompt string.                                                                                                  |
+| ~:command~               | —                                  | Shell command whose stdout becomes candidates (mutually exclusive with ~:candidates~).                                     |
+| ~:candidates~            | —                                  | Static list, zero-arg fn returning a list, or 2-arg ~(INPUT CALLBACK)~ producer fn (mutually exclusive with ~:command~).    |
+| ~:directory~             | ~default-directory~                | Working directory for ~:command~ sources.                                                                                  |
+| ~:category~              | ~'auto~                            | ~completion-category-overrides~ key.  ~'auto~ resolves to ~fzfa-file~ for ~:command~, ~fzfa-misc~ for ~:candidates~.        |
+| ~:require-match~         | ~'auto~                            | Passed to ~completing-read~.  ~'auto~ resolves to ~nil~ for ~:command~ (free-form input), ~t~ for ~:candidates~.            |
+| ~:resolve-paths~         | ~'auto~                            | If non-nil, ~expand-file-name~ the result against ~:directory~.  ~'auto~ resolves to ~t~ for ~:command~, ~nil~ for ~:candidates~. |
+| ~:default~               | ~nil~                              | Initial ~DEFAULT~ for ~completing-read~.                                                                                   |
+| ~:history~               | ~nil~                              | History variable; recency boosts empty-FILTER ranking under ivy.                                                           |
+| ~:annotate~              | ~nil~                              | ~(CAND) -> STRING~ function attached as completion metadata ~annotation-function~.                                         |
+| ~:affix~                 | ~nil~                              | ~(CAND) -> (PREFIX CAND SUFFIX)~ function for the metadata ~affixation-function~.                                          |
+| ~:group~                 | ~nil~                              | ~group-function~ for candidate grouping in the metadata.                                                                   |
+| ~:preview~               | registry lookup by ~:category~     | Function or handler plist; takes precedence over the global ~fzfa-preview-handlers~ registry.                               |
+| ~:apply~                 | registry lookup by ~:category~     | Custom action for the selected candidate.                                                                                  |
+| ~:display~               | ~hidden~                           | Initial display state for the ~#COMMAND#FILTER~ split (~hidden~ / ~compact~ / ~full~).                                     |
+| ~:skip-executable-check~ | ~nil~                              | Skip the built-in ~executable-find~ guard on the first token of ~:command~.                                                |
 
-The command string is passed verbatim to ~shell-file-name~ (~-c~), so pipes,
-redirections, and shell quoting all work as expected.
+The ~'auto~ sentinel on ~:category~, ~:require-match~, and
+~:resolve-paths~ keys the default off whichever of ~:command~ /
+~:candidates~ is set.  Pass an explicit value (~nil~, ~t~, a category
+symbol) to override.
 
-~fzfa-async-completing-read~ automatically checks that the first token of
-~:command~ is present in ~exec-path~ (via ~executable-find~) before starting
-the session.  Pass ~:skip-executable-check t~ when the command uses a shell
-builtin, alias, or has already been validated by the caller.
-~fzfa-shell-command~ skips the check because the user's shell resolves
-aliases and builtins that ~executable-find~ cannot see.
+For ~:command~ sources the string is passed verbatim to
+~shell-file-name~ (~-c~), so pipes, redirections, and shell quoting
+all work as expected.  ~fzfa-completing-read~ automatically checks
+that the first token of ~:command~ is present in ~exec-path~ (via
+~executable-find~) before starting the session.  Pass
+~:skip-executable-check t~ when the command uses a shell builtin,
+alias, or has already been validated by the caller.
+~fzfa-shell-command~ skips the check because the user's shell
+resolves aliases and builtins that ~executable-find~ cannot see.
+
+For ~:candidates~ sources the picker splits its minibuffer input via
+~fzfa-separator~ into ~(CMD . FILTER)~ when the producer is a 2-arg
+fn: CMD is passed as the producer's INPUT slot (refire only when CMD
+changes), FILTER scores the snapshot via ~fzf-native-score-all~.
+Static lists and zero-arg fns skip the split — the whole input is
+the FILTER.  Producer-kind detection runs once at session setup; a
+sync-firing producer (callback returns before the producer fn does)
+runs every CMD change inline, while an async-firing producer
+(jsonrpc, url-retrieve) updates a closure-scoped snapshot and the
+substrate re-renders on callback arrival.  Async producers are not
+supported under ~helm-mode~ — helm's candidates contract has no
+notion of deferred delivery.
 
 For one-off queries, ~fzfa-shell-command~ prompts for a command
 interactively and runs it in ~default-directory~;
@@ -1379,12 +1419,33 @@ interactively and runs it in ~default-directory~;
   "Find a PDF file system-wide using Spotlight.
 Opens the selected PDF with `open'."
   (interactive)
-  (when-let* ((result (fzfa-async-completing-read
+  (when-let* ((result (fzfa-completing-read
                        :prompt "spotlight pdfs: "
                        :command "mdfind 'kMDItemFSName == \"*.pdf\"'"
                        :directory default-directory)))
     (start-process "default-app" nil "open" result)))
 #+end_src
+
+A ~:candidates~ example — a zero-arg fn collecting buffer names:
+
+#+begin_src emacs-lisp :tangle yes
+;;;###autoload
+(defun my/fzfa-non-file-buffers ()
+  "Pick a buffer that isn't visiting a file."
+  (interactive)
+  (when-let* ((name (fzfa-completing-read
+                     :prompt     "non-file buffer: "
+                     :candidates (lambda ()
+                                   (cl-remove-if #'buffer-file-name
+                                                 (buffer-list)
+                                                 :key #'identity))
+                     :history    'my/fzfa-non-file-buffer-history)))
+    (switch-to-buffer name)))
+#+end_src
+
+A 2-arg producer example refires per CMD-half change.  See
+~fzfa-regexp.el~ (sync-firing) and ~fzfa-eglot.el~ (async-firing,
+~jsonrpc-async-request~) for in-tree consumers.
 
 * Comparison
 |                                     | fzfa                       | affe               | helm                    | counsel       | consult           | fzf.el     |
