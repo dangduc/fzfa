@@ -50,6 +50,7 @@
 (defvar fzf-native-case-mode)
 (defvar fzf-native-fuzzy)
 (defvar fzf-native-async-highlight)
+(defvar fzf-native-batch-highlight)
 (defvar fzf-native-max-line-length)
 (defvar fzf-native-async-cache-size)
 (defvar marginalia-annotate-file)
@@ -172,6 +173,19 @@ The C layer applies `completions-common-part' face to each contiguous
 run of matched bytes via fzf_get_positions."
   :type '(choice (const   :tag "Disabled" nil)
                  (const   :tag "All candidates" t)
+                 (integer :tag "Top N candidates"))
+  :group 'fzfa)
+
+(defcustom fzfa-batch-highlight 25
+  "Controls C-side match highlighting for the synchronous scoring path.
+
+nil — no highlighting.
+a positive integer N — highlight only the top N candidates.
+
+Sync counterpart to `fzfa-highlight'.  Bridged onto
+`fzf-native-batch-highlight' by `fzfa--bridge-defcustoms' for every
+`fzf-native-score-all' / `fzf-native-score' call fzfa makes."
+  :type '(choice (const   :tag "Disabled" nil)
                  (integer :tag "Top N candidates"))
   :group 'fzfa)
 
@@ -3905,6 +3919,7 @@ render."
 (defun fzfa--bridge-defcustoms (orig-fn &rest args)
   "Wrap fzf-native call ORIG-FN with ARGS; bridge fzfa-* into C scorer."
   (let ((fzf-native-async-highlight  fzfa-highlight)
+        (fzf-native-batch-highlight  fzfa-batch-highlight)
         (fzf-native-max-line-length  fzfa-max-line-length)
         (fzf-native-async-cache-size fzfa-cache-size)
         (fzf-native-case-mode        fzfa-case-mode)
