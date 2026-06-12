@@ -312,13 +312,15 @@ group is produced."
   (and vertico-group-format (vertico--metadata-get 'group-function)))
 
 (defun fzfa-vertico--src-idx-of (part)
-  "Return PART's first candidate `fzfa-src-idx', or `most-positive-fixnum'.
+  "Return PART's first candidate source index, or `most-positive-fixnum'.
 
-Used as the sort key for the `source-idx' ordering mode."
+Looked up via the session-bound `fzfa--multi-cand->src' hash; used as
+the sort key for the `source-idx' ordering mode."
   (let ((c (cadr part)))
     (or (and (stringp c)
              (> (length c) 0)
-             (get-text-property 0 'fzfa-src-idx c))
+             (bound-and-true-p fzfa--multi-cand->src)
+             (gethash c fzfa--multi-cand->src))
         most-positive-fixnum)))
 
 (defun fzfa-vertico--empty-query-p ()

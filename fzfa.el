@@ -2708,6 +2708,12 @@ Read by frontends that need per-source rendering — currently the
 ivy display transformer in `fzfa-ivy.el', which decodes each
 candidate's tofu suffix into its source name.")
 
+(defvar fzfa--multi-cand->src nil
+  "Candidate→source-idx hash bound across the active `fzfa--multi-read' session.
+
+Used by `fzfa--multi-source-of' / `fzfa--multi-source-idx' for dispatch
+when callers don't have direct access to the session-local hash table.")
+
 (defun fzfa--tofu-suffix (idx)
   "Return the cached invisible tofu suffix string for source IDX."
   (or (gethash idx fzfa--tofu-cache)
@@ -2731,37 +2737,36 @@ Returns S unchanged when there is no tofu suffix."
   "Return CAND tagged for source IDX.
 
 Appends an invisible tofu suffix so cross-source duplicates remain
-`string='-distinct, sets a `fzfa-src-idx' text property at position 0
-for in-band dispatch, and records the tagged string in HASH as a
-fallback lookup when text properties are stripped.
+`string='-distinct, and records the tagged string in HASH as the
+candidate→source-idx lookup table used by `fzfa--multi-source-of'.
 
 Idempotent: strips any pre-existing TOFU suffix from CAND first,
 so calling on an already-tagged string yields the same content
 \(safe to re-tag producer-path output after `fzf-native-score-all'
-preserves the snapshot's TOFU suffix but drops its text property)."
+preserves the snapshot's TOFU suffix)."
   (let* ((clean (fzfa--tofu-hide cand))
          (tagged (concat clean (fzfa--tofu-suffix idx))))
-    (when (> (length tagged) 0)
-      (put-text-property 0 1 'fzfa-src-idx idx tagged))
     (puthash tagged idx hash)
     tagged))
 
 (defun fzfa--multi-source-of (cand sources-v hash)
   "Return the source plist responsible for CAND, or nil.
 
-SOURCES-V is the vector of source plists; HASH maps CAND to source index."
+SOURCES-V is the vector of source plists.  HASH maps CAND to source index;
+when nil, falls back to the session-bound `fzfa--multi-cand->src' dynvar."
   (and (stringp cand) (> (length cand) 0)
-       (let ((idx (or (get-text-property 0 'fzfa-src-idx cand)
-                      (gethash cand hash))))
-         (and idx (aref sources-v idx)))))
+       (when-let* ((tbl (or hash fzfa--multi-cand->src))
+                   (idx (gethash cand tbl)))
+         (aref sources-v idx))))
 
 (defun fzfa--multi-source-idx (cand hash)
   "Return the source index for CAND, or nil.
 
-HASH maps CAND to source index."
+HASH maps CAND to source index; when nil, falls back to the session-bound
+`fzfa--multi-cand->src' dynvar."
   (and (stringp cand) (> (length cand) 0)
-       (or (get-text-property 0 'fzfa-src-idx cand)
-           (gethash cand hash))))
+       (when-let* ((tbl (or hash fzfa--multi-cand->src)))
+         (gethash cand tbl))))
 
 (defun fzfa--multi-build-router (sources-v cand->src)
   "Build a synthetic preview handler that dispatches per source.
@@ -3369,8 +3374,7 @@ Per-source plist keys:
                                             (point-max))))
                                     (when (> (length s) 0)
                                       (setq selected-idx
-                                            (get-text-property
-                                             0 'fzfa-src-idx s)))))
+                                            (gethash s cand->src)))))
                                 nil 'local)
                       ;; Install narrow-key binding as a per-instance
                       ;; child of the active completion keymap so we
@@ -3390,6 +3394,7 @@ Per-source plist keys:
                                         narrow-handler))
                           (use-local-map map))))
                   (let ((fzfa--multi-active-sources specs-v)
+                        (fzfa--multi-cand->src cand->src)
                         (ivy-completing-read-dynamic-collection t)
                         (ivy-count-format
                          (if (and (bound-and-true-p ivy-mode) wants-decoration)
