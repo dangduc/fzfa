@@ -2875,7 +2875,7 @@ Returns non-nil iff a fetch was actually issued."
                    (let ((tagged
                           (mapcar
                            (lambda (s)
-                             (fzfa--multi-tag (copy-sequence s) idx cand->src))
+                             (fzfa--multi-tag s idx cand->src))
                            (or cands '()))))
                      (setf (fzfa-source-snapshot source) tagged
                            (fzfa-source-total source) (length tagged)))))))
