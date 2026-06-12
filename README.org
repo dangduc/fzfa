@@ -316,10 +316,69 @@ the matching line.
 | ~fzfa-swiper-all~        | ~swiper-all~       | ~consult-line-multi~   | ~helm-occur-visible-buffers~    |
 | ~fzfa-regexp~            | —                  | —                      | —                               |
 
-~fzfa-regexp~ scans the current buffer for an Elisp regexp (the CMD
-half of the prompt); FZF re-scores the matched lines against the
-FILTER half.  ~fzfa-regexp-match~ underlines the matched region.
-Empty CMD emits every line so FZF becomes the primary filter.
+*** ~fzfa-regexp~
+
+~fzfa-regexp~ scans the current buffer using an *Elisp* regexp and then
+~fzf-native~ scores the resulting matches.
+
+**** Two-phase semantics
+
+The prompt is split on ~fzfa-separator~ (default ~::~):
+
+#+begin_example
+  REGEXP :: FUZZY-FILTER
+#+end_example
+
+- **CMD half (left)** — an Elisp regexp evaluated against the
+  originating buffer.  Every matching line becomes a candidate
+  annotated as ~LINE:COL: TEXT~, with the matched region underlined
+  via ~fzfa-regexp-match~.  Empty CMD emits every line, so fzf-native
+  becomes the primary filter.
+
+- **FILTER half (right)** — passed to fzf-native for fuzzy re-scoring
+  of the regexp-matched candidates.
+
+Selecting a candidate jumps to the matched position in the source
+buffer.
+
+**** Capture groups → distinct colours
+
+Capture groups in the CMD regexp paint each group's span with its own
+face, layered on top of the base underline.  The default mapping is
+~fzfa-regexp-group-faces~ — four faces inheriting from
+~font-lock-keyword-face~, ~font-lock-function-name-face~,
+~font-lock-string-face~, and ~font-lock-type-face~.  Theme switches
+carry the colours along automatically; remap the variable to
+substitute your own palette.
+
+When the FILTER half also hits, ~completions-common-part~ from
+fzf-native layers on top of the group + base faces — the fzf-native
+default highlight handler preserves caller-attached faces end-to-end
+rather than stripping them.
+
+**** Examples
+
+(Type these into the ~fzfa-regexp~ prompt.
+
+#+begin_example
+  defun ; Degun is underlined.
+#+end_example
+
+#+begin_example
+  defun \([a-z-]+\) ; Group 1 is colored.
+#+end_example
+
+#+begin_example
+  (\(defun\|defvar\|defcustom\) \([a-z-]+\) ; 2 groups are highlighted.
+#+end_example
+
+#+begin_example
+  ;;[ \t]*\(TODO\|FIXME\|XXX\)\(.*\)
+#+end_example
+
+#+begin_example
+  (\(setf\) (\(fzfa-source-[a-z-]+\) \([a-z]+\)) \([a-z]+\)) ; 4 highlight groups
+#+end_example
 
 ** Hungry variants
 
