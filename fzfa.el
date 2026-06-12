@@ -3176,13 +3176,15 @@ Per-source plist keys:
                             (when-let* ((stats (fzf-native-async-stats h)))
                               (setf (fzfa-source-total src) (cdr stats))))
                            (t
-                            ;; Re-tag returned candidates.  Async handles
-                            ;; emit fresh strings each call; producer-path
-                            ;; output may also lose text properties through
-                            ;; the fzf-native scorer.  Tagging is idempotent
-                            ;; on content (TOFU suffix stays as content),
-                            ;; so this is safe to do for both kinds.
-                            (when (or h prod)
+                            ;; Re-tag async candidates only.  Async handles
+                            ;; emit fresh elisp strings each call that have
+                            ;; never been tagged.  Producer-path output is
+                            ;; already tagged at fetch time: `fzf-native-
+                            ;; score-all' returns input strings unchanged
+                            ;; for the rank tail, and content-equal copies
+                            ;; for the highlighted top-N — both dispatch
+                            ;; through `cand->src' via content-equality.
+                            (when h
                               (setq out
                                     (mapcar
                                      (lambda (c)
@@ -3554,15 +3556,15 @@ Per-source plist keys:
                                       (when-let* ((stats (fzf-native-async-stats h)))
                                         (setf (fzfa-source-total src) (cdr stats))))
                                      (t
-                                      ;; Re-tag returned candidates.  Async
-                                      ;; handles emit fresh strings each
-                                      ;; call; producer-path output may also
-                                      ;; lose text properties through the
-                                      ;; fzf-native scorer.  Idempotent on
-                                      ;; content (TOFU suffix stays as
-                                      ;; content), safe for both kinds.
+                                      ;; Re-tag async candidates only.
+                                      ;; Producer-path output is already
+                                      ;; tagged at fetch time and the
+                                      ;; sync scorer preserves identity
+                                      ;; (tail) or content-equality
+                                      ;; (highlighted top-N) — both
+                                      ;; dispatch through `cand->src'.
                                       ;; out may be nil (zero matches) — ok.
-                                      (when (or h prod)
+                                      (when h
                                         (setq out
                                               (mapcar
                                                (lambda (c)
