@@ -1438,17 +1438,21 @@ update invalidates the cache."
                 table)))))))
 
 (defun fzfa--sort-by-history (completions)
-  "Order COMPLETIONS by recency in the active minibuffer history.
+  "Order COMPLETIONS by score, history recency, then length.
 
-Only reorders when the fzf query is empty: with no query the candidate
-list comes back in its source order (typically alphabetical), so we
-promote recently used entries to the top.  When the query is non-empty
-COMPLETIONS arrive in fzf-native's scored order and are returned
-unchanged.  `sort' is stable, so entries absent from history keep their
-incoming relative order."
+Primary key is the `completion-score' text property attached on
+the sync path by `fzf-native-score-all'.  Ties break by position
+in the active minibuffer history (more recent first), then by
+candidate length (shorter first).
+
+Empty query — no scores were attached, so rank by history only.
+Async path — `fzf-native-async-candidates' returns candidates
+pre-sorted by the C scorer but doesn't attach `completion-score';
+preserve that order verbatim."
   (let ((query (fzfa--current-query "")))
-    (if (not (string-empty-p query))
-        completions
+    (cond
+     ((null completions) nil)
+     ((string-empty-p query)
       (if-let* ((hist (fzfa--history-hash)))
           (mapcar
            #'car
@@ -1458,7 +1462,29 @@ incoming relative order."
                (cons c (or (gethash c hist) most-positive-fixnum)))
              completions)
             (lambda (a b) (< (cdr a) (cdr b)))))
-        completions))))
+        completions))
+     ((null (get-text-property 0 'completion-score (car completions)))
+      completions)
+     (t
+      (let ((hist (fzfa--history-hash)))
+        (mapcar
+         #'car
+         (sort
+          (mapcar
+           (lambda (c)
+             (list c
+                   (or (get-text-property 0 'completion-score c) 0)
+                   (or (and hist (gethash c hist)) most-positive-fixnum)
+                   (length c)))
+           completions)
+          (lambda (a b)
+            (let ((s1 (nth 1 a)) (s2 (nth 1 b)))
+              (if (= s1 s2)
+                  (let ((h1 (nth 2 a)) (h2 (nth 2 b)))
+                    (if (= h1 h2)
+                        (< (nth 3 a) (nth 3 b))
+                      (< h1 h2)))
+                (> s1 s2)))))))))))
 
 (defun fzfa--history-rank (candidates hist-sym)
   "Return CANDIDATES reordered by recency in HIST-SYM, tofu-stripped.

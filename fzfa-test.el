@@ -1275,5 +1275,68 @@ updates snapshot, total, filtered, last-result."
         ;; Buffer no longer has #...# prefix.
         (should-not (string-match-p "^#" (buffer-string)))))))
 
+;;; fzfa--sort-by-history
+
+(ert-deftest fzfa-sort-by-history-score-ties-break-by-length ()
+  "Score ties break by candidate length, shorter first.
+
+Regression: M-x visuallinemo against three commands that all tie
+at fzf-native score 290 used to surface `visual-line-mode' last
+because the source order was alphabetical."
+  (let* ((candidates '("global-visual-line-mode"
+                       "menu-bar--visual-line-mode-enable"
+                       "visual-line-mode"))
+         (scored (mapcar (lambda (c)
+                           (let ((s (copy-sequence c)))
+                             (put-text-property 0 1 'completion-score 290 s)
+                             s))
+                         candidates)))
+    (cl-letf (((symbol-function 'fzfa--current-query)
+               (lambda (&rest _) "visuallinemo"))
+              ((symbol-function 'fzfa--history-hash)
+               (lambda () nil)))
+      (should (equal (fzfa--sort-by-history scored)
+                     (list (nth 2 scored)
+                           (nth 0 scored)
+                           (nth 1 scored)))))))
+
+(ert-deftest fzfa-sort-by-history-honors-fzf-native-scores ()
+  "End-to-end: fzf-native scoring + sort puts the shortest tied match first."
+  (skip-unless (fboundp 'fzf-native-score-all))
+  (let* ((candidates '("global-visual-line-mode"
+                       "menu-bar--visual-line-mode-enable"
+                       "visual-line-mode"))
+         (scored (fzfa--bridge-defcustoms
+                  #'fzf-native-score-all candidates "visuallinemo")))
+    (cl-letf (((symbol-function 'fzfa--current-query)
+               (lambda (&rest _) "visuallinemo"))
+              ((symbol-function 'fzfa--history-hash)
+               (lambda () nil)))
+      (should (equal (substring-no-properties
+                      (car (fzfa--sort-by-history scored)))
+                     "visual-line-mode")))))
+
+(ert-deftest fzfa-sort-by-history-higher-score-wins ()
+  "Higher `completion-score' beats both history and length tiebreaks."
+  (let* ((a (copy-sequence "aaaa"))
+         (b (copy-sequence "bb")))
+    (put-text-property 0 1 'completion-score 500 a)
+    (put-text-property 0 1 'completion-score 100 b)
+    (cl-letf (((symbol-function 'fzfa--current-query)
+               (lambda (&rest _) "x"))
+              ((symbol-function 'fzfa--history-hash)
+               (lambda () nil)))
+      (should (equal (fzfa--sort-by-history (list b a))
+                     (list a b))))))
+
+(ert-deftest fzfa-sort-by-history-async-preserves-order ()
+  "Unscored candidates (async path) round-trip unchanged."
+  (cl-letf (((symbol-function 'fzfa--current-query)
+             (lambda (&rest _) "vis"))
+            ((symbol-function 'fzfa--history-hash)
+             (lambda () nil)))
+    (should (equal (fzfa--sort-by-history '("zeta" "alpha" "beta"))
+                   '("zeta" "alpha" "beta")))))
+
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here
