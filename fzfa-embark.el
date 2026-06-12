@@ -22,16 +22,23 @@
 ;; Global prefix: `Z' on `embark-general-map' opens the full fzfa
 ;; action palette regardless of target type.
 ;;
-;; Per-target direct bindings:
-;;   region / identifier maps (plain commands; target flows into the fzf
+;; Per-target direct bindings.  Keys are chosen to avoid clobbering
+;; embark defaults — notably `S' (`embark-collect'), `A'
+;; (`embark-act-all' / `align-regexp'), and `R' (`repunctuate-sentences'
+;; on region, `byte-recompile-directory' on file).  The
+;; backend-specific bindings (rg/grep/ag/ugrep) collapse into a single
+;; `G' = `fzfa-smart-grep' that dispatches to whichever backend is on
+;; PATH; the full per-backend palette stays reachable via `Z'.
+;;
+;;   region / identifier maps (plain command; target flows into the fzf
 ;;   filter via embark's minibuffer-injection mechanism + the
 ;;   `embark--allow-edit' / `embark--unmark-target' pre-action hooks
 ;;   installed by `fzfa-embark-setup'):
-;;     R rg, G grep, A ag, U ugrep, S swiper
-;;   file / buffer / email maps (wrappers that switch context — buffer,
-;;   directory, or rewrite the search query — based on the target type):
-;;     file:    G grep-this-file, R rg-in-file-dir
-;;     buffer:  I imenu-in-buffer, S swiper-in-buffer
+;;     G smart-grep
+;;   file / buffer / email maps (wrappers that switch context — buffer
+;;   or rewrite the search query — based on the target type):
+;;     file:    G grep-this-file
+;;     buffer:  I imenu-in-buffer, J swiper-in-buffer
 ;;     email:   N notmuch, T notmuch-tree
 ;;   flymake map (plain commands; act as re-picks):
 ;;     F flymake, P flymake-project
@@ -78,28 +85,19 @@
 (declare-function fzfa-outline "fzfa-emacs")
 (declare-function fzfa-buffer "fzfa-emacs")
 (declare-function fzfa-bookmark "fzfa-emacs")
-(declare-function fzfa-mark "fzfa-emacs")
-(declare-function fzfa-global-mark "fzfa-emacs")
-(declare-function fzfa-yank-pop "fzfa-emacs")
 (declare-function fzfa-M-x "fzfa-emacs")
 (declare-function fzfa-M-x-for-buffer "fzfa-emacs")
-(declare-function fzfa-theme "fzfa-emacs")
-(declare-function fzfa-tramp "fzfa-emacs")
-(declare-function fzfa-compile-error "fzfa-emacs")
 (declare-function fzfa-recent-file "fzfa-emacs")
 (declare-function fzfa-project-buffer "fzfa-project")
 (declare-function fzfa-project-find-file "fzfa-project")
-(declare-function fzfa-info "fzfa-info")
-(declare-function fzfa-info-at-point "fzfa-info")
 (declare-function fzfa-flymake "fzfa-flymake")
 (declare-function fzfa-flymake-project "fzfa-flymake")
 (declare-function fzfa-notmuch "fzfa-notmuch")
 (declare-function fzfa-notmuch-tree "fzfa-notmuch")
-(declare-function fzfa-evil-any "fzfa-evil")
-(declare-function fzfa-org-any "fzfa-org")
-(declare-function fzfa-passwords "fzfa")
 (declare-function fzfa-find-any "fzfa")
 (declare-function fzfa-find-some "fzfa")
+(declare-function fzfa-smart-grep "fzfa")
+(declare-function fzfa-smart-find "fzfa")
 
 ;;; Target-aware wrappers.
 ;; These are for targets where the embark target is NOT a filter query —
@@ -118,13 +116,6 @@ variable `buffer-file-name'."
   (interactive "fFile: ")
   (with-current-buffer (find-file-noselect file)
     (fzfa-grep-current-file)))
-
-(defun fzfa-embark-rg-in-file-dir (file)
-  "Run `fzfa-rg' rooted at FILE's parent directory."
-  (interactive "fFile: ")
-  (let ((default-directory (or (file-name-directory (expand-file-name file))
-                               default-directory)))
-    (fzfa-rg)))
 
 (defun fzfa-embark-imenu-in-buffer (buffer)
   "Run `fzfa-imenu' in BUFFER."
@@ -196,29 +187,26 @@ Reused as the `Z' sub-map on `embark-become-match-map'."
   :doc "Top-level fzfa palette.
 Bound to `Z' on `embark-general-map' so every embark target gets a
 prefix into the full set.  Inherits `fzfa-embark-sync-search-map' and
-`fzfa-embark-async-search-map' via a composed parent."
+`fzfa-embark-async-search-map' via a composed parent.
+
+Only commands whose candidate set can plausibly contain the embark
+target live here — the target is injected as the initial filter via
+`embark--allow-edit'.  Launcher commands that ignore the target
+(marks, yank-pop, themes, narrow multi-source dispatchers like
+`fzfa-org-any', …) are intentionally absent; reach them via M-x or a
+global keybinding instead."
   :parent (make-composed-keymap (list fzfa-embark-sync-search-map
                                       fzfa-embark-async-search-map))
   "b" #'fzfa-buffer
   "B" #'fzfa-project-buffer
-  "m" #'fzfa-mark
-  "M" #'fzfa-global-mark
-  "y" #'fzfa-yank-pop
-  "h" #'fzfa-info
-  "H" #'fzfa-info-at-point
-  "e" #'fzfa-compile-error
+  "k" #'fzfa-bookmark
+  "R" #'fzfa-recent-file
   "x" #'fzfa-M-x
   "X" #'fzfa-M-x-for-buffer
-  "t" #'fzfa-theme
-  "k" #'fzfa-bookmark
-  "T" #'fzfa-tramp
-  "R" #'fzfa-recent-file
-  ;; -any / -some multi-source pickers — useful from any target.
+  ;; General-purpose multi-source pickers — target pre-fills as the
+  ;; cross-source filter query.
   "." #'fzfa-find-any
-  "/" #'fzfa-find-some
-  "O" #'fzfa-org-any
-  "E" #'fzfa-evil-any
-  "P" #'fzfa-passwords)
+  "/" #'fzfa-find-some)
 
 ;; Make the keymap symbols `commandp' so embark's default prompter
 ;; renders them as e.g. "fzfa-embark-search-map" instead of the
@@ -250,28 +238,20 @@ Idempotent — safe to call more than once."
     (keymap-set embark-become-file+buffer-map "Z B" #'fzfa-project-buffer)
     (keymap-set embark-become-file+buffer-map "Z f" #'fzfa-find)
 
-    ;; Per-target direct bindings.  Region / identifier bind the plain
-    ;; commands — embark's pre-action hooks (installed below) inject the
-    ;; target into the fzf minibuffer.  File / buffer / email use
-    ;; wrappers because the target drives context (cwd, current buffer,
-    ;; notmuch query syntax) rather than the filter.
-    (keymap-set embark-region-map     "R" #'fzfa-rg)
-    (keymap-set embark-region-map     "G" #'fzfa-grep)
-    (keymap-set embark-region-map     "A" #'fzfa-ag)
-    (keymap-set embark-region-map     "U" #'fzfa-ugrep)
-    (keymap-set embark-region-map     "S" #'fzfa-swiper)
-
-    (keymap-set embark-identifier-map "R" #'fzfa-rg)
-    (keymap-set embark-identifier-map "G" #'fzfa-grep)
-    (keymap-set embark-identifier-map "A" #'fzfa-ag)
-    (keymap-set embark-identifier-map "U" #'fzfa-ugrep)
-    (keymap-set embark-identifier-map "S" #'fzfa-swiper)
+    ;; Per-target direct bindings.  Region / identifier bind a single
+    ;; smart-grep dispatcher — embark's pre-action hooks (installed
+    ;; below) inject the target into the fzf minibuffer.  File / buffer
+    ;; / email use wrappers because the target drives context (buffer,
+    ;; notmuch query syntax) rather than the filter.  Keys are chosen
+    ;; to avoid colliding with embark defaults (S=collect, A=act-all,
+    ;; R=repunctuate/byte-recompile).
+    (keymap-set embark-region-map     "G" #'fzfa-smart-grep)
+    (keymap-set embark-identifier-map "G" #'fzfa-smart-grep)
 
     (keymap-set embark-file-map       "G" #'fzfa-embark-grep-this-file)
-    (keymap-set embark-file-map       "R" #'fzfa-embark-rg-in-file-dir)
 
     (keymap-set embark-buffer-map     "I" #'fzfa-embark-imenu-in-buffer)
-    (keymap-set embark-buffer-map     "S" #'fzfa-embark-swiper-in-buffer)
+    (keymap-set embark-buffer-map     "J" #'fzfa-embark-swiper-in-buffer)
 
     (keymap-set embark-flymake-map    "F" #'fzfa-flymake)
     (keymap-set embark-flymake-map    "P" #'fzfa-flymake-project)
@@ -285,23 +265,45 @@ Idempotent — safe to call more than once."
     (setf (alist-get 'fzfa-location embark-exporters-alist)
           #'fzfa-embark-export-location)
 
-    ;; Hooks only on the search sub-maps' commands — where the embark
-    ;; target becomes a refineable fzf query.  Picker commands on the
-    ;; top-level map (theme, buffer, bookmark, recent-file, …) must NOT
-    ;; get `embark--allow-edit': they rely on embark's queued
-    ;; `exit-minibuffer' to auto-submit the injected candidate so their
-    ;; `:apply' / `:return' fires.  `map-keymap' does not recurse into
-    ;; composed parents, so iterate each sub-map directly.
-    (dolist (m (list fzfa-embark-sync-search-map
-                     fzfa-embark-async-search-map))
-      (map-keymap
-       (lambda (_key cmd)
-         (when (symbolp cmd)
-           (cl-pushnew #'embark--unmark-target
-                       (alist-get cmd embark-pre-action-hooks))
-           (cl-pushnew #'embark--allow-edit
-                       (alist-get cmd embark-target-injection-hooks))))
-       m))))
+    ;; Install target-injection hooks on the palette commands.  Two
+    ;; flavors:
+    ;;
+    ;;  - Search sub-maps (rg/grep/swiper/imenu/…) treat the target as
+    ;;    an editable fzf query → `embark--allow-edit' cancels the
+    ;;    queued `exit-minibuffer' so the user can refine it.  Also
+    ;;    applied to the smart dispatchers since they're bound
+    ;;    directly on per-target maps.
+    ;;
+    ;;  - Top-level pickers (buffer, bookmark, recent-file, M-x, the
+    ;;    multi-source `find-any' / `find-some') treat the target as
+    ;;    the initial filter input — `embark--allow-edit' cancels the
+    ;;    queued `exit-minibuffer' so the user can either RET on a
+    ;;    pre-filtered match or backspace to widen.  Without a hook,
+    ;;    embark auto-submits the injected target, and when it doesn't
+    ;;    match a candidate the picker exits before `:apply' /
+    ;;    `:return' can fire — the command appears to do nothing.
+    ;;
+    ;; `map-keymap' does not recurse into composed parents, so iterate
+    ;; each sub-map directly.
+    (dolist (cmd (let (cmds)
+                   (dolist (m (list fzfa-embark-sync-search-map
+                                    fzfa-embark-async-search-map))
+                     (map-keymap
+                      (lambda (_key c) (when (symbolp c) (push c cmds)))
+                      m))
+                   (append '(fzfa-smart-grep fzfa-smart-find) cmds)))
+      (cl-pushnew #'embark--unmark-target
+                  (alist-get cmd embark-pre-action-hooks))
+      (cl-pushnew #'embark--allow-edit
+                  (alist-get cmd embark-target-injection-hooks)))
+    (map-keymap
+     (lambda (_key cmd)
+       (when (symbolp cmd)
+         (cl-pushnew #'embark--unmark-target
+                     (alist-get cmd embark-pre-action-hooks))
+         (cl-pushnew #'embark--allow-edit
+                     (alist-get cmd embark-target-injection-hooks))))
+     fzfa-embark-search-map)))
 
 (provide 'fzfa-embark)
 ;;; fzfa-embark.el ends here
