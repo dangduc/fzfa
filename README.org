@@ -1133,7 +1133,8 @@ whatever your frontend already uses for this concept:
 | ~fzfa-refresh-delay~           | 0.05                     | Seconds between generation polls.                                             |
 | ~fzfa-input-debounce~          | 0.1                      | Idle seconds to retry after an interrupted scoring.                           |
 | ~fzfa-input-throttle~          | 0.2                      | Min seconds between UI refreshes driven by new data.                          |
-| ~fzfa-preview-delay~           | 0.8                      | Idle seconds before live-preview fires (nil = disabled; see note below).      |
+| ~fzfa-preview-delay~           | ~nil~                    | Idle seconds before auto-preview fires (nil = manual only; see note below).   |
+| ~fzfa-preview-key~             | ~C-c C-p~                | Key bound to ~fzfa-preview-current~ in fzfa sessions (nil disables).          |
 | ~fzfa-preview-functions~       | (buffer, file, grep, …)  | Category → preview handler plist (see note below).                            |
 | ~fzfa-preview-file-size-limit~ | 1 MiB                    | Skip file preview when the file exceeds this size (nil/0 disables; see note). |
 | ~fzfa-directory~               | ~nil~                    | Per-call directory override; supersedes project backend (see note below).     |
@@ -1146,15 +1147,20 @@ whatever your frontend already uses for this concept:
 | ~fzfa-multi-narrow-key~        | ~<~                      | Prefix key for narrowing in multi-source sessions; nil disables.              |
 | ~fzfa-extensions~              | (see *Extensions* below) | Extensions to enable.                                                         |
 
-~fzfa-preview-delay~ controls live preview for commands that act on the
-highlighted candidate as the selection moves (e.g. ~fzfa-theme~ loading
-themes, ~fzfa-grep~ jumping to the matching line in a side window).
-Scheduling uses ~run-with-idle-timer~, so fast typing or arrow-key bursts
-naturally suppress intermediate previews — the timer only fires once input
-settles, and at fire time the *current* candidate is re-read (never a stale
-one captured at schedule time).  The default may be conservative:
-It can be lowered for faster previews, set to ~0~ for immediate preview or
-set to ~nil~ to disable the preview.
+Preview fires for commands that act on the highlighted candidate
+(e.g. ~fzfa-theme~ loading themes, ~fzfa-grep~ jumping to the matching
+line in a side window).  Two knobs control when it fires:
+
+- ~fzfa-preview-key~ (default ~C-c C-p~) — press in a fzfa session to
+  preview the current candidate on demand.
+- ~fzfa-preview-delay~ (default ~nil~) — when set to a number, also
+  fires preview automatically after that many idle seconds.  Uses
+  ~run-with-idle-timer~ so fast typing / arrow-key bursts suppress
+  intermediate previews; at fire time the *current* candidate is
+  re-read (never a stale one captured at schedule time).  ~0~ previews
+  immediately on every selection change.
+
+Set both to nil to disable preview entirely.
 
 ~fzfa-preview-functions~ maps a completion category to a plist of
 lifecycle handlers:

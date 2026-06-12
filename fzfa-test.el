@@ -507,29 +507,28 @@ when the inner sources arrive without `:narrow'."
 ;;; Preview framework
 
 (ert-deftest fzfa-preview-handler-lookup ()
-  "Resolver honours the explicit :preview, the registry, and the delay."
+  "Resolver honours the explicit :preview and the registry, ignoring delay."
   ;; With no override, registered category returns the handler plist.
-  (let ((fzfa-preview-functions '((cat :preview ignore)))
-        (fzfa-preview-delay 0.3))
+  (let ((fzfa-preview-functions '((cat :preview ignore))))
     (should (eq (plist-get (fzfa--preview-handler nil 'cat) :preview)
                 #'ignore)))
-  ;; Unknown category yields nil even when delay is set.
-  (let ((fzfa-preview-functions '((cat :preview ignore)))
-        (fzfa-preview-delay 0.3))
+  ;; Unknown category yields nil.
+  (let ((fzfa-preview-functions '((cat :preview ignore))))
     (should (null (fzfa--preview-handler nil 'unknown))))
-  ;; nil delay disables preview globally — registry + override both ignored.
+  ;; Resolution is independent of `fzfa-preview-delay' — manual fire and
+  ;; helm's persistent-action both need a resolvable handler regardless.
   (let ((fzfa-preview-functions '((cat :preview ignore)))
         (fzfa-preview-delay nil))
-    (should (null (fzfa--preview-handler nil 'cat)))
-    (should (null (fzfa--preview-handler #'identity 'cat))))
+    (should (eq (plist-get (fzfa--preview-handler nil 'cat) :preview)
+                #'ignore))
+    (should (eq (plist-get (fzfa--preview-handler #'identity 'cat) :preview)
+                #'identity)))
   ;; Explicit function override bypasses the registry.
-  (let ((fzfa-preview-functions '((cat :preview ignore)))
-        (fzfa-preview-delay 0.3))
+  (let ((fzfa-preview-functions '((cat :preview ignore))))
     (should (eq (plist-get (fzfa--preview-handler #'identity 'cat) :preview)
                 #'identity)))
   ;; Explicit plist override bypasses the registry.
-  (let ((fzfa-preview-functions '((cat :preview ignore)))
-        (fzfa-preview-delay 0.3))
+  (let ((fzfa-preview-functions '((cat :preview ignore))))
     (should (eq (plist-get
                  (fzfa--preview-handler '(:preview my-fn :return my-ret) 'cat)
                  :return)

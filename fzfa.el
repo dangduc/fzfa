@@ -147,7 +147,7 @@ pauses typing the display always self-heals regardless of this value."
   :type 'float
   :group 'fzfa)
 
-(defcustom fzfa-preview-delay 0.9
+(defcustom fzfa-preview-delay nil
   "Seconds of idle time before live preview fires after a candidate change.
 
 Used by commands that preview the highlighted candidate as the selection
@@ -155,9 +155,10 @@ moves (e.g. `fzfa-theme' loading the theme under point).  Implemented with
 `run-with-idle-timer', so fast typing or arrow-key bursts naturally suppress
 intermediate previews — the timer only fires once input settles.
 A value of 0 previews immediately on every selection change, which can make
-typing feel sluggish for expensive preview actions.  Set to nil to disable
-live preview entirely (global escape hatch)."
-  :type '(choice (const  :tag "Disabled" nil)
+typing feel sluggish for expensive preview actions.  Set to nil (the
+default) to disable automatic previews — users opt in to previewing
+on demand via `fzfa-preview-key'."
+  :type '(choice (const  :tag "Manual only" nil)
                  (number :tag "Idle seconds"))
   :group 'fzfa)
 
@@ -696,6 +697,42 @@ mutate the frontend's shared keymap.  No-op under `ivy-mode' (ivy uses
       (define-key map (kbd fzfa-apply-key) #'fzfa-apply-current)
       (use-local-map map))))
 
+(defcustom fzfa-preview-key "C-c C-p"
+  "Key string bound to `fzfa-preview-current' in `fzfa' minibuffer sessions.
+
+Fires preview for the currently selected candidate on demand,
+bypassing the `fzfa-preview-delay' idle timer.  Default behaviour
+(with `fzfa-preview-delay' nil) is no auto-preview — pressing this
+key is the only way preview fires.  Set both `fzfa-preview-delay'
+and this to nil to disable preview entirely.
+
+Under helm, ignored — helm uses `C-j' (`helm-execute-persistent-action')
+with `:follow' for preview firing."
+  :type '(choice (const :tag "Disabled" nil) string)
+  :group 'fzfa)
+
+(defun fzfa-preview-current ()
+  "Fire preview for the currently selected candidate, ignoring the idle timer.
+
+Looks up the active session's preview handler and dispatches `:preview'
+with the current candidate.  Silently no-ops when no handler is
+registered for this session."
+  (interactive)
+  (when-let* ((cand (fzfa--frontend-candidate)))
+    (setq fzfa--preview-last cand)
+    (fzfa--preview-call :preview cand)))
+
+(defun fzfa--minibuffer-install-preview-key ()
+  "Bind `fzfa-preview-key' to `fzfa-preview-current' in the active minibuffer.
+
+Installed via a per-instance child of `current-local-map'.  No-op
+when `fzfa-preview-key' is nil."
+  (when fzfa-preview-key
+    (let ((map (make-sparse-keymap)))
+      (set-keymap-parent map (current-local-map))
+      (define-key map (kbd fzfa-preview-key) #'fzfa-preview-current)
+      (use-local-map map))))
+
 ;;; Live preview
 ;;
 ;; Categories declare per-action handlers in `fzfa-preview-functions'.
@@ -754,7 +791,8 @@ during preview, which would prompt for a passphrase."
 Alist of (CATEGORY . PLIST), where PLIST recognizes :setup, :preview,
 :exit, :return slots (see commentary in fzfa.el).  Only :preview is
 required.  Categories without an entry get no preview.
-Disable preview globally by setting `fzfa-preview-delay' to nil.
+Disable preview entirely by setting both `fzfa-preview-delay' and
+`fzfa-preview-key' to nil.
 
 Built-in handlers are listed in the default; redefine the entire
 alist to opt out of a category, or extend it (e.g. via `customize'
@@ -789,7 +827,7 @@ visible from :setup, :preview, :exit, and :return.  Use
           (plist-put (cdr fzfa--preview-session) key value)))
 
 (defun fzfa--preview-handler (preview category)
-  "Resolve the handler plist for this call, or nil if preview is disabled.
+  "Resolve the handler plist for this call, or nil when none applies.
 
 PREVIEW is the explicit `:preview' keyword value (nil means \"fall back
 to the registry\"):
@@ -797,14 +835,14 @@ to the registry\"):
   a function — treat as a `:preview'-only plist (shorthand for the
                common ad-hoc case with no lifecycle).
   a plist    — use as-is.
-Returns nil unconditionally when `fzfa-preview-delay' is nil (the global
-escape hatch — users disable preview by setting the delay rather than by
-wiring nil into individual calls)."
-  (when fzfa-preview-delay
-    (cond
-     ((functionp preview) (list :preview preview))
-     ((and (listp preview) preview) preview)
-     (t (alist-get category fzfa-preview-functions)))))
+
+Resolution is independent of `fzfa-preview-delay'; the delay gates
+auto-fire only.  `fzfa-preview-key' (manual fire) and helm's
+persistent-action wiring both need the handler regardless of delay."
+  (cond
+   ((functionp preview) (list :preview preview))
+   ((and (listp preview) preview) preview)
+   (t (alist-get category fzfa-preview-functions))))
 
 (defun fzfa--preview-call (action &rest args)
   "Dispatch ACTION to the active session's handler with ARGS.
@@ -836,15 +874,18 @@ no slot in the handler or when there is no active session."
 Call from inside a `minibuffer-with-setup-hook' lambda.  Reads the
 handler from `fzfa--preview-session', captures origin window/buffer
 and `default-directory' into the session state, dispatches :setup, and
-registers the debounced `post-command-hook' + `minibuffer-exit-hook'.
+registers `minibuffer-exit-hook'.  Adds an auto-fire `post-command-hook'
+only when an effective delay is positive.
 
 DELAY defaults to `fzfa-preview-delay'.  When positive, scheduling
 uses `run-with-idle-timer' so fast typing or arrow-key bursts suppress
 intermediate previews until input settles.  A pending timer is reused
 rather than reset; the callback re-reads the current candidate at fire
 time so reuse never previews a stale selection.  DELAY of 0 previews
-immediately on every selection change."
-  (let* ((delay (or delay fzfa-preview-delay 0))
+immediately on every selection change.  When both DELAY and
+`fzfa-preview-delay' are nil, no auto-fire hook is installed —
+preview only fires via `fzfa-preview-key' / `fzfa-preview-current'."
+  (let* ((delay (or delay fzfa-preview-delay))
          (mb (current-buffer))
          (run (lambda ()
                 (when-let* ((cand (fzfa--frontend-candidate)))
@@ -857,29 +898,30 @@ immediately on every selection change."
     (fzfa-preview-put :default-directory default-directory)
     (setq fzfa--preview-last 'unset)
     (fzfa--preview-call :setup)
-    (add-hook
-     'post-command-hook
-     (if (<= delay 0)
-         run
-       ;; The idle-timer callback fires with whatever buffer is current
-       ;; at fire time, not necessarily this minibuffer.  All state we
-       ;; touch (`fzfa--preview-timer', `fzfa--preview-last') is
-       ;; buffer-local here, so route the callback through MB or we
-       ;; silently corrupt the wrong buffer's locals and leave a stale
-       ;; timer object behind that blocks every subsequent preview.
-       (lambda ()
-         (unless (timerp fzfa--preview-timer)
-           (setq fzfa--preview-timer
-                 (run-with-idle-timer
-                  delay nil
-                  (lambda ()
-                    (when (buffer-live-p mb)
-                      (with-current-buffer mb
-                        (when (timerp fzfa--preview-timer)
-                          (cancel-timer fzfa--preview-timer))
-                        (setq fzfa--preview-timer nil)
-                        (funcall run)))))))))
-     nil t)
+    (when delay
+      (add-hook
+       'post-command-hook
+       (if (<= delay 0)
+           run
+         ;; The idle-timer callback fires with whatever buffer is current
+         ;; at fire time, not necessarily this minibuffer.  All state we
+         ;; touch (`fzfa--preview-timer', `fzfa--preview-last') is
+         ;; buffer-local here, so route the callback through MB or we
+         ;; silently corrupt the wrong buffer's locals and leave a stale
+         ;; timer object behind that blocks every subsequent preview.
+         (lambda ()
+           (unless (timerp fzfa--preview-timer)
+             (setq fzfa--preview-timer
+                   (run-with-idle-timer
+                    delay nil
+                    (lambda ()
+                      (when (buffer-live-p mb)
+                        (with-current-buffer mb
+                          (when (timerp fzfa--preview-timer)
+                            (cancel-timer fzfa--preview-timer))
+                          (setq fzfa--preview-timer nil)
+                          (funcall run)))))))))
+       nil t))
     (add-hook
      'minibuffer-exit-hook
      (lambda ()
@@ -1133,6 +1175,7 @@ naturally.  Covers initial entry and backspace-to-empty alike."
     (when (boundp 'icomplete-matches-format)
       (setq-local icomplete-matches-format nil)))
   (fzfa--minibuffer-install-apply-key)
+  (fzfa--minibuffer-install-preview-key)
   (when (bound-and-true-p icomplete-mode)
     ;; Empty-input state hits the zero-length-overlay resize blind spot:
     ;; the overlay's multi-line `after-string' isn't counted, so any
@@ -2034,8 +2077,9 @@ place via fzf-native against the current snapshot.
                         CATEGORY.  Pass a (CAND) -> any function for a
                         simple preview-only handler, or a full handler
                         plist with `:setup', `:preview', `:exit', `:return'
-                        slots.  Nil falls back to the registry.  Set
-                        `fzfa-preview-delay' to nil to disable previews.
+                        slots.  Nil falls back to the registry.  Set both
+                        `fzfa-preview-delay' and `fzfa-preview-key' to
+                        nil to disable previews.
 :APPLY                  Lambda (CAND) -> any.  Runs without exiting the
                         session.  Invoked by `fzfa-apply-key' (under
                         vertico / icomplete), `ivy-call' (ivy), or
