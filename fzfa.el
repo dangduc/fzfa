@@ -86,6 +86,7 @@
 (declare-function fzf-native-async-stop "fzf-native")
 (declare-function fzf-native-async-generation "fzf-native")
 (declare-function fzf-native-async-candidates "fzf-native")
+(declare-function fzf-native-highlight-all "fzf-native")
 (declare-function fzfa-helm--completing-read "fzfa-helm")
 (declare-function fzf-native-async-stats "fzf-native")
 (declare-function fzf-native-async-result-fresh-p "fzf-native")
@@ -1448,7 +1449,13 @@ candidate length (shorter first).
 Empty query — no scores were attached, so rank by history only.
 Async path — `fzf-native-async-candidates' returns candidates
 pre-sorted by the C scorer but doesn't attach `completion-score';
-preserve that order verbatim."
+preserve that order verbatim.
+
+The reorder can promote candidates beyond the C scorer's highlight
+cap into the visible window — those arrive without face.  After
+sorting, re-apply highlights to the new top-N via
+`fzf-native-highlight-all' so the user-visible candidates always
+show match face."
   (let ((query (fzfa--current-query "")))
     (cond
      ((null completions) nil)
@@ -1466,25 +1473,29 @@ preserve that order verbatim."
      ((null (get-text-property 0 'completion-score (car completions)))
       completions)
      (t
-      (let ((hist (fzfa--history-hash)))
-        (mapcar
-         #'car
-         (sort
-          (mapcar
-           (lambda (c)
-             (list c
-                   (or (get-text-property 0 'completion-score c) 0)
-                   (or (and hist (gethash c hist)) most-positive-fixnum)
-                   (length c)))
-           completions)
-          (lambda (a b)
-            (let ((s1 (nth 1 a)) (s2 (nth 1 b)))
-              (if (= s1 s2)
-                  (let ((h1 (nth 2 a)) (h2 (nth 2 b)))
-                    (if (= h1 h2)
-                        (< (nth 3 a) (nth 3 b))
-                      (< h1 h2)))
-                (> s1 s2)))))))))))
+      (let* ((hist (fzfa--history-hash))
+             (sorted
+              (mapcar
+               #'car
+               (sort
+                (mapcar
+                 (lambda (c)
+                   (list c
+                         (or (get-text-property 0 'completion-score c) 0)
+                         (or (and hist (gethash c hist)) most-positive-fixnum)
+                         (length c)))
+                 completions)
+                (lambda (a b)
+                  (let ((s1 (nth 1 a)) (s2 (nth 1 b)))
+                    (if (= s1 s2)
+                        (let ((h1 (nth 2 a)) (h2 (nth 2 b)))
+                          (if (= h1 h2)
+                              (< (nth 3 a) (nth 3 b))
+                            (< h1 h2)))
+                      (> s1 s2))))))))
+        (when (fboundp 'fzf-native-highlight-all)
+          (fzfa--bridge-defcustoms #'fzf-native-highlight-all sorted query))
+        sorted)))))
 
 (defun fzfa--history-rank (candidates hist-sym)
   "Return CANDIDATES reordered by recency in HIST-SYM, tofu-stripped.
