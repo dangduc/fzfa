@@ -3334,12 +3334,33 @@ Per-source plist keys:
                                    (mapcar
                                     (lambda (i)
                                       (let* ((src (aref sources i))
-                                             (slot (fzfa-source-last-result src))
-                                             (hist (and empty-q
-                                                        (fzfa-source-history src))))
-                                        (if hist
-                                            (fzfa--history-rank slot hist)
-                                          slot)))
+                                             (slot (fzfa-source-last-result src)))
+                                        (cond
+                                         ;; Empty query → per-source history rank
+                                         ;; only, no scoring ran.
+                                         ((and empty-q
+                                               (fzfa-source-history src))
+                                          (fzfa--history-rank
+                                           slot (fzfa-source-history src)))
+                                         ;; Sync source with scored candidates →
+                                         ;; per-source sort + per-source highlight
+                                         ;; refresh.  Same shape as the vertico
+                                         ;; multi loop (Chunk 4).
+                                         ((and slot
+                                               (not empty-q)
+                                               (stringp (car slot))
+                                               (get-text-property
+                                                0 'completion-score (car slot)))
+                                          (let* ((hist (fzfa--build-history-hash
+                                                        (fzfa-source-history src)))
+                                                 (s (fzfa--score-history-length-sort
+                                                     slot hist)))
+                                            (when (fboundp 'fzf-native-highlight-all)
+                                              (fzfa--bridge-defcustoms
+                                               #'fzf-native-highlight-all s query))
+                                            s))
+                                         ;; Async or empty → C order is canonical.
+                                         (t slot))))
                                     sorted))))
                       (ivy--set-candidates cands)
                       (ivy--exhibit)

@@ -177,6 +177,8 @@ before the idle delay elapses -> timer fires post-cleanup ->
 (declare-function fzf-native-async-stats "fzf-native")
 (declare-function fzf-native-score-all "fzf-native")
 (declare-function fzfa--history-rank "fzfa")
+(declare-function fzfa--build-history-hash "fzfa")
+(declare-function fzfa--score-history-length-sort "fzfa")
 (declare-function fzfa--extract-args "fzfa")
 (declare-function fzfa--commas "fzfa")
 (declare-function fzfa--preview-handler "fzfa")
@@ -668,6 +670,20 @@ callback so helm re-reads candidates with the fresh snapshot."
                  (when-let* ((tm (fzfa-source-retry-timer source)))
                    (cancel-timer tm)
                    (setf (fzfa-source-retry-timer source) nil))
+                 ;; Single-source helm: same per-source pattern as the
+                 ;; multi sites — sort + highlight refresh when the result
+                 ;; came from `fzf-native-score-all'.
+                 (when (and r (stringp (car r))
+                            (not (string-empty-p filter))
+                            (get-text-property
+                             0 'completion-score (car r)))
+                   (let* ((hist (fzfa--build-history-hash history))
+                          (sorted
+                           (fzfa--score-history-length-sort r hist)))
+                     (when (fboundp 'fzf-native-highlight-all)
+                       (fzfa--bridge-defcustoms
+                        #'fzf-native-highlight-all sorted filter))
+                     (setq r sorted)))
                  (setf (fzfa-source-total source) (length all)
                        (fzfa-source-filtered source) (length r)
                        (fzfa-source-last-result source) r)
@@ -1257,6 +1273,22 @@ for fuzzy-multi-source UX."
                               (when-let* ((tm (fzfa-source-retry-timer source)))
                                 (cancel-timer tm)
                                 (setf (fzfa-source-retry-timer source) nil))
+                              ;; Per-source sort + highlight refresh when the
+                              ;; result came from `fzf-native-score-all'.
+                              ;; Empty-filter results (raw snapshot or
+                              ;; pre-history-ranked) carry no completion-score
+                              ;; and pass through.
+                              (when (and r (stringp (car r))
+                                         (not (string-empty-p filter))
+                                         (get-text-property
+                                          0 'completion-score (car r)))
+                                (let* ((hist (fzfa--build-history-hash history))
+                                       (sorted
+                                        (fzfa--score-history-length-sort r hist)))
+                                  (when (fboundp 'fzf-native-highlight-all)
+                                    (fzfa--bridge-defcustoms
+                                     #'fzf-native-highlight-all sorted filter))
+                                  (setq r sorted)))
                               (setf (fzfa-source-total source) (length all)
                                     (fzfa-source-filtered source) (length r)
                                     (fzfa-source-last-result source) r
