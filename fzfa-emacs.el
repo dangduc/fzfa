@@ -644,7 +644,7 @@ The apply key (`fzfa-apply-key', default \\[fzfa-apply-current])
 focuses without exiting the picker — useful for visually
 confirming which frame the candidate refers to before committing.
 
-Previews show the candidate frame's selected-window buffer in the
+Previews show the candidate frame's `selected-window' buffer in the
 originating window, so the picker keeps focus while you browse."
   (interactive)
   (let* ((current (selected-frame))

@@ -405,7 +405,7 @@ Always accepts STRING as-is; scoring is done in C."
 
 Passes STRING through to the collection TABLE filtered by PRED.
 
-When the frontend opts into `completion-lazy-hilit' (vertico, icomplete
+When the frontend opts into variable `completion-lazy-hilit' (vertico, icomplete
 on Emacs 28+), set `completion-lazy-hilit-fn' to a closure that
 highlights one candidate at display time via `fzf-native-highlight-one'.
 This means the frontend pays for face on only the actually-visible
@@ -719,9 +719,9 @@ Silently no-ops when no `:apply' is defined for the source/session."
   "Bind `fzfa-apply-key' to `fzfa-apply-current' in the active minibuffer.
 
 Installed via a per-instance child of `current-local-map' so we don't
-mutate the frontend's shared keymap.  No-op under `ivy-mode' (ivy uses
-`fzfa-ivy.el's `:around' advice on `ivy-call' instead) or when
-`fzfa-apply-key' is nil."
+mutate the frontend's shared keymap.
+
+`ivy' uses `ivy-call' instead of this key."
   (when (and fzfa-apply-key
              (not (bound-and-true-p ivy-mode)))
     (let ((map (make-sparse-keymap)))
@@ -734,7 +734,7 @@ mutate the frontend's shared keymap.  No-op under `ivy-mode' (ivy uses
 
 Fires preview for the currently selected candidate on demand,
 bypassing the `fzfa-preview-delay' idle timer.  Default behaviour
-(with `fzfa-preview-delay' nil) is no auto-preview — pressing this
+\(with `fzfa-preview-delay' nil) is no auto-preview — pressing this
 key is the only way preview fires.  Set both `fzfa-preview-delay'
 and this to nil to disable preview entirely.
 
@@ -859,7 +859,7 @@ visible from :setup, :preview, :exit, and :return.  Use
           (plist-put (cdr fzfa--preview-session) key value)))
 
 (defun fzfa--preview-handler (preview category)
-  "Resolve the handler plist for this call, or nil when none applies.
+  "Resolve the handler plist for this call, or nil when none apply.
 
 PREVIEW is the explicit `:preview' keyword value (nil means \"fall back
 to the registry\"):
@@ -1475,8 +1475,10 @@ multi-read's nil history."
       table)))
 
 (defun fzfa--score-history-length-sort (completions hist-hash)
-  "Order COMPLETIONS by `completion-score' (desc), HIST-HASH recency
-\(asc, lower index = more recent), then candidate length (asc).
+  "Order COMPLETIONS by score, then HIST-HASH recency, then length.
+
+Sort keys, in order: `completion-score' (desc), HIST-HASH index
+\(asc, lower index = more recent), candidate length (asc).
 
 HIST-HASH may be nil — the history tiebreak is then skipped and ties
 fall straight through to length.  Returns a fresh list; the input is

@@ -80,7 +80,7 @@ unloaded global mark.  Returns nil when VAL is unrecognized."
       (format "%s:%s" (car val) (cdr val))))))
 
 (defun fzfa-evil--mark-entries ()
-  "Return alist of (CHAR-STR . LOCATION) for evil marks that are set."
+  "Return alist of (CHAR-STR . LOCATION) for evil mark that are set."
   (let (out)
     (cl-flet ((collect
                 (char)
@@ -94,7 +94,7 @@ unloaded global mark.  Returns nil when VAL is unrecognized."
 
 ;;;###autoload
 (defun fzfa-evil-marks ()
-  "Jump to an evil mark, fuzzy-selected from the set of evil marks.
+  "Jump to an evil mark, fuzzy-selected from the set of evil mark.
 
 The candidate string includes the mark's location and line content
 so fzf scores against the preview too — type a snippet of the line

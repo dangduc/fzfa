@@ -87,7 +87,7 @@ TEXT is the line text."
 (defun fzfa-regexp--format-match (buf line md)
   "Build candidate for a regexp match in BUF.
 
-LINE is the line number.  MD is the match-data list
+LINE is the line number.  MD is the `match-data' list
 \(BEG0 END0 BEG1 END1 …): index 0 bounds the whole match, indices
 1, 2, … bound capture groups.  The matched region within the
 candidate's line text carries `fzfa-regexp-match'; each captured

@@ -112,7 +112,7 @@ a wrapper that adds flags."
     (json-parse-buffer :object-type 'hash-table :array-type 'list)))
 
 (defun fzfa-safari--folder-display-name (raw)
-  "Remap Safari's internal folder titles to UI-visible names."
+  "Remap Safari's internal folder title RAW to a UI-visible name."
   (pcase raw
     ("BookmarksBar"          "Favorites")
     ("BookmarksMenu"         "Bookmarks Menu")

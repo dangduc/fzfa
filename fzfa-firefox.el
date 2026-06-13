@@ -77,9 +77,7 @@
 
 Dispatches bookmark and history entries to Firefox explicitly
 rather than via `browse-url' — which on a non-Firefox default would
-send them to Chrome/Safari.  Override to point at a specific Firefox
-binary (e.g. Firefox Developer Edition) or a wrapper that adds flags
-(e.g. profile selection or `--private-window')."
+send them to Chrome/Safari."
   :type 'function
   :group 'fzfa)
 
@@ -227,7 +225,7 @@ ORDER BY fp.path, b.position;"
   "SQL producing FOLDER\\tNAME\\tURL\\tID rows from `places.sqlite'.
 
 The recursive CTE seeds at the four user-visible roots
-(menu/toolbar/unfiled/mobile), so the `tags' subtree — Firefox's
+e.g. menu/toolbar/unfiled/mobile, so the `tags' subtree — Firefox's
 fake folders that hold tagged-URL backrefs — is naturally excluded.
 Tabs/newlines in folder names and titles are scrubbed in SQL so the
 split-on-tab decoding on the Lisp side stays sound.")

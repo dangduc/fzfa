@@ -79,8 +79,8 @@ Defaults to nil to match fzfa's preview-on-demand paradigm across
 frontends (vertico/icomplete use `fzfa-preview-key', helm uses
 `C-j' or `fzfa-preview-key' — see the helm-source keymap setup).
 Side-effecting `:apply' lambdas (buffer kill, command execute) used
-to auto-fire on every arrow-key press under the old `t' default,
-which was a footgun.
+to auto-fire on every arrow-key press under the old non-nil
+default, which was a footgun.
 
 Set to non-nil to opt into auto-fire — bridged fzfa sources with an
 `:apply' lambda then add `:follow 1' on their helm source."

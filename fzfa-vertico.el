@@ -689,7 +689,10 @@ past its last item."
 (with-eval-after-load 'vertico
 (cl-defmethod vertico--arrange-candidates
   (&context (fzfa-vertico-columns-mode (eql t)))
-  "Arrange candidates in per-source columns when columns-mode is active."
+  "Arrange candidates in per-source columns.
+
+Specializes on FZFA-VERTICO-COLUMNS-MODE = t via the &context method
+qualifier; falls through to the default implementation otherwise."
   (let* ((gf (fzfa-vertico--group-function))
          (parts (and gf (fzfa-vertico--partition gf))))
     (if (or (null parts) (<= (length parts) 1))
