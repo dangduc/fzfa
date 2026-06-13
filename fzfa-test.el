@@ -1457,6 +1457,38 @@ unchanged through the per-source pipeline."
     ;; (t slot) — returns the slot verbatim.
     (should (equal async-result async-result))))
 
+;;; fzfa--rank-and-highlight (refactor of Chunk 4/5 per-source pipeline)
+
+(ert-deftest fzfa-rank-and-highlight-passes-through-empty-query ()
+  "Empty QUERY returns SLOT unchanged (no sort, no face)."
+  (let ((slot '("alpha" "beta")))
+    (should (eq (fzfa--rank-and-highlight slot "" nil) slot))))
+
+(ert-deftest fzfa-rank-and-highlight-passes-through-empty-slot ()
+  "Empty SLOT returns unchanged."
+  (should (null (fzfa--rank-and-highlight nil "f" nil)))
+  (should (equal (fzfa--rank-and-highlight '() "f" nil) '())))
+
+(ert-deftest fzfa-rank-and-highlight-passes-through-async-slot ()
+  "SLOT whose head lacks `completion-score' (async) round-trips
+unchanged — C order is canonical for async."
+  (let ((slot '("zeta" "alpha" "beta")))
+    (should (eq (fzfa--rank-and-highlight slot "z" nil) slot))))
+
+(ert-deftest fzfa-rank-and-highlight-sorts-sync-slot ()
+  "SLOT with `completion-score' on the head gets score → history →
+length sort.  Without history, length tiebreaks tied scores."
+  (skip-unless (fboundp 'fzf-native-highlight-all))
+  (let* ((a (copy-sequence "alphabet"))
+         (b (copy-sequence "alpha"))
+         (c (copy-sequence "al")))
+    (put-text-property 0 1 'completion-score 32 a)
+    (put-text-property 0 1 'completion-score 32 b)
+    (put-text-property 0 1 'completion-score 32 c)
+    (let ((out (fzfa--rank-and-highlight (list a b c) "al" nil)))
+      (should (equal (mapcar #'substring-no-properties out)
+                     '("al" "alpha" "alphabet"))))))
+
 (ert-deftest fzfa-ivy-multi-leader-interleave-matches-design ()
   "Reference implementation for the ivy multi-source leader interleave.
 

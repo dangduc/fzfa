@@ -1503,6 +1503,36 @@ the multi-source per-source pass in the multi loop."
                 (< h1 h2)))
           (> s1 s2)))))))
 
+(defun fzfa--rank-and-highlight (slot query hist-sym)
+  "Per-source rank + highlight refresh for SLOT against QUERY.
+
+Pass SLOT through unchanged when QUERY is empty, SLOT is empty, or
+SLOT's head carries no `completion-score' (async path — C order is
+canonical).  Otherwise sort SLOT by score/history/length and refresh
+match face via `fzf-native-highlight-all'.
+
+HIST-SYM is the source's :history variable symbol (or nil) — used for
+the per-source recency tiebreak.  QUERY is the typed filter the C
+scorer already ran against, used to recompute positions for the
+highlight pass.
+
+Shared by the vertico multi loop, ivy multi push, and the single +
+multi helm dispatch.  Each call site previously inlined this body;
+factor centralizes it so Chunk 6's batch-highlight suppression edits
+one place instead of four."
+  (cond
+   ((null slot) slot)
+   ((not (and (stringp (car slot))
+              (not (string-empty-p query))
+              (get-text-property 0 'completion-score (car slot))))
+    slot)
+   (t
+    (let* ((hist (fzfa--build-history-hash hist-sym))
+           (sorted (fzfa--score-history-length-sort slot hist)))
+      (when (fboundp 'fzf-native-highlight-all)
+        (fzfa--bridge-defcustoms #'fzf-native-highlight-all sorted query))
+      sorted))))
+
 (defun fzfa--multi-tagged-p (cand)
   "Non-nil if CAND carries an invisible multi-source tofu suffix.
 
@@ -3343,25 +3373,12 @@ Per-source plist keys:
                                         (fzfa-source-history src))
                                    (fzfa--history-rank
                                     slot (fzfa-source-history src)))
-                                  ;; Sync source with scored candidates →
-                                  ;; per-source sort + per-source highlight
-                                  ;; refresh.  Same shape as the vertico
-                                  ;; multi loop (Chunk 4).
-                                  ((and slot
-                                        (not empty-q)
-                                        (stringp (car slot))
-                                        (get-text-property
-                                         0 'completion-score (car slot)))
-                                   (let* ((hist (fzfa--build-history-hash
-                                                 (fzfa-source-history src)))
-                                          (s (fzfa--score-history-length-sort
-                                              slot hist)))
-                                     (when (fboundp 'fzf-native-highlight-all)
-                                       (fzfa--bridge-defcustoms
-                                        #'fzf-native-highlight-all s query))
-                                     s))
-                                  ;; Async or empty → C order is canonical.
-                                  (t slot))))
+                                  ;; Otherwise: rank + highlight (sync) or
+                                  ;; passthrough (async / empty).
+                                  (t
+                                   (fzfa--rank-and-highlight
+                                    slot query
+                                    (fzfa-source-history src))))))
                              sorted))
                            (cands
                             (if empty-q
@@ -3784,26 +3801,12 @@ Per-source plist keys:
                                                  (fzfa-source-history src))
                                             (fzfa--history-rank
                                              slot (fzfa-source-history src)))
-                                           ;; Sync source with scored candidates →
-                                           ;; per-source sort + per-source highlight
-                                           ;; refresh so the visible top-N within
-                                           ;; this source-block matches the rank
-                                           ;; tiebreak (Rule 7).
-                                           ((and slot
-                                                 (not empty-q)
-                                                 (stringp (car slot))
-                                                 (get-text-property
-                                                  0 'completion-score (car slot)))
-                                            (let* ((hist (fzfa--build-history-hash
-                                                          (fzfa-source-history src)))
-                                                   (s (fzfa--score-history-length-sort
-                                                       slot hist)))
-                                              (when (fboundp 'fzf-native-highlight-all)
-                                                (fzfa--bridge-defcustoms
-                                                 #'fzf-native-highlight-all s query))
-                                              s))
-                                           ;; Async or empty → C order is canonical.
-                                           (t slot))))
+                                           ;; Otherwise: rank + highlight (sync) or
+                                           ;; passthrough (async / empty).
+                                           (t
+                                            (fzfa--rank-and-highlight
+                                             slot query
+                                             (fzfa-source-history src))))))
                                       sorted)))))
                          (_ t)))
                      nil t)))))
