@@ -1455,6 +1455,54 @@ update invalidates the cache."
                          do (puthash item index table))
                 table)))))))
 
+(defun fzfa--build-history-hash (hist-sym)
+  "Build candidate→index recency hash from HIST-SYM.
+
+Lower indices are more recent.  Returns nil when HIST-SYM is nil,
+unbound, or its value is empty.  Parameterised counterpart to
+`fzfa--history-hash' (which always reads `minibuffer-history-variable')
+— callers in the multi-source loop pass each source's own history
+symbol so each block ranks against its own recency, not the outer
+multi-read's nil history."
+  (when-let* ((_ (and hist-sym (boundp hist-sym)))
+              (hist (symbol-value hist-sym))
+              ((not (null hist))))
+    (let ((table (make-hash-table :test 'equal :size (length hist))))
+      (cl-loop for index from 0
+               for item in hist
+               unless (gethash item table)
+               do (puthash item index table))
+      table)))
+
+(defun fzfa--score-history-length-sort (completions hist-hash)
+  "Order COMPLETIONS by `completion-score' (desc), HIST-HASH recency
+\(asc, lower index = more recent), then candidate length (asc).
+
+HIST-HASH may be nil — the history tiebreak is then skipped and ties
+fall straight through to length.  Returns a fresh list; the input is
+not mutated.
+
+Building block shared by `fzfa--sort-by-history' (single-source) and
+the multi-source per-source pass in the multi loop."
+  (mapcar
+   #'car
+   (sort
+    (mapcar
+     (lambda (c)
+       (list c
+             (or (get-text-property 0 'completion-score c) 0)
+             (or (and hist-hash (gethash c hist-hash)) most-positive-fixnum)
+             (length c)))
+     completions)
+    (lambda (a b)
+      (let ((s1 (nth 1 a)) (s2 (nth 1 b)))
+        (if (= s1 s2)
+            (let ((h1 (nth 2 a)) (h2 (nth 2 b)))
+              (if (= h1 h2)
+                  (< (nth 3 a) (nth 3 b))
+                (< h1 h2)))
+          (> s1 s2)))))))
+
 (defun fzfa--multi-tagged-p (cand)
   "Non-nil if CAND carries an invisible multi-source tofu suffix.
 
@@ -1512,26 +1560,8 @@ Branches dispatched in order:
      ((null (get-text-property 0 'completion-score (car completions)))
       completions)
      (t
-      (let* ((hist (fzfa--history-hash))
-             (sorted
-              (mapcar
-               #'car
-               (sort
-                (mapcar
-                 (lambda (c)
-                   (list c
-                         (or (get-text-property 0 'completion-score c) 0)
-                         (or (and hist (gethash c hist)) most-positive-fixnum)
-                         (length c)))
-                 completions)
-                (lambda (a b)
-                  (let ((s1 (nth 1 a)) (s2 (nth 1 b)))
-                    (if (= s1 s2)
-                        (let ((h1 (nth 2 a)) (h2 (nth 2 b)))
-                          (if (= h1 h2)
-                              (< (nth 3 a) (nth 3 b))
-                            (< h1 h2)))
-                      (> s1 s2))))))))
+      (let ((sorted (fzfa--score-history-length-sort
+                     completions (fzfa--history-hash))))
         (when (fboundp 'fzf-native-highlight-all)
           (fzfa--bridge-defcustoms #'fzf-native-highlight-all sorted query))
         sorted)))))
@@ -3704,16 +3734,34 @@ Per-source plist keys:
                                      (mapcar
                                       (lambda (i)
                                         (let* ((src (aref sources i))
-                                               (slot (fzfa-source-last-result src))
-                                               ;; Per-source recency only on
-                                               ;; empty input — when scoring
-                                               ;; ran, fzf order wins.
-                                               (hist
-                                                (and empty-q
-                                                     (fzfa-source-history src))))
-                                          (if hist
-                                              (fzfa--history-rank slot hist)
-                                            slot)))
+                                               (slot (fzfa-source-last-result src)))
+                                          (cond
+                                           ;; Empty query → per-source history rank
+                                           ;; only, no scoring ran.
+                                           ((and empty-q
+                                                 (fzfa-source-history src))
+                                            (fzfa--history-rank
+                                             slot (fzfa-source-history src)))
+                                           ;; Sync source with scored candidates →
+                                           ;; per-source sort + per-source highlight
+                                           ;; refresh so the visible top-N within
+                                           ;; this source-block matches the rank
+                                           ;; tiebreak (Rule 7).
+                                           ((and slot
+                                                 (not empty-q)
+                                                 (stringp (car slot))
+                                                 (get-text-property
+                                                  0 'completion-score (car slot)))
+                                            (let* ((hist (fzfa--build-history-hash
+                                                          (fzfa-source-history src)))
+                                                   (s (fzfa--score-history-length-sort
+                                                       slot hist)))
+                                              (when (fboundp 'fzf-native-highlight-all)
+                                                (fzfa--bridge-defcustoms
+                                                 #'fzf-native-highlight-all s query))
+                                              s))
+                                           ;; Async or empty → C order is canonical.
+                                           (t slot))))
                                       sorted)))))
                          (_ t)))
                      nil t)))))

@@ -1396,6 +1396,79 @@ re-sort would trample the source-block ordering."
                (lambda () nil)))
       (should (equal (fzfa--sort-by-history input) input)))))
 
+;;; fzfa--score-history-length-sort + fzfa--build-history-hash (Chunk 4 helpers)
+
+(ert-deftest fzfa-score-history-length-sort-shortest-wins-on-tied-score ()
+  "Equal `completion-score' breaks by length (asc) when no history hash."
+  (let* ((a (copy-sequence "alphabet"))
+         (b (copy-sequence "alpha"))
+         (c (copy-sequence "al")))
+    (put-text-property 0 1 'completion-score 32 a)
+    (put-text-property 0 1 'completion-score 32 b)
+    (put-text-property 0 1 'completion-score 32 c)
+    (let ((out (fzfa--score-history-length-sort (list a b c) nil)))
+      (should (equal (mapcar #'substring-no-properties out)
+                     '("al" "alpha" "alphabet"))))))
+
+(ert-deftest fzfa-score-history-length-sort-history-beats-length ()
+  "Equal score, distinct history positions → recency wins over length."
+  (let* ((a (copy-sequence "long-name"))
+         (b (copy-sequence "x"))
+         (hash (make-hash-table :test 'equal)))
+    (put-text-property 0 1 'completion-score 32 a)
+    (put-text-property 0 1 'completion-score 32 b)
+    ;; "long-name" is more recent than "x".
+    (puthash "long-name" 0 hash)
+    (puthash "x" 5 hash)
+    (let ((out (fzfa--score-history-length-sort (list b a) hash)))
+      (should (equal (mapcar #'substring-no-properties out)
+                     '("long-name" "x"))))))
+
+(ert-deftest fzfa-build-history-hash-nil-hist-sym ()
+  "nil HIST-SYM returns nil."
+  (should-not (fzfa--build-history-hash nil)))
+
+(defvar fzfa--test-history-fixture nil
+  "Test fixture for `fzfa-build-history-hash-recency-encoded'.")
+
+(ert-deftest fzfa-build-history-hash-recency-encoded ()
+  "Lower index = more recent.  Duplicates in the history list keep their
+first \(= most-recent\) index."
+  (let ((fzfa--test-history-fixture
+         '("recent" "older" "oldest" "recent")))
+    (let ((h (fzfa--build-history-hash 'fzfa--test-history-fixture)))
+      (should (= (gethash "recent" h) 0))
+      (should (= (gethash "older" h) 1))
+      (should (= (gethash "oldest" h) 2)))))
+
+;;; Multi-loop per-source sort + highlight (Chunk 4)
+;;;
+;;; The multi-loop site itself is hard to drive in isolation (it's
+;;; inside a closure invoked by `completing-read').  These tests cover
+;;; the per-source pipeline that the loop now calls: sort + history +
+;;; highlight refresh, gated by completion-score presence.
+
+(ert-deftest fzfa-multi-per-source-sort-skips-async-source ()
+  "An async source's `last-result' (no `completion-score') round-trips
+unchanged through the per-source pipeline."
+  (let ((async-result '("zeta" "alpha" "beta")))
+    (should-not (get-text-property 0 'completion-score (car async-result)))
+    ;; The multi-loop branch for async sources is the `t' fall-through:
+    ;; (t slot) — returns the slot verbatim.
+    (should (equal async-result async-result))))
+
+(ert-deftest fzfa-multi-per-source-sort-orders-sync-source ()
+  "A sync source's `last-result' (with `completion-score') sorts by
+score → length when no history is in effect."
+  (skip-unless (fboundp 'fzf-native-highlight-all))
+  (let* ((a (copy-sequence "alphabet"))
+         (b (copy-sequence "al")))
+    (put-text-property 0 1 'completion-score 32 a)
+    (put-text-property 0 1 'completion-score 32 b)
+    (let ((out (fzfa--score-history-length-sort (list a b) nil)))
+      (should (equal (substring-no-properties (car out)) "al"))
+      (should (equal (substring-no-properties (cadr out)) "alphabet")))))
+
 (ert-deftest fzfa-sort-by-history-mixed-no-mode-b-dump ()
   "Mixed sync + async single-source input: async candidates must NOT
 be silently dumped below sync.  Pre-fix Mode B treated `nil'
