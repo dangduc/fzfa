@@ -1958,6 +1958,14 @@ on it identically regardless of which container holds it."
   retry-timer                   ; timer or nil
   ;; Result / score.
   last-result                   ; list — cached candidate list
+  last-query                    ; string — query that produced last-result
+                                ; (nil before any result is cached).  Used by
+                                ; the interrupt branch of helm/ivy :candidates
+                                ; closures so a `while-no-input' bail-out
+                                ; returns last-result only when the current
+                                ; filter still matches — otherwise the user
+                                ; sees stale candidates from the prior query
+                                ; sitting under the new (often empty) header.
   rank                          ; integer (multi-only)
   total                         ; integer
   filtered                      ; integer

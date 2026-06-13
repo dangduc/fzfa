@@ -665,7 +665,13 @@ callback so helm re-reads candidates with the fresh snapshot."
                           (setf (fzfa-source-retry-timer source) nil)
                           (when helm-alive-p
                             (helm-force-update)))))
-                 (fzfa-source-last-result source))
+                 ;; Return cached candidates only when the filter still
+                 ;; matches the query that produced them — otherwise nil so
+                 ;; helm doesn't render stale results from a prior query
+                 ;; under the new (often empty) header.
+                 (if (equal filter (fzfa-source-last-query source))
+                     (fzfa-source-last-result source)
+                   nil))
                 (t
                  (when-let* ((tm (fzfa-source-retry-timer source)))
                    (cancel-timer tm)
@@ -673,7 +679,8 @@ callback so helm re-reads candidates with the fresh snapshot."
                  (setq r (fzfa--rank-and-highlight r filter history))
                  (setf (fzfa-source-total source) (length all)
                        (fzfa-source-filtered source) (length r)
-                       (fzfa-source-last-result source) r)
+                       (fzfa-source-last-result source) r
+                       (fzfa-source-last-query source) filter)
                  r))))
            :match-dynamic t
            :nohighlight t
@@ -1254,9 +1261,15 @@ for fuzzy-multi-source UX."
                                        (setf (fzfa-source-retry-timer source) nil)
                                        (when helm-alive-p
                                          (helm-force-update)))))
-                              ;; Don't update rank — cache is for an
-                              ;; earlier query.
-                              (fzfa-source-last-result source))
+                              ;; Return cached candidates only when the
+                              ;; filter still matches the query that
+                              ;; produced them — otherwise nil so helm
+                              ;; doesn't render stale results from a prior
+                              ;; query under the new (often empty) header.
+                              (if (equal filter
+                                         (fzfa-source-last-query source))
+                                  (fzfa-source-last-result source)
+                                nil))
                              (t
                               (when-let* ((tm (fzfa-source-retry-timer source)))
                                 (cancel-timer tm)
@@ -1266,6 +1279,7 @@ for fuzzy-multi-source UX."
                               (setf (fzfa-source-total source) (length all)
                                     (fzfa-source-filtered source) (length r)
                                     (fzfa-source-last-result source) r
+                                    (fzfa-source-last-query source) filter
                                     (fzfa-source-rank source)
                                     (fzfa--multi-rank r filter nil))
                               r))))
