@@ -72,19 +72,18 @@ Default is `fzfa-helm-multi-source-candidate-limit' × 10."
   :type 'integer
   :group 'fzfa)
 
-(defcustom fzfa-helm-apply-follow t
+(defcustom fzfa-helm-apply-follow nil
   "Whether helm should auto-fire `:apply' on every selection move.
 
-When non-nil (the default), bridged fzfa sources that declare an
-`:apply' lambda set `:follow 1' on their helm source — the apply
-function runs on every selection change (preview-style) AND on
-`helm-execute-persistent-action'.  Matches helm's native
-`:persistent-action' idiom.
+Defaults to nil to match fzfa's preview-on-demand paradigm across
+frontends (vertico/icomplete use `fzfa-preview-key', helm uses
+`C-j' or `fzfa-preview-key' — see the helm-source keymap setup).
+Side-effecting `:apply' lambdas (buffer kill, command execute) used
+to auto-fire on every arrow-key press under the old `t' default,
+which was a footgun.
 
-Set to nil to disable auto-fire — `:apply' then runs only on
-explicit `helm-execute-persistent-action'.  Useful for sources whose
-`:apply' has side effects (buffer kill, command execute) that
-shouldn't fire on every arrow-key press."
+Set to non-nil to opt into auto-fire — bridged fzfa sources with an
+`:apply' lambda then add `:follow 1' on their helm source."
   :type 'boolean
   :group 'fzfa)
 
@@ -166,6 +165,7 @@ before the idle delay elapses -> timer fires post-cleanup ->
 (declare-function helm-goto-source "helm-core")
 (declare-function helm-set-source-filter "helm-core")
 (declare-function helm-get-selection "helm-core")
+(declare-function helm-execute-persistent-action "helm-core")
 (declare-function fzfa--format-narrow-hint "fzfa")
 (defvar helm-map)
 (defvar fzfa-multi-narrow-key)
@@ -436,6 +436,9 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
                             (fzfa-source-handle source)))))
             :keymap (let ((map (make-sparse-keymap)))
                       (set-keymap-parent map helm-map)
+                      (when fzfa-preview-key
+                        (define-key map (kbd fzfa-preview-key)
+                                    #'helm-execute-persistent-action))
                       (when fzfa-display-key
                         (define-key map (kbd fzfa-display-key)
                                     display-cycle))
@@ -607,6 +610,9 @@ callback so helm re-reads candidates with the fresh snapshot."
                                (fzfa-source-total source))))
            :keymap (let ((map (make-sparse-keymap)))
                      (set-keymap-parent map helm-map)
+                     (when fzfa-preview-key
+                       (define-key map (kbd fzfa-preview-key)
+                                   #'helm-execute-persistent-action))
                      (when (and producer-kind-p fzfa-display-key)
                        (define-key map (kbd fzfa-display-key)
                                    display-cycle))
@@ -1105,6 +1111,12 @@ for fuzzy-multi-source UX."
                  (push (fzfa-source-handle source) handles)
                  (push stop stops)
                  (apply #'helm-make-source name 'helm-source-sync
+                        :keymap (let ((map (make-sparse-keymap)))
+                                  (set-keymap-parent map helm-map)
+                                  (when fzfa-preview-key
+                                    (define-key map (kbd fzfa-preview-key)
+                                                #'helm-execute-persistent-action))
+                                  map)
                         :header-name
                         (lambda (n)
                           (format "%s [%s]%s" n (abbreviate-file-name dir)
@@ -1187,6 +1199,12 @@ for fuzzy-multi-source UX."
                            (setf (fzfa-source-retry-timer source) nil)))))
                  (aset sources-v i source)
                  (apply #'helm-make-source name 'helm-source-sync
+                        :keymap (let ((map (make-sparse-keymap)))
+                                  (set-keymap-parent map helm-map)
+                                  (when fzfa-preview-key
+                                    (define-key map (kbd fzfa-preview-key)
+                                                #'helm-execute-persistent-action))
+                                  map)
                         :header-name
                         (lambda (n)
                           (format "%s%s" n (fzfa-helm--sync-stats-suffix
