@@ -1455,6 +1455,20 @@ update invalidates the cache."
                          do (puthash item index table))
                 table)))))))
 
+(defun fzfa--multi-tagged-p (cand)
+  "Non-nil if CAND carries an invisible multi-source tofu suffix.
+
+The suffix is added by `fzfa--multi-tag' to make cross-source
+duplicates `string='-distinct.  Its codepoint sits at
+`fzfa--tofu-base' or higher (Unicode PUA range).  Used by
+`fzfa--sort-by-history' to detect multi-source input — the multi
+loop already applied per-source sort + highlight, so a global
+re-sort here would trample the per-source ordering."
+  (and (stringp cand)
+       (let ((n (length cand)))
+         (and (> n 0)
+              (>= (aref cand (1- n)) fzfa--tofu-base)))))
+
 (defun fzfa--sort-by-history (completions)
   "Order COMPLETIONS by score, history recency, then length.
 
@@ -1463,19 +1477,27 @@ the sync path by `fzf-native-score-all'.  Ties break by position
 in the active minibuffer history (more recent first), then by
 candidate length (shorter first).
 
-Empty query — no scores were attached, so rank by history only.
-Async path — `fzf-native-async-candidates' returns candidates
-pre-sorted by the C scorer but doesn't attach `completion-score';
-preserve that order verbatim.
-
-The reorder can promote candidates beyond the C scorer's highlight
-cap into the visible window — those arrive without face.  After
-sorting, re-apply highlights to the new top-N via
-`fzf-native-highlight-all' so the user-visible candidates always
-show match face."
+Branches dispatched in order:
+- nil COMPLETIONS                  → nil
+- multi-source (tofu-tagged head)  → pass through; the multi loop
+                                     already ranked each source
+                                     internally + applied per-source
+                                     highlights, so a global re-sort
+                                     across source boundaries would
+                                     trample that ordering
+- empty query                      → rank by history only
+- head lacks `completion-score'    → single-source async; C order is
+                                     canonical, pass through
+- otherwise                        → single-source sync: full sort,
+                                     then post-sort highlight refresh
+                                     via `fzf-native-highlight-all'
+                                     so the visible top-N matches
+                                     after history/length tiebreak"
   (let ((query (fzfa--current-query "")))
     (cond
      ((null completions) nil)
+     ((fzfa--multi-tagged-p (car completions))
+      completions)
      ((string-empty-p query)
       (if-let* ((hist (fzfa--history-hash)))
           (mapcar

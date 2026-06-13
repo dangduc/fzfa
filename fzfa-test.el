@@ -1338,6 +1338,84 @@ because the source order was alphabetical."
     (should (equal (fzfa--sort-by-history '("zeta" "alpha" "beta"))
                    '("zeta" "alpha" "beta")))))
 
+;;; fzfa--sort-by-history — Mode A / Mode B branches (Chunk 3)
+
+(ert-deftest fzfa-sort-by-history-empty-input-nil ()
+  "Null input yields nil."
+  (cl-letf (((symbol-function 'fzfa--current-query)
+             (lambda (&rest _) "anything"))
+            ((symbol-function 'fzfa--history-hash)
+             (lambda () nil)))
+    (should-not (fzfa--sort-by-history nil))))
+
+(ert-deftest fzfa-sort-by-history-single-sync-sorted ()
+  "Sync input (each candidate carries `completion-score') reorders by
+score, history, length.  Shorter higher-scoring candidate wins."
+  (let* ((a (copy-sequence "find-file"))
+         (b (copy-sequence "Buffer-menu-toggle-files-only"))
+         (c (copy-sequence "ftp")))
+    (put-text-property 0 1 'completion-score 32 a)
+    (put-text-property 0 1 'completion-score 32 b)
+    (put-text-property 0 1 'completion-score 32 c)
+    (cl-letf (((symbol-function 'fzfa--current-query)
+               (lambda (&rest _) "f"))
+              ((symbol-function 'fzfa--history-hash)
+               (lambda () nil)))
+      (let ((sorted (fzfa--sort-by-history (list b a c))))
+        ;; Shortest first when score+history tied.
+        (should (equal (substring-no-properties (nth 0 sorted)) "ftp"))
+        (should (equal (substring-no-properties (nth 1 sorted)) "find-file"))
+        (should (equal (substring-no-properties (nth 2 sorted))
+                       "Buffer-menu-toggle-files-only"))))))
+
+(ert-deftest fzfa-sort-by-history-single-async-passthrough ()
+  "Async input (no `completion-score') passes through verbatim — C
+order is canonical."
+  (cl-letf (((symbol-function 'fzfa--current-query)
+             (lambda (&rest _) "f"))
+            ((symbol-function 'fzfa--history-hash)
+             (lambda () nil)))
+    (let* ((input (list "find-file" "f90-mode" "ftp"))
+           (out   (fzfa--sort-by-history input)))
+      (should (equal out input)))))
+
+(ert-deftest fzfa-sort-by-history-multi-passthrough ()
+  "Multi-source input (tofu-tagged head) passes through verbatim — the
+multi loop already applied per-source sort + highlight; a global
+re-sort would trample the source-block ordering."
+  (skip-unless (fboundp 'fzfa--multi-tag))
+  (let* ((hash    (make-hash-table :test 'equal))
+         ;; Tag candidates as if they came from two different sources.
+         (a (fzfa--multi-tag (copy-sequence "alpha")  0 hash))
+         (b (fzfa--multi-tag (copy-sequence "beta")   1 hash))
+         (c (fzfa--multi-tag (copy-sequence "gamma")  0 hash))
+         (input (list a b c)))
+    (cl-letf (((symbol-function 'fzfa--current-query)
+               (lambda (&rest _) "a"))
+              ((symbol-function 'fzfa--history-hash)
+               (lambda () nil)))
+      (should (equal (fzfa--sort-by-history input) input)))))
+
+(ert-deftest fzfa-sort-by-history-mixed-no-mode-b-dump ()
+  "Mixed sync + async single-source input: async candidates must NOT
+be silently dumped below sync.  Pre-fix Mode B treated `nil'
+`completion-score' as 0 and pushed all async candidates to the bottom.
+
+In the new design, mixed mid-flight state is rare in a single-source
+session — but if it does occur, the head-of-list async branch fires
+when the first candidate has no score, returning the list unchanged
+rather than zero-scoring the async candidates."
+  (let* ((s1 (copy-sequence "find-file")))
+    (put-text-property 0 1 'completion-score 32 s1)
+    (cl-letf (((symbol-function 'fzfa--current-query)
+               (lambda (&rest _) "f"))
+              ((symbol-function 'fzfa--history-hash)
+               (lambda () nil)))
+      ;; Async-first head: passes through (no score-based reorder).
+      (let* ((input (list "ftp" s1))
+             (out (fzfa--sort-by-history input)))
+        (should (equal out input))))))
+
 ;;; fzfa-all-completions — completion-lazy-hilit plumbing (Chunk 2)
 
 (ert-deftest fzfa-all-completions-sets-lazy-fn-when-bound ()
