@@ -3329,39 +3329,60 @@ Per-source plist keys:
                                     (lambda (a b)
                                       (> (fzfa-source-rank (aref sources a))
                                          (fzfa-source-rank (aref sources b)))))))
+                           ;; Per-source sorted + highlighted candidate lists,
+                           ;; one entry per source-index in `sorted' order.
+                           (per-source
+                            (mapcar
+                             (lambda (i)
+                               (let* ((src (aref sources i))
+                                      (slot (fzfa-source-last-result src)))
+                                 (cond
+                                  ;; Empty query → per-source history rank
+                                  ;; only, no scoring ran.
+                                  ((and empty-q
+                                        (fzfa-source-history src))
+                                   (fzfa--history-rank
+                                    slot (fzfa-source-history src)))
+                                  ;; Sync source with scored candidates →
+                                  ;; per-source sort + per-source highlight
+                                  ;; refresh.  Same shape as the vertico
+                                  ;; multi loop (Chunk 4).
+                                  ((and slot
+                                        (not empty-q)
+                                        (stringp (car slot))
+                                        (get-text-property
+                                         0 'completion-score (car slot)))
+                                   (let* ((hist (fzfa--build-history-hash
+                                                 (fzfa-source-history src)))
+                                          (s (fzfa--score-history-length-sort
+                                              slot hist)))
+                                     (when (fboundp 'fzf-native-highlight-all)
+                                       (fzfa--bridge-defcustoms
+                                        #'fzf-native-highlight-all s query))
+                                     s))
+                                  ;; Async or empty → C order is canonical.
+                                  (t slot))))
+                             sorted))
                            (cands
-                            (apply #'append
-                                   (mapcar
-                                    (lambda (i)
-                                      (let* ((src (aref sources i))
-                                             (slot (fzfa-source-last-result src)))
-                                        (cond
-                                         ;; Empty query → per-source history rank
-                                         ;; only, no scoring ran.
-                                         ((and empty-q
-                                               (fzfa-source-history src))
-                                          (fzfa--history-rank
-                                           slot (fzfa-source-history src)))
-                                         ;; Sync source with scored candidates →
-                                         ;; per-source sort + per-source highlight
-                                         ;; refresh.  Same shape as the vertico
-                                         ;; multi loop (Chunk 4).
-                                         ((and slot
-                                               (not empty-q)
-                                               (stringp (car slot))
-                                               (get-text-property
-                                                0 'completion-score (car slot)))
-                                          (let* ((hist (fzfa--build-history-hash
-                                                        (fzfa-source-history src)))
-                                                 (s (fzfa--score-history-length-sort
-                                                     slot hist)))
-                                            (when (fboundp 'fzf-native-highlight-all)
-                                              (fzfa--bridge-defcustoms
-                                               #'fzf-native-highlight-all s query))
-                                            s))
-                                         ;; Async or empty → C order is canonical.
-                                         (t slot))))
-                                    sorted))))
+                            (if empty-q
+                                ;; No scoring → flat concat preserves
+                                ;; source-rank order.
+                                (apply #'append per-source)
+                              ;; Non-empty: ivy is flat (no group headers),
+                              ;; so each source's leader gets pulled into a
+                              ;; leader pool first — preventing a strong
+                              ;; group's mid-rank tail from outranking
+                              ;; another group's top candidate.  Then each
+                              ;; source's remaining candidates flat-concat
+                              ;; in source-rank order.
+                              (let (leaders tails)
+                                (dolist (slot per-source)
+                                  (when slot
+                                    (push (car slot) leaders)
+                                    (when (cdr slot)
+                                      (push (cdr slot) tails))))
+                                (append (nreverse leaders)
+                                        (apply #'append (nreverse tails)))))))
                       (ivy--set-candidates cands)
                       (ivy--exhibit)
                       ;; `ivy--exhibit' skips the prompt redraw when the

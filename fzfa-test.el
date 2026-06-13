@@ -1457,6 +1457,44 @@ unchanged through the per-source pipeline."
     ;; (t slot) — returns the slot verbatim.
     (should (equal async-result async-result))))
 
+(ert-deftest fzfa-ivy-multi-leader-interleave-matches-design ()
+  "Reference implementation for the ivy multi-source leader interleave.
+
+Each source's per-source-sorted list contributes its top candidate to a
+leader pool (source-rank order); remaining candidates flat-concat after
+in the same source-rank order.  Empty sources contribute nothing.
+
+This is the algorithm wired into the ivy multi push at fzfa.el:~3322;
+this test exercises the algorithm in isolation so a regression in the
+splice logic surfaces without standing up an ivy session."
+  (let* ((g1 '("a1" "a2" "a3"))                ; source-rank 1
+         (g3 '("c1" "c2"))                       ; source-rank 2
+         (g2 '("b1" "b2"))                       ; source-rank 3 (async)
+         (per-source (list g1 g3 g2))
+         (expected '("a1" "c1" "b1" "a2" "a3" "c2" "b2"))
+         leaders tails)
+    (dolist (slot per-source)
+      (when slot
+        (push (car slot) leaders)
+        (when (cdr slot)
+          (push (cdr slot) tails))))
+    (should (equal (append (nreverse leaders)
+                           (apply #'append (nreverse tails)))
+                   expected))))
+
+(ert-deftest fzfa-ivy-multi-leader-interleave-skips-empty-source ()
+  "Empty per-source slot contributes nothing to leaders or tails."
+  (let* ((per-source '(("a1" "a2") nil ("c1" "c2")))
+         leaders tails)
+    (dolist (slot per-source)
+      (when slot
+        (push (car slot) leaders)
+        (when (cdr slot)
+          (push (cdr slot) tails))))
+    (should (equal (append (nreverse leaders)
+                           (apply #'append (nreverse tails)))
+                   '("a1" "c1" "a2" "c2")))))
+
 (ert-deftest fzfa-multi-per-source-sort-orders-sync-source ()
   "A sync source's `last-result' (with `completion-score') sorts by
 score → length when no history is in effect."
