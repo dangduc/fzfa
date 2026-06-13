@@ -87,6 +87,7 @@
 (declare-function fzf-native-async-generation "fzf-native")
 (declare-function fzf-native-async-candidates "fzf-native")
 (declare-function fzf-native-highlight-all "fzf-native")
+(declare-function fzf-native-highlight-one "fzf-native")
 (declare-function fzfa-helm--completing-read "fzfa-helm")
 (declare-function fzf-native-async-stats "fzf-native")
 (declare-function fzf-native-async-result-fresh-p "fzf-native")
@@ -403,7 +404,23 @@ Always accepts STRING as-is; scoring is done in C."
   "All-completions for the fzfa completion style.
 
 Passes STRING through to the collection TABLE filtered by PRED.
-Highlighting is applied by the C layer (see `fzfa-highlight')."
+
+When the frontend opts into `completion-lazy-hilit' (vertico, icomplete
+on Emacs 28+), set `completion-lazy-hilit-fn' to a closure that
+highlights one candidate at display time via `fzf-native-highlight-one'.
+This means the frontend pays for face on only the actually-visible
+candidates rather than the eager top-N picked by the C scorer.
+Frontends that don't opt in (ivy, helm) fall back to the eager C-side
+highlight already attached by the scorer."
+  (when (and (boundp 'completion-lazy-hilit)
+             completion-lazy-hilit
+             (fboundp 'fzf-native-highlight-one))
+    (let ((query string))
+      (setq completion-lazy-hilit-fn
+            (lambda (cand)
+              (if (or (null query) (string-empty-p query))
+                  cand
+                (fzf-native-highlight-one cand query))))))
   (funcall table string pred t))
 
 ;;; Frontend abstraction

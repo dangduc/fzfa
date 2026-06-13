@@ -1338,5 +1338,63 @@ because the source order was alphabetical."
     (should (equal (fzfa--sort-by-history '("zeta" "alpha" "beta"))
                    '("zeta" "alpha" "beta")))))
 
+;;; fzfa-all-completions — completion-lazy-hilit plumbing (Chunk 2)
+
+(ert-deftest fzfa-all-completions-sets-lazy-fn-when-bound ()
+  "When `completion-lazy-hilit' is bound non-nil and
+`fzf-native-highlight-one' is available, `fzfa-all-completions'
+captures `completion-lazy-hilit-fn' so vertico/icomplete apply face per
+visible candidate at render time."
+  (skip-unless (fboundp 'fzf-native-highlight-one))
+  (let* ((table (lambda (_str _pred _flag) '("alpha" "beta")))
+         (completion-lazy-hilit t)
+         (completion-lazy-hilit-fn nil))
+    (fzfa-all-completions "a" table nil 0)
+    (should (functionp completion-lazy-hilit-fn))))
+
+(ert-deftest fzfa-all-completions-no-lazy-fn-when-unbound ()
+  "When `completion-lazy-hilit' is nil the variable is left alone — ivy
+and helm rely on the existing eager-highlight path."
+  (let* ((table (lambda (_str _pred _flag) '("alpha")))
+         (completion-lazy-hilit nil)
+         (completion-lazy-hilit-fn nil))
+    (fzfa-all-completions "a" table nil 0)
+    (should-not completion-lazy-hilit-fn)))
+
+(ert-deftest fzfa-all-completions-lazy-fn-highlights-correctly ()
+  "Invoking the captured lazy fn produces a faced copy of the input
+candidate at the matched position."
+  (skip-unless (fboundp 'fzf-native-highlight-one))
+  (let* ((table (lambda (_str _pred _flag) '("find-file")))
+         (completion-lazy-hilit t)
+         (completion-lazy-hilit-fn nil))
+    (fzfa-all-completions "f" table nil 0)
+    (let* ((ret (funcall completion-lazy-hilit-fn "find-file"))
+           (face (get-text-property 0 'face ret)))
+      (should (or (eq face 'completions-common-part)
+                  (and (listp face)
+                       (memq 'completions-common-part face)))))))
+
+(ert-deftest fzfa-all-completions-empty-query-passes-through-lazy-fn ()
+  "Empty query → the captured lazy fn returns the candidate unchanged
+\(no face manipulation).  Avoids spurious clear-only work on the
+backspace-to-empty frame."
+  (skip-unless (fboundp 'fzf-native-highlight-one))
+  (let* ((table (lambda (_str _pred _flag) '("alpha")))
+         (completion-lazy-hilit t)
+         (completion-lazy-hilit-fn nil))
+    (fzfa-all-completions "" table nil 0)
+    (let ((ret (funcall completion-lazy-hilit-fn "alpha")))
+      (should (equal ret "alpha"))
+      (should-not (text-property-not-all 0 (length ret) 'face nil ret)))))
+
+(ert-deftest fzfa-all-completions-passes-through ()
+  "Candidates returned by the table are not modified by `fzfa-all-completions'."
+  (let* ((cands '("alpha" "beta" "gamma"))
+         (table (lambda (_str _pred _flag) cands))
+         (completion-lazy-hilit nil)
+         (ret (fzfa-all-completions "a" table nil 0)))
+    (should (equal ret cands))))
+
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here
