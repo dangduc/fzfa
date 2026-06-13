@@ -651,8 +651,9 @@ callback so helm re-reads candidates with the fresh snapshot."
                     (r (while-no-input
                          (if (string-empty-p filter)
                              (if history (fzfa--history-rank all history) all)
-                           (fzfa--bridge-defcustoms
-                            #'fzf-native-score-all all filter)))))
+                           (let ((fzfa-batch-highlight nil))
+                             (fzfa--bridge-defcustoms
+                              #'fzf-native-score-all all filter))))))
                (cond
                 ((eq r t)
                  (when-let* ((tm (fzfa-source-retry-timer source)))
@@ -1239,8 +1240,9 @@ for fuzzy-multi-source UX."
                                           (if history
                                               (fzfa--history-rank all history)
                                             all)
-                                        (fzfa--bridge-defcustoms
-                                         #'fzf-native-score-all all filter)))))
+                                        (let ((fzfa-batch-highlight nil))
+                                          (fzfa--bridge-defcustoms
+                                           #'fzf-native-score-all all filter))))))
                             (cond
                              ((eq r t)
                               (when-let* ((tm (fzfa-source-retry-timer source)))

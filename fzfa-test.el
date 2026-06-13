@@ -1457,6 +1457,39 @@ unchanged through the per-source pipeline."
     ;; (t slot) — returns the slot verbatim.
     (should (equal async-result async-result))))
 
+;;; Eager C-side highlight suppression — Chunk 6 (fussy pattern port)
+
+(ert-deftest fzfa-batch-highlight-nil-suppresses-c-highlight ()
+  "Binding `fzfa-batch-highlight' to nil makes `fzf-native-score-all'
+return faceless candidates — the bridge propagates the nil onto
+`fzf-native-batch-highlight'.
+
+This is the pre-condition Chunk 6 relies on: each score-all call site
+binds nil locally so the C scorer skips its eager top-N face pass.
+The post-sort `fzf-native-highlight-all' (inside
+`fzfa--rank-and-highlight') is the sole face source for ivy / helm
+\(vertico/icomplete also have the lazy fn from Chunk 2)."
+  (skip-unless (fboundp 'fzf-native-score-all))
+  (let* ((cands '("find-file" "format" "f90-mode"))
+         (fzfa-batch-highlight nil)
+         (out (fzfa--bridge-defcustoms #'fzf-native-score-all
+                                       (copy-sequence cands) "f")))
+    (dolist (c out)
+      (should-not (text-property-not-all 0 (length c) 'face nil c)))))
+
+(ert-deftest fzfa-batch-highlight-keeps-completion-score ()
+  "Suppressing C-side highlight must NOT drop `completion-score'.  The
+score property is what `fzfa--sort-by-history' /
+`fzfa--score-history-length-sort' use for the score → history →
+length tiebreak."
+  (skip-unless (fboundp 'fzf-native-score-all))
+  (let* ((cands '("find-file" "format"))
+         (fzfa-batch-highlight nil)
+         (out (fzfa--bridge-defcustoms #'fzf-native-score-all
+                                       (copy-sequence cands) "f")))
+    (dolist (c out)
+      (should (get-text-property 0 'completion-score c)))))
+
 ;;; fzfa--rank-and-highlight (refactor of Chunk 4/5 per-source pipeline)
 
 (ert-deftest fzfa-rank-and-highlight-passes-through-empty-query ()

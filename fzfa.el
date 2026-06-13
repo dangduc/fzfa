@@ -2460,14 +2460,17 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                            (fzfa--history-rank
                             (fzfa-source-snapshot source) history)
                          (fzfa-source-snapshot source)))
-                      (t (let ((r (while-no-input
-                                    (fzfa--bridge-defcustoms
-                                     #'fzf-native-score-all
-                                     (fzfa-source-snapshot source) query))))
+                      (t (let* ((fzfa-batch-highlight nil)
+                                (r (while-no-input
+                                     (fzfa--bridge-defcustoms
+                                      #'fzf-native-score-all
+                                      (fzfa-source-snapshot source) query))))
                            (cond
                             ((eq r t) (or (fzfa-source-last-result source)
                                           (fzfa-source-snapshot source)))
-                            (t (setf (fzfa-source-last-result source) r
+                            (t (setq r (fzfa--rank-and-highlight
+                                        r query history))
+                               (setf (fzfa-source-last-result source) r
                                      (fzfa-source-filtered source) (length r))
                                (when-let* ((win (active-minibuffer-window)))
                                  (with-selected-window win
@@ -2565,13 +2568,24 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                               ((null (fzfa-source-snapshot source)) nil)
                               ((string-empty-p filter)
                                (fzfa-source-snapshot source))
-                              (t (let ((r (while-no-input
-                                            (fzfa--bridge-defcustoms
-                                             #'fzf-native-score-all
-                                             (fzfa-source-snapshot source)
-                                             filter))))
+                              (t (let* ((fzfa-batch-highlight nil)
+                                        (r (while-no-input
+                                             (fzfa--bridge-defcustoms
+                                              #'fzf-native-score-all
+                                              (fzfa-source-snapshot source)
+                                              filter))))
                                    (if (eq r t) nil r))))))
                         (when scored
+                          ;; Ivy bypasses `display-sort-function', so the
+                          ;; per-source rank + highlight refresh has to fire
+                          ;; here.  Vertico/icomplete are fine without this
+                          ;; — their table path at the top of this lambda
+                          ;; flows into `fzfa--sort-by-history' via
+                          ;; `display-sort-function'.
+                          (setq scored
+                                (fzfa--rank-and-highlight
+                                 scored filter
+                                 (fzfa-source-history source)))
                           (setf (fzfa-source-last-result source) scored
                                 (fzfa-source-filtered source) (length scored)))))
                      ((not (equal cmd (fzfa-source-current-cmd source)))
@@ -3316,10 +3330,11 @@ Per-source plist keys:
                                     (cond
                                      ((null snap) '())
                                      ((string-empty-p query) snap)
-                                     (t (while-no-input
-                                          (fzfa--bridge-defcustoms
-                                           #'fzf-native-score-all
-                                           snap query)))))))))
+                                     (t (let ((fzfa-batch-highlight nil))
+                                          (while-no-input
+                                            (fzfa--bridge-defcustoms
+                                             #'fzf-native-score-all
+                                             snap query))))))))))
                           (cond
                            ((eq out t) (setq interrupted t))
                            ((and h (not (fzfa--final-p out h query)))
@@ -3720,10 +3735,11 @@ Per-source plist keys:
                                               (cond
                                                ((null snap) '())
                                                ((string-empty-p query) snap)
-                                               (t (while-no-input
-                                                    (fzfa--bridge-defcustoms
-                                                     #'fzf-native-score-all
-                                                     snap query)))))))))
+                                               (t (let ((fzfa-batch-highlight nil))
+                                                    (while-no-input
+                                                      (fzfa--bridge-defcustoms
+                                                       #'fzf-native-score-all
+                                                       snap query))))))))))
                                     (cond
                                      ((eq out t) (setq interrupted t))
                                      ;; Async source whose result is not yet
