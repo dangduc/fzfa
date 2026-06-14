@@ -3812,9 +3812,22 @@ Per-source plist keys:
       (mapc #'fzfa-source--stop sources)
       (when router (fzfa--preview-return result)))
     (when result
-      (let* ((src    (or (and selected-idx (aref specs-v selected-idx))
-                         (fzfa--multi-source-of
-                          result specs-v candidate->source)))
+      (let* ((src-idx (or selected-idx
+                          (fzfa--multi-source-idx
+                           result candidate->source)))
+             (src     (and src-idx (aref specs-v src-idx)))
+             ;; Property recovery: the canonical candidate lives on
+             ;; the source's snapshot with all in-band metadata the
+             ;; caller attached (e.g. `fzfa-location' on
+             ;; `fzfa-swiper').  `read-from-minibuffer' may strip
+             ;; text properties under frontends that don't honor
+             ;; `minibuffer-allow-text-properties' — recover via
+             ;; `member' (content equality) so downstream consumers
+             ;; always see the original propertized string.  No-op
+             ;; for async sources (snapshot is nil there).
+             (snap    (and src-idx
+                           (fzfa-source-snapshot (aref sources src-idx))))
+             (result  (or (and snap (car (member result snap))) result))
              (action (and src (plist-get src :action)))
              (clean  (fzfa--tofu-hide result))
              (hist   (and src (plist-get src :history)))
