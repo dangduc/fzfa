@@ -905,7 +905,7 @@ vertico / icomplete rely on.  Side effect: bypassing
 SOURCES is the same list of plists as the `completing-read' path.
 PROMPT is the prompt string shown in the helm session.
 NARROW-IDX, when non-nil, seeds the active narrow at session
-start to that source index — used by `fzfa-resume' to replay a
+start to that source index — used by `fzfa-replay' to replay a
 session that exited narrowed.  Nil restores the default (N=1
 always narrows to 0, N>1 starts widened).
 Each `fzfa' source maps to a `helm' source:
@@ -982,7 +982,7 @@ for fuzzy-multi-source UX."
          poll-timer
          ;; Most recent user filter, updated by `update-last-query'
          ;; (below) on each `helm-after-update-hook' tick.  Read by
-         ;; the resume-snapshot block in the unwind-protect cleanup
+         ;; the replay-snapshot block in the unwind-protect cleanup
          ;; to persist the filter as the narrow target's
          ;; `:initial-input' for the next replay.
          (last-query "")
@@ -1383,10 +1383,10 @@ for fuzzy-multi-source UX."
                ;; filter.  At N=1 we pre-set it to the lone source's
                ;; name so `>' cycles immediately (no `<' prefix needed
                ;; — there's no other source to switch to).  A
-               ;; caller-supplied `:narrow-idx' (`fzfa-resume') wins
+               ;; caller-supplied `:narrow-idx' (`fzfa-replay') wins
                ;; over both — it restores a saved narrow target.
                ;; `narrowed-name' is hoisted to the outer let* so the
-               ;; resume-snapshot cleanup can read its final value;
+               ;; replay-snapshot cleanup can read its final value;
                ;; this is the in-session seed (which `narrow-fn'
                ;; mutates) on top of that outer binding.
                (_narrow-init
@@ -1487,7 +1487,7 @@ for fuzzy-multi-source UX."
                     (define-key m (kbd fzfa-display-key)
                                 narrow-display-cycle))
                   m)))
-          ;; Per-tick filter capture for `fzfa-resume'.  Computes the
+          ;; Per-tick filter capture for `fzfa-replay'.  Computes the
           ;; FILTER portion of `helm-pattern' against the narrowed
           ;; source's display state + command (so compact / full
           ;; sessions persist just the filter, not the `<sep>CMD<sep>'
@@ -1527,8 +1527,8 @@ for fuzzy-multi-source UX."
                             "fzf-multi: ")
                 :default (and (not multi-p) (plist-get s0 :default))
                 ;; `:initial-input' lives on the narrow target's spec
-                ;; (or source 0 if widened) — read it here so resume
-                ;; replays the filter under helm too, matching the
+                ;; (or source 0 if widened) — read it here so replay
+                ;; restores the filter under helm too, matching the
                 ;; vertico / ivy paths.
                 :input (plist-get (nth (or narrow-idx 0) sources)
                                   :initial-input)
@@ -1537,7 +1537,7 @@ for fuzzy-multi-source UX."
       (remove-hook 'helm-after-update-hook update-last-query)
       (when restore-narrow
         (remove-hook 'helm-after-update-hook restore-narrow))
-      ;; Snapshot for `fzfa-resume' BEFORE async producers stop —
+      ;; Snapshot for `fzfa-replay' BEFORE async producers stop —
       ;; `current-cmd' / `display-state' (set by `>'-edits) are
       ;; preserved by `--stop' but kept here for symmetry with the
       ;; vertico / ivy capture site.  Translate `narrowed-name' back

@@ -1731,10 +1731,10 @@ into firing a shell handle on an empty cmd — kills the sync path."
       (should-not (plist-get (aref srcs 0) :initial-input))
       (should (equal (plist-get (aref srcs 1) :initial-input) "needle")))))
 
-(ert-deftest fzfa-resume-errors-on-empty-sessions ()
-  "`fzfa-resume' signals a `user-error' when there's nothing to replay."
+(ert-deftest fzfa-replay-errors-on-empty-sessions ()
+  "`fzfa-replay' signals a `user-error' when there's nothing to replay."
   (let ((fzfa--sessions nil))
-    (should-error (fzfa-resume) :type 'user-error)))
+    (should-error (fzfa-replay) :type 'user-error)))
 
 ;;; Property recovery via snapshot lookup
 

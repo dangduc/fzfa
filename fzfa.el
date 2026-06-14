@@ -2858,7 +2858,7 @@ their :name via `fzfa--multi-derive-narrow-key'."
 PROMPT is shown in the minibuffer.
 
 NARROW-IDX, when non-nil, seeds the active narrow at session start
-to that source index — used by `fzfa-resume' to replay a session
+to that source index — used by `fzfa-replay' to replay a session
 that exited with a source narrowed.  Nil restores the default
 \(N=1 always narrows to 0, N>1 starts widened).
 
@@ -2916,12 +2916,12 @@ Per-source plist keys:
       (user-error "Fzfa--read does not yet support helm-mode")))
   (cl-assert (> (length sources) 0) nil
              "fzfa--read: SOURCES must contain at least one source")
-  ;; Bind here so every caller (including `fzfa-resume', which doesn't
+  ;; Bind here so every caller (including `fzfa-replay', which doesn't
   ;; go through the shim wrappers) routes candidates through fzfa's
   ;; passthrough style.  Without this, the user's default completion
   ;; styles (orderless, flex, etc.) re-filter our pre-scored
   ;; candidates against their own substring / fuzzy logic and silently
-  ;; drop sources whose content doesn't match — that's how resume of
+  ;; drop sources whose content doesn't match — that's how replay of
   ;; `fzfa-find-any' lost every source except the few whose pool
   ;; happened to substring-match the seeded filter.
   (let ((completion-styles '(fzfa)))
@@ -2956,7 +2956,7 @@ Per-source plist keys:
          (default-val   (and (not multi-p) (plist-get s0 :default)))
          ;; `:initial-input' is read off the narrow-target spec (or
          ;; source 0 when widened / at N=1) regardless of multi-p so
-         ;; `fzfa-resume' can replay the filter for multi sessions
+         ;; `fzfa-replay' can replay the filter for multi sessions
          ;; too — that's where the captured filter lives.
          (initial-input
           (plist-get (aref specs-v (or narrow-idx 0)) :initial-input))
@@ -3047,10 +3047,10 @@ Per-source plist keys:
          ;; code paths (display-cycle gate, candidate-fetch CMD split,
          ;; metadata source resolution, etc.) behave as if narrowed
          ;; from the first frame onward.  Caller-supplied NARROW-IDX
-         ;; \(`fzfa-resume') wins so a saved narrow target is restored.
+         ;; \(`fzfa-replay') wins so a saved narrow target is restored.
          (narrow-idx (or narrow-idx (unless multi-p 0)))
          ;; Most recent user filter, updated on every table / ivy push.
-         ;; Read by the resume-snapshot block to persist the filter as
+         ;; Read by the replay-snapshot block to persist the filter as
          ;; the narrow target's `:initial-input' for the next replay.
          (last-query "")
          ;; When the narrow menu is on screen (during the
@@ -3340,7 +3340,7 @@ Per-source plist keys:
                     (when-let* ((win (active-minibuffer-window)))
                       (with-selected-window win
                         ;; Lazily create the stats overlay if the table
-                        ;; arm hasn't ticked through yet (`fzfa-resume'
+                        ;; arm hasn't ticked through yet (`fzfa-replay'
                         ;; on a seeded filter only fires `(t …)' once
                         ;; before the user presses `<', and depending on
                         ;; timing the overlay may not have been
@@ -3853,10 +3853,10 @@ Per-source plist keys:
           (add-to-history hist expanded))
         (if action (funcall action expanded) expanded))))))
 
-;;; Resume
+;;; Replay
 
 (defcustom fzfa-sessions-max 16
-  "Maximum number of `fzfa--read' snapshots retained for `fzfa-resume'.
+  "Maximum number of `fzfa--read' snapshots retained for `fzfa-replay'.
 
 Older snapshots are dropped once the in-memory list grows past this
 limit.  Set higher if you want a deeper resume ring."
@@ -3885,7 +3885,7 @@ Each source-record is a plist:
                   the narrow target; resume threads it into that
                   source's `:initial-input').
 
-`fzfa-resume' pops the head and replays it; the rest of the list
+`fzfa-replay' pops the head and replays it; the rest of the list
 is reserved for a future filesystem-backed resume picker that
 spans past Emacs sessions plus the in-memory ring.")
 
@@ -3947,16 +3947,17 @@ path's result set)."
     spec))
 
 ;;;###autoload
-(defun fzfa-resume ()
-  "Resume the most recent `fzfa--read' session.
+(defun fzfa-replay ()
+  "Replay the most recent `fzfa--read' session.
 
-Replays the last call with the user's edited commands, display
-states, narrow target, and filter input restored.  Errors when no
-session is available.  Sessions persist across Emacs lifetime
-\(in-memory; capped by `fzfa-sessions-max')."
+Re-runs the last call with the user's edited commands, display
+states, narrow target, and filter input restored — a fresh
+session seeded from captured state, not a resumed minibuffer.
+Errors when no session is available.  Sessions live in memory
+\(capped by `fzfa-sessions-max') for the lifetime of Emacs."
   (interactive)
   (unless fzfa--sessions
-    (user-error "No fzfa session to resume"))
+    (user-error "No fzfa session to replay"))
   (let* ((session (car fzfa--sessions))
          (specs (cl-map 'list #'fzfa--session-restore-spec
                         (plist-get session :sources))))
