@@ -6,6 +6,7 @@
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, languages
 ;; Version: 0.1
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
