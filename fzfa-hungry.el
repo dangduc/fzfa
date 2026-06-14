@@ -115,7 +115,7 @@ by a shallower parent, then streams fd (or find) output through fzf."
                            :prompt "hungry find: "
                            :command command
                            :directory default-directory)))
-        (fzfa-with-visit (find-file result))))))
+        (fzfa-visit-file result)))))
 
 (provide 'fzfa-hungry)
 ;;; fzfa-hungry.el ends here

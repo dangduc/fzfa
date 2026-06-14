@@ -46,7 +46,7 @@ Set to nil to search the whole index."
                        :command "mdfind 'kMDItemFSName != \"\"'")))
     (if (string-suffix-p ".app" result)
         (start-process "default-app" nil "open" result)
-      (fzfa-with-visit (find-file result)))))
+      (fzfa-visit-file result))))
 
 ;;;###autoload
 (defun fzfa-spotlight-apps ()

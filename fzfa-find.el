@@ -38,7 +38,7 @@ Run from `default-directory'; stdout lines become file candidates."
 The command is configurable via `fzfa-find-command'."
   (interactive)
   (when-let* ((result (fzfa-completing-read :command fzfa-find-command)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 (provide 'fzfa-find)
 ;;; fzfa-find.el ends here

@@ -38,7 +38,7 @@ Run from `default-directory'; stdout lines become file candidates."
 The command is configurable via `fzfa-fd-command'."
   (interactive)
   (when-let* ((result (fzfa-completing-read :command fzfa-fd-command)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 (provide 'fzfa-fd)
 ;;; fzfa-fd.el ends here

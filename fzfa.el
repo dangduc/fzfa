@@ -623,6 +623,87 @@ origin window)."
   `(prog1 (progn ,@body)
      (run-hooks 'fzfa-after-visit-hook)))
 
+;;; File-visit strategy
+
+(defcustom fzfa-external-extensions
+  '(;; Video
+    "mp4" "mkv" "webm" "mov" "avi" "mpg" "mpeg" "wmv" "flv" "m4v"
+    "3gp" "ogv" "ts" "vob" "rmvb"
+    ;; Audio
+    "mp3" "m4a" "flac" "wav" "ogg" "aac" "wma" "opus" "ape" "alac"
+    "aiff" "dsf"
+    ;; Other multimedia containers / large binary blobs
+    "iso" "dmg")
+  "File extensions that `fzfa-smart-find-file' hands off to the OS handler.
+
+Matched case-insensitively against `file-name-extension'.  `mailcap'
+is intentionally not consulted — its static MIME table predates modern
+formats (no `mp4', `mkv', `webm') and falling back across both sources
+just produces inconsistent behavior."
+  :type '(repeat string)
+  :group 'fzfa)
+
+(defcustom fzfa-external-open-command
+  (cond ((eq system-type 'darwin)              "open")
+        ((eq system-type 'gnu/linux)           "xdg-open")
+        ((memq system-type '(windows-nt cygwin)) "start"))
+  "Program used to open files matching `fzfa-external-extensions'.
+
+Nil disables external dispatch — every selection falls back to
+`find-file' regardless of extension.  Invoked with the absolute file
+path as its single argument and detached from Emacs (`call-process'
+with PROC=0), so Emacs doesn't block on the external viewer."
+  :type '(choice string (const :tag "Disable external dispatch" nil))
+  :group 'fzfa)
+
+(defun fzfa--external-p (file)
+  "Non-nil if FILE's extension is in `fzfa-external-extensions'."
+  (when-let* ((ext (file-name-extension file)))
+    (member (downcase ext) fzfa-external-extensions)))
+
+(defun fzfa-smart-find-file (file)
+  "Open FILE via the OS handler when its extension matches, else `find-file'.
+
+Extension match (case-insensitive) against `fzfa-external-extensions'
+plus a non-nil `fzfa-external-open-command' dispatches to that command
+detached from Emacs (so the external player runs asynchronously).
+Everything else — including directories and any extension not on the
+list — falls through to `find-file'.
+
+The extension check fires before `file-directory-p' so TRAMP-shaped
+inputs (`/ssh:host:', `/sudo::') don't trigger a remote connection
+just to verify they're directories — they have no extension at all,
+so `fzfa--external-p' short-circuits to nil and we route straight to
+`find-file' (which knows how to interpret the TRAMP path)."
+  (cond
+   ((and fzfa-external-open-command
+         (fzfa--external-p file)
+         (not (file-directory-p file)))
+    (call-process fzfa-external-open-command nil 0 nil
+                  (expand-file-name file)))
+   (t (find-file file))))
+
+(defcustom fzfa-find-file-function #'fzfa-smart-find-file
+  "Function called by `fzfa-visit-file' to open the selected FILE.
+
+Defaults to `fzfa-smart-find-file' which dispatches multimedia
+extensions to the OS handler and falls back to `find-file'.
+Override to e.g. `find-file-other-window' / `find-file-other-frame'
+to change where fzfa picks land, or to a thin wrapper around
+`ace-window' for an ace-based picker."
+  :type 'function
+  :group 'fzfa)
+
+(defun fzfa-visit-file (file)
+  "Visit FILE via `fzfa-find-file-function' and fire `fzfa-after-visit-hook'.
+
+The centralized entry point for fzfa commands that just open a file.
+Equivalent to the legacy `(fzfa-with-visit (find-file FILE))' pattern
+but routes through the customizable open function, so multimedia
+files reach the OS handler and the user's preferred window
+strategy stays effective."
+  (fzfa-with-visit (funcall fzfa-find-file-function file)))
+
 ;;; Apply (persistent-action)
 
 (defcustom fzfa-apply-key "C-M-m"

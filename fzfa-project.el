@@ -74,7 +74,7 @@ Candidate set comes from `project-files', so membership respects
                       :prompt (format "project file [%s]: "
                                       (fzfa-project--label root))
                       :category 'fzfa-file)))
-      (fzfa-with-visit (find-file (expand-file-name sel root))))))
+      (fzfa-visit-file (expand-file-name sel root)))))
 
 ;;;###autoload
 (defun fzfa-project-find-dir ()
@@ -144,7 +144,7 @@ current project's root."
                       :prompt (format "project recentf [%s]: "
                                       (fzfa-project--label root))
                       :category 'fzfa-file)))
-      (fzfa-with-visit (find-file (expand-file-name sel root))))))
+      (fzfa-visit-file (expand-file-name sel root)))))
 
 ;;;###autoload
 (defun fzfa-project-switch-project ()

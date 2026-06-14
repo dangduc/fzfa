@@ -2287,25 +2287,60 @@ that fzfa--sessions overwrote persisted-sessions on save)."
                            '(c b a)))))
       (delete-file tmpfile))))
 
-;;; fzfa-locate external dispatch
+;;; External-dispatch predicate
 
-(ert-deftest fzfa-locate-external-p-recognizes-common-video ()
+(ert-deftest fzfa-external-p-recognizes-common-video ()
   "Common video extensions match the external-open predicate."
-  (should (fzfa-locate--external-p "/tmp/foo.mp4"))
-  (should (fzfa-locate--external-p "/tmp/foo.MKV"))   ; case-insensitive
-  (should (fzfa-locate--external-p "/tmp/foo.webm")))
+  (should (fzfa--external-p "/tmp/foo.mp4"))
+  (should (fzfa--external-p "/tmp/foo.MKV"))     ; case-insensitive
+  (should (fzfa--external-p "/tmp/foo.webm")))
 
-(ert-deftest fzfa-locate-external-p-recognizes-audio ()
+(ert-deftest fzfa-external-p-recognizes-audio ()
   "Common audio extensions match the external-open predicate."
-  (should (fzfa-locate--external-p "/tmp/foo.flac"))
-  (should (fzfa-locate--external-p "/tmp/foo.mp3"))
-  (should (fzfa-locate--external-p "/tmp/foo.opus")))
+  (should (fzfa--external-p "/tmp/foo.flac"))
+  (should (fzfa--external-p "/tmp/foo.mp3"))
+  (should (fzfa--external-p "/tmp/foo.opus")))
 
-(ert-deftest fzfa-locate-external-p-skips-text-files ()
+(ert-deftest fzfa-external-p-skips-text-files ()
   "Text / source files do not match — they should `find-file'."
-  (should-not (fzfa-locate--external-p "/tmp/foo.el"))
-  (should-not (fzfa-locate--external-p "/tmp/foo.txt"))
-  (should-not (fzfa-locate--external-p "/tmp/foo"))) ; no extension
+  (should-not (fzfa--external-p "/tmp/foo.el"))
+  (should-not (fzfa--external-p "/tmp/foo.txt"))
+  (should-not (fzfa--external-p "/tmp/foo")))   ; no extension
+
+(ert-deftest fzfa-smart-find-file-dispatches-to-external-on-match ()
+  "Matching extension + non-nil command dispatches to the OS handler."
+  (let ((called nil))
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (program _infile _dest _display &rest args)
+                 (setq called (cons program args))
+                 0))
+              (fzfa-external-open-command "open"))
+      (fzfa-smart-find-file "/tmp/movie.mp4")
+      (should called)
+      (should (equal (car called) "open"))
+      (should (equal (cadr called) (expand-file-name "/tmp/movie.mp4"))))))
+
+(ert-deftest fzfa-smart-find-file-falls-back-to-find-file ()
+  "Non-matching extension routes through `find-file', skipping the handler."
+  (let ((find-file-arg nil)
+        (external-called nil))
+    (cl-letf (((symbol-function 'find-file)
+               (lambda (file) (setq find-file-arg file)))
+              ((symbol-function 'call-process)
+               (lambda (&rest _) (setq external-called t) 0))
+              (fzfa-external-open-command "open"))
+      (fzfa-smart-find-file "/tmp/notes.txt")
+      (should (equal find-file-arg "/tmp/notes.txt"))
+      (should-not external-called))))
+
+(ert-deftest fzfa-smart-find-file-nil-command-skips-external ()
+  "Nil `fzfa-external-open-command' disables external dispatch entirely."
+  (let ((find-file-arg nil))
+    (cl-letf (((symbol-function 'find-file)
+               (lambda (file) (setq find-file-arg file)))
+              (fzfa-external-open-command nil))
+      (fzfa-smart-find-file "/tmp/movie.mp4")
+      (should (equal find-file-arg "/tmp/movie.mp4")))))
 
 ;;; Multi-candidates-fetch — async producer refresh
 

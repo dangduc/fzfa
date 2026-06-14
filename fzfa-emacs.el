@@ -61,7 +61,7 @@
   (when-let* ((result (fzfa-completing-read :candidates recentf-list
                                                 :prompt "recent: "
                                                 :category 'fzfa-file)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 ;;;###autoload
 (defun fzfa-buffer ()
@@ -242,7 +242,7 @@ when the command was invoked.  Selecting \"default\" disables all themes."
                            (user-error "No SSH hosts in ~/.ssh/config")))
                 (host (fzfa-completing-read
                        :candidates hosts :prompt "ssh: ")))
-      (fzfa-with-visit (find-file (concat "/ssh:" host ":"))))))
+      (fzfa-visit-file (concat "/ssh:" host ":")))))
 
 ;;;###autoload
 (defun fzfa-swiper ()

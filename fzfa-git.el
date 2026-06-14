@@ -118,7 +118,7 @@ The command is configurable via `fzfa-git-ls-files-command'."
   (when-let* ((result (fzfa-completing-read
                        :prompt "git ls files: "
                        :command fzfa-git-ls-files-command)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 ;;;###autoload
 (defun fzfa-git-modified-locally ()
@@ -131,7 +131,7 @@ The command is configurable via `fzfa-git-modified-locally-command'."
   (when-let* ((result (fzfa-completing-read
                        :prompt "git modified: "
                        :command fzfa-git-modified-locally-command)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 ;;;###autoload
 (defun fzfa-git-added-files ()
@@ -144,7 +144,7 @@ The command is configurable via `fzfa-git-added-files-command'."
   (when-let* ((result (fzfa-completing-read
                        :prompt "git added: "
                        :command fzfa-git-added-files-command)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 ;;;###autoload
 (defun fzfa-git-staged-for-commit ()
@@ -157,7 +157,7 @@ The command is configurable via `fzfa-git-staged-for-commit-command'."
   (when-let* ((result (fzfa-completing-read
                        :prompt "git staged: "
                        :command fzfa-git-staged-for-commit-command)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 ;;;###autoload
 (defun fzfa-git-modified-in-head ()
@@ -170,7 +170,7 @@ The command is configurable via `fzfa-git-modified-in-head-command'."
   (when-let* ((result (fzfa-completing-read
                        :prompt "git HEAD: "
                        :command fzfa-git-modified-in-head-command)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 (declare-function magit-show-commit "magit-diff")
 

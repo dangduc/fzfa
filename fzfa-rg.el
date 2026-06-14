@@ -49,7 +49,7 @@ The command is configurable via `fzfa-rg-files-command'."
   (interactive)
   (when-let* ((result (fzfa-completing-read
                        :prompt "rg files: " :command fzfa-rg-files-command)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 ;;;###autoload
 (defun fzfa-rg ()

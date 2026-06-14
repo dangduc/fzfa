@@ -49,7 +49,7 @@ The command is configurable via `fzfa-ag-files-command'."
   (interactive)
   (when-let* ((result (fzfa-completing-read
                        :prompt "ag files: " :command fzfa-ag-files-command)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 ;;;###autoload
 (defun fzfa-ag ()

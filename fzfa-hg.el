@@ -68,7 +68,7 @@ The command is configurable via `fzfa-hg-files-command'."
   (when-let* ((result (fzfa-completing-read
                        :prompt "hg files: "
                        :command fzfa-hg-files-command)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 ;;;###autoload
 (defun fzfa-hg-modified-locally ()
@@ -81,7 +81,7 @@ The command is configurable via `fzfa-hg-modified-locally-command'."
   (when-let* ((result (fzfa-completing-read
                        :prompt "hg modified: "
                        :command fzfa-hg-modified-locally-command)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 ;;;###autoload
 (defun fzfa-hg-added-files ()
@@ -94,7 +94,7 @@ The command is configurable via `fzfa-hg-added-files-command'."
   (when-let* ((result (fzfa-completing-read
                        :prompt "hg added: "
                        :command fzfa-hg-added-files-command)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 ;;;###autoload
 (defun fzfa-hg-modified-in-head ()
@@ -107,7 +107,7 @@ The command is configurable via `fzfa-hg-modified-in-head-command'."
   (when-let* ((result (fzfa-completing-read
                        :prompt "hg HEAD: "
                        :command fzfa-hg-modified-in-head-command)))
-    (fzfa-with-visit (find-file result))))
+    (fzfa-visit-file result)))
 
 (provide 'fzfa-hg)
 ;;; fzfa-hg.el ends here
