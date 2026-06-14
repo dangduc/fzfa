@@ -47,17 +47,7 @@
 (defvar embark-keymap-alist)
 (defvar embark-default-action-overrides)
 (defvar embark-general-map)
-(defvar fzf-native-case-mode)
-(defvar fzf-native-fuzzy)
-(defvar fzf-native-async-highlight)
-(defvar fzf-native-batch-highlight)
-(defvar fzf-native-max-line-length)
-(defvar fzf-native-async-cache-size)
 (defvar marginalia-annotate-file)
-(defvar marginalia-annotator-registry)
-(defvar marginalia-command-categories)
-(declare-function bookmark-all-names "bookmark")
-(declare-function bookmark-maybe-load-default-file "bookmark")
 (declare-function icomplete-exhibit "icomplete")
 (defvar icomplete-overlay)
 (defvar ivy-text)
@@ -78,19 +68,24 @@
 (declare-function vertico--exhibit "vertico")
 (defvar vertico--index)
 (defvar vertico--input)
-(defvar recentf-list)
 (defvar marginalia-annotators)
-(declare-function fzf-native-score "fzf-native")
-(declare-function fzf-native-score-all "fzf-native")
-(declare-function fzf-native-async-start "fzf-native")
-(declare-function fzf-native-async-stop "fzf-native")
-(declare-function fzf-native-async-generation "fzf-native")
-(declare-function fzf-native-async-candidates "fzf-native")
-(declare-function fzf-native-highlight-all "fzf-native")
-(declare-function fzf-native-highlight-one "fzf-native")
+(declare-function fzf-native-score "fzf-native"
+                  (str query &optional slab))
+(declare-function fzf-native-score-all "fzf-native"
+                  (collection query &optional slab))
+(declare-function fzf-native-async-start "fzf-native"
+                  (command &optional dir))
+(declare-function fzf-native-async-stop "fzf-native" (handle))
+(declare-function fzf-native-async-generation "fzf-native" (handle))
+(declare-function fzf-native-async-candidates "fzf-native"
+                  (handle filter &optional limit))
+(declare-function fzf-native-async-stats "fzf-native" (handle))
+(declare-function fzf-native-async-result-fresh-p "fzf-native"
+                  (handle query))
+(declare-function fzf-native-highlight-all "fzf-native"
+                  (collection query))
+(declare-function fzf-native-highlight-one "fzf-native" (cand query))
 (declare-function fzfa-helm--completing-read "fzfa-helm")
-(declare-function fzf-native-async-stats "fzf-native")
-(declare-function fzf-native-async-result-fresh-p "fzf-native")
 
 ;;; Debug logging
 

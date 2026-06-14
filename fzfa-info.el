@@ -33,11 +33,17 @@
 ;;; Code:
 
 (require 'fzfa)
-(require 'info)
 (require 'cl-lib)
 
 (declare-function info-lookup-symbol "info-look"
                   (symbol &optional mode same-window))
+(declare-function Info-mode "info" ())
+(declare-function Info-find-node "info"
+                  (filename nodename &optional no-going-back strict-case
+                            noerror))
+(declare-function Info-goto-node "info"
+                  (nodename &optional fork strict-case))
+(declare-function Info-index-nodes "info" (&optional file))
 
 (defcustom fzfa-info-manuals
   '("emacs" "elisp" "org" "cl" "eieio")
@@ -112,6 +118,7 @@ each menu entry.  Result is memoised in `fzfa-info--cache'."
 
 Each candidate is rendered \"ENTRY — NODE\"; on selection
 the Info viewer opens at \"(MANUAL)NODE\"."
+  (require 'info)
   (let* ((entries (fzfa-info--manual-entries manual))
          (lookup  (make-hash-table :test 'equal))
          (used    (make-hash-table :test 'equal))

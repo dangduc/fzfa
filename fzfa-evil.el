@@ -42,7 +42,6 @@
 (declare-function evil-ex-execute             "evil-ex" (string))
 (declare-function evil-ex-make-search-pattern "evil-search" (regexp))
 (declare-function evil-ex-search-next         "evil-commands" (&optional count))
-(defvar evil-markers-alist)
 (defvar evil-ex-history)
 (defvar evil-ex-search-history)
 (defvar evil-ex-search-pattern)

@@ -89,7 +89,6 @@
 (declare-function fzfa-M-x-for-buffer "fzfa-emacs")
 (declare-function fzfa-recent-file "fzfa-emacs")
 (declare-function fzfa-project-buffer "fzfa-project")
-(declare-function fzfa-project-find-file "fzfa-project")
 (declare-function fzfa-flymake "fzfa-flymake")
 (declare-function fzfa-flymake-project "fzfa-flymake")
 (declare-function fzfa-notmuch "fzfa-notmuch")

@@ -37,20 +37,14 @@
 
 (require 'cl-lib)
 (require 'fzfa)
-(require 'ivy nil t)
 
 (defvar ivy-text)
 (defvar ivy--all-candidates)
 (defvar ivy--old-cands)
-(defvar ivy-re-builders-alist)
 (defvar ivy-last)
 (declare-function ivy-state-action "ivy")
-(declare-function ivy-state-caller "ivy")
-(declare-function ivy-state-current "ivy")
 (declare-function ivy-state-dynamic-collection "ivy")
 (declare-function ivy-configure "ivy")
-(declare-function ivy--set-candidates "ivy")
-(declare-function ivy--exhibit "ivy")
 (declare-function ivy-call "ivy")
 
 (defface fzfa-ivy-multi-source-label

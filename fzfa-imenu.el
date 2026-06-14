@@ -25,7 +25,6 @@
 ;;; Code:
 
 (require 'fzfa)
-(require 'imenu)
 (eval-when-compile (require 'cl-lib))
 
 (declare-function imenu--make-index-alist "imenu")
@@ -44,6 +43,7 @@ Display differences:
   cross-category name collision); group header = imenu category.
 - Multi buffer:  display = \"[CATEGORY] NAME\" (no collision possible —
   entries are already partitioned by buffer); group header = buffer name."
+  (require 'imenu)
   (let* ((multi (memq scope '(all others)))
          (buf-vec (vconcat
                    (pcase scope

@@ -10,8 +10,13 @@ PACKAGE := fzfa
 AUTOLOADS := $(PACKAGE)-autoloads.el
 
 # Every .el we ship except tests, the package descriptor, and the
-# generated autoloads file itself.
-SRC := $(filter-out $(AUTOLOADS) $(PACKAGE)-pkg.el $(PACKAGE)-test.el, \
+# generated autoloads file itself.  `fzfa.el' is listed first so its
+# byte-compile warnings surface before the extension files' warnings —
+# the extensions all `(require 'fzfa)' and otherwise mask problems in
+# the core during a noisy build.
+SRC := $(PACKAGE).el \
+       $(filter-out $(PACKAGE).el $(AUTOLOADS) $(PACKAGE)-pkg.el \
+                    $(PACKAGE)-test.el, \
                     $(wildcard *.el))
 
 compile: clean autoloads

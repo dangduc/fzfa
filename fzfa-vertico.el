@@ -63,16 +63,6 @@
 
 (require 'cl-lib)
 
-;; Soft dependency.  The file is loaded by `fzfa-setup' whenever
-;; `vertico' is in `fzfa-extensions', regardless of whether
-;; `vertico' itself is installed — keeping the require soft lets
-;; the extension's customs and the minor-mode shell load cleanly
-;; in vertico-less environments.  All vertico-dependent
-;; behaviour (the cl-defmethod, navigation, auto-activation) is
-;; gated on `(featurep 'vertico)' below.
-(require 'vertico nil t)
-
-(defvar vertico-mode)
 (defvar vertico-multiform-mode)
 (defvar vertico-multiform-categories)
 (declare-function vertico-multiform-mode "vertico-multiform" (&optional arg))

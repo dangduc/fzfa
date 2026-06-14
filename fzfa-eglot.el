@@ -19,13 +19,19 @@
 
 (require 'fzfa)
 (require 'cl-lib)
-(require 'jsonrpc)
-(require 'url-parse)
-(require 'url-util)
 
 (declare-function eglot-current-server "eglot")
-(declare-function eglot--lsp-position-to-point "eglot")
-(declare-function eglot--TextDocumentIdentifier "eglot")
+(declare-function jsonrpc-async-request "jsonrpc"
+                  (connection method params &rest keys))
+(declare-function url-generic-parse-url "url-parse" (url))
+(declare-function url-unhex-string "url-util" (str &optional allow-newlines))
+(declare-function url-filename "url-parse" (cl-x))
+
+(defun fzfa-eglot--require ()
+  "Load dependencies."
+  (require 'jsonrpc)
+  (require 'url-parse)
+  (require 'url-util))
 
 (defun fzfa-eglot--servers ()
   "Return the list of eglot servers for the current project, or signal."
@@ -107,6 +113,7 @@ Input splits on `fzfa-separator': the CMD half is sent to
 the LSP server as the `workspace/symbol' query, the FILTER half
 re-scores the responses via fzf-native."
   (interactive)
+  (fzfa-eglot--require)
   (when-let* ((r (fzfa-completing-read
                   :prompt "symbol: "
                   :candidates (fzfa-eglot--producer)
