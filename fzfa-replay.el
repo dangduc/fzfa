@@ -133,6 +133,7 @@ Walks the plist and:
           :narrow-idx (plist-get session :narrow-idx)
           :timestamp  (plist-get session :timestamp)
           :directory  (plist-get session :directory)
+          :command    (plist-get session :command)
           :sources    scrubbed)))
 
 (defun fzfa-replay--readable-p (value)

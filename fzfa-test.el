@@ -1844,6 +1844,7 @@ in-band metadata."
           (list :prompt "p: " :narrow-idx 1
                 :timestamp 1718411234.5
                 :directory "/tmp/"
+                :command 'fzfa-find-any
                 :sources
                 (vector (list :spec '(:name "a")
                               :command "fd" :display 'hidden
@@ -1854,6 +1855,7 @@ in-band metadata."
     (should (eq    (plist-get scrubbed :narrow-idx) 1))
     (should (=     (plist-get scrubbed :timestamp) 1718411234.5))
     (should (equal (plist-get scrubbed :directory) "/tmp/"))
+    (should (eq    (plist-get scrubbed :command) 'fzfa-find-any))
     (let ((src (aref (plist-get scrubbed :sources) 0)))
       (should (equal (plist-get src :command) "fd"))
       (should (eq    (plist-get src :display) 'hidden))
