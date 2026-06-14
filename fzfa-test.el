@@ -1650,5 +1650,75 @@ backspace-to-empty frame."
          (ret (fzfa-all-completions "a" table nil 0)))
     (should (equal ret cands))))
 
+;;; Resume
+
+(ert-deftest fzfa-session-restore-spec-overlays-runtime-state ()
+  "`:command' / `:display' / `:initial-input' on the record override the spec."
+  (let* ((spec (list :name "x" :command "fd" :display 'hidden))
+         (rec  (list :spec spec
+                     :command "fd --no-ignore"
+                     :display 'compact
+                     :initial-input "lib"))
+         (restored (fzfa--session-restore-spec rec)))
+    (should (equal (plist-get restored :name) "x"))
+    (should (equal (plist-get restored :command) "fd --no-ignore"))
+    (should (eq (plist-get restored :display) 'compact))
+    (should (equal (plist-get restored :initial-input) "lib"))))
+
+(ert-deftest fzfa-session-restore-spec-leaves-nil-slots-alone ()
+  "A nil capture slot keeps the original spec value (no clobber)."
+  (let* ((spec (list :name "x" :command "fd" :display 'hidden))
+         (rec  (list :spec spec :command nil :display nil
+                     :initial-input nil))
+         (restored (fzfa--session-restore-spec rec)))
+    (should (equal (plist-get restored :command) "fd"))
+    (should (eq (plist-get restored :display) 'hidden))
+    (should-not (plist-get restored :initial-input))))
+
+(ert-deftest fzfa-sessions-push-trims-to-max ()
+  "Pushing past `fzfa-sessions-max' drops the oldest entries."
+  (let ((fzfa--sessions nil)
+        (fzfa-sessions-max 3)
+        (sources (vector (fzfa-make-source :spec '(:name "x" :command "fd")))))
+    (dotimes (i 5)
+      (fzfa--sessions-push '((:name "x" :command "fd"))
+                           sources
+                           (format "p%d: " i) nil ""))
+    (should (= (length fzfa--sessions) 3))
+    ;; Most-recent first — the latest push is at head.
+    (should (equal (plist-get (car fzfa--sessions) :prompt) "p4: "))))
+
+(ert-deftest fzfa-sessions-push-persists-runtime-state ()
+  "Captured record carries source's current-cmd, display-state, last-query."
+  (let* ((fzfa--sessions nil)
+         (fzfa-sessions-max 16)
+         (src (fzfa-make-source :spec '(:name "x" :command "fd"))))
+    (setf (fzfa-source-command src) "fd --no-ignore"
+          (fzfa-source-display-state src) 'full)
+    (fzfa--sessions-push '((:name "x" :command "fd"))
+                         (vector src) "p: " 0 "needle")
+    (let* ((rec (aref (plist-get (car fzfa--sessions) :sources) 0)))
+      (should (equal (plist-get rec :command) "fd --no-ignore"))
+      (should (eq    (plist-get rec :display) 'full))
+      (should (equal (plist-get rec :initial-input) "needle")))))
+
+(ert-deftest fzfa-sessions-push-initial-input-only-on-narrow-target ()
+  "`:initial-input' attaches only to the narrowed source; others get nil."
+  (let* ((fzfa--sessions nil)
+         (fzfa-sessions-max 16)
+         (a (fzfa-make-source :spec '(:name "a" :command "fd")))
+         (b (fzfa-make-source :spec '(:name "b" :command "rg"))))
+    (fzfa--sessions-push '((:name "a" :command "fd")
+                           (:name "b" :command "rg"))
+                         (vector a b) "p: " 1 "needle")
+    (let* ((srcs (plist-get (car fzfa--sessions) :sources)))
+      (should-not (plist-get (aref srcs 0) :initial-input))
+      (should (equal (plist-get (aref srcs 1) :initial-input) "needle")))))
+
+(ert-deftest fzfa-resume-errors-on-empty-sessions ()
+  "`fzfa-resume' signals a `user-error' when there's nothing to replay."
+  (let ((fzfa--sessions nil))
+    (should-error (fzfa-resume) :type 'user-error)))
+
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here

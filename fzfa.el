@@ -2852,10 +2852,15 @@ their :name via `fzfa--multi-derive-narrow-key'."
         (push (plist-put (copy-sequence src) :narrow s) result)))
     (nreverse result)))
 
-(cl-defun fzfa--read (sources &key (prompt "fzf-multi: "))
+(cl-defun fzfa--read (sources &key (prompt "fzf-multi: ") narrow-idx)
   "Run `completing-read' across multiple SOURCES, fzfa style.
 
 PROMPT is shown in the minibuffer.
+
+NARROW-IDX, when non-nil, seeds the active narrow at session start
+to that source index — used by `fzfa-resume' to replay a session
+that exited with a source narrowed.  Nil restores the default
+\(N=1 always narrows to 0, N>1 starts widened).
 
 Internal — users should call `fzfa-multi-read' which derives sources
 from existing single-source commands.  This function takes pre-built
@@ -3025,8 +3030,13 @@ Per-source plist keys:
          ;; the narrow target, so initialize to 0 so the rest of the
          ;; code paths (display-cycle gate, candidate-fetch CMD split,
          ;; metadata source resolution, etc.) behave as if narrowed
-         ;; from the first frame onward.
-         (narrow-idx (unless multi-p 0))
+         ;; from the first frame onward.  Caller-supplied NARROW-IDX
+         ;; \(`fzfa-resume') wins so a saved narrow target is restored.
+         (narrow-idx (or narrow-idx (unless multi-p 0)))
+         ;; Most recent user filter, updated on every table / ivy push.
+         ;; Read by the resume-snapshot block to persist the filter as
+         ;; the narrow target's `:initial-input' for the next replay.
+         (last-query "")
          ;; When the narrow menu is on screen (during the
          ;; `narrow-handler''s `read-char') we must NOT overwrite the
          ;; overlay with the stats line on every tick — otherwise async
@@ -3107,6 +3117,7 @@ Per-source plist keys:
                        (narrow-cmd    (car narrow-split))
                        (narrow-filter (cdr narrow-split))
                        (query (if narrow-active narrow-filter input)))
+                  (setq last-query query)
                   (when (and narrow-active
                              (not (equal narrow-cmd
                                          (fzfa-source-current-cmd
@@ -3644,6 +3655,7 @@ Per-source plist keys:
                                  (narrow-cmd    (car narrow-split))
                                  (narrow-filter (cdr narrow-split))
                                  (query (if narrow-active narrow-filter input)))
+                            (setq last-query query)
                             (when (and narrow-active
                                        (not (equal narrow-cmd
                                                    (fzfa-source-current-cmd
@@ -3776,6 +3788,11 @@ Per-source plist keys:
       (when retry-timer (cancel-timer retry-timer))
       (remove-hook 'post-command-hook refresh-overlay)
       (when stats-overlay (delete-overlay stats-overlay))
+      ;; Snapshot BEFORE `fzfa-source--stop' so per-source
+      ;; `current-cmd' / `display-state' (set by the table arm and
+      ;; the display-cycle command) are still readable.  Fires on
+      ;; both normal exit and C-g abort.
+      (fzfa--sessions-push specs sources prompt narrow-idx last-query)
       (mapc #'fzfa-source--stop sources)
       (when router (fzfa--preview-return result)))
     (when result
@@ -3800,6 +3817,105 @@ Per-source plist keys:
         (when (and hist (symbolp hist) (not (eq hist t)))
           (add-to-history hist expanded))
         (if action (funcall action expanded) expanded)))))
+
+;;; Resume
+
+(defcustom fzfa-sessions-max 16
+  "Maximum number of `fzfa--read' snapshots retained for `fzfa-resume'.
+
+Older snapshots are dropped once the in-memory list grows past this
+limit.  Set higher if you want a deeper resume ring."
+  :type 'natnum
+  :group 'fzfa)
+
+(defvar fzfa--sessions nil
+  "List of recent `fzfa--read' session snapshots, most recent first.
+
+Each entry is a plist with session-global state plus an inner
+vector of per-source records:
+
+  :prompt      Prompt string the call ran with.
+  :narrow-idx  Active narrow index at exit (nil = widened).
+  :sources     Vector of source-records, one per source.
+
+Each source-record is a plist:
+
+  :spec           Source spec as originally passed in.
+  :command        Current command at exit — may differ from the
+                  spec's `:command' if the user edited the CMD
+                  region during the session.
+  :display        Display-state at exit (`hidden' / `compact' /
+                  `full').
+  :initial-input  Last filter the user typed (persisted only on
+                  the narrow target; resume threads it into that
+                  source's `:initial-input').
+
+`fzfa-resume' pops the head and replays it; the rest of the list
+is reserved for a future filesystem-backed resume picker that
+spans past Emacs sessions plus the in-memory ring.")
+
+(defun fzfa--sessions-push (specs sources prompt narrow-idx last-query)
+  "Snapshot the just-completed `fzfa--read' call onto `fzfa--sessions'.
+
+SPECS is the input source plist list.  SOURCES is the runtime
+`fzfa-source' struct vector — read for current-cmd and
+display-state.  PROMPT is the call's prompt.  NARROW-IDX is the
+active narrow at exit (nil = widened).  LAST-QUERY is the most
+recent filter the user typed, captured by the table arm / ivy
+push closure."
+  (let* ((n (length sources))
+         (target (or narrow-idx 0))
+         (records
+          (cl-loop
+           for i below n
+           for src = (aref sources i)
+           for spec = (nth i specs)
+           collect
+           (list :spec spec
+                 :command (fzfa-source-command src)
+                 :display (fzfa-source-display-state src)
+                 ;; Persist the last filter only on the narrow
+                 ;; target — that's where it logically belongs.
+                 ;; Sources outside the narrow weren't user-edited
+                 ;; in this session, so their input stays nil.
+                 :initial-input (when (eql i target) last-query)))))
+    (push (list :prompt prompt
+                :narrow-idx narrow-idx
+                :sources (vconcat records))
+          fzfa--sessions)
+    (when (> (length fzfa--sessions) fzfa-sessions-max)
+      (setq fzfa--sessions
+            (cl-subseq fzfa--sessions 0 fzfa-sessions-max)))))
+
+(defun fzfa--session-restore-spec (record)
+  "Return RECORD's spec with captured runtime state overlaid.
+
+Walks the captured `:command' / `:display' / `:initial-input'
+slots and writes them onto a copy of the original spec so
+`fzfa--read' sees the exit-state values."
+  (let ((spec (cl-copy-list (plist-get record :spec))))
+    (dolist (key '(:command :display :initial-input))
+      (let ((v (plist-get record key)))
+        (when v (setq spec (plist-put spec key v)))))
+    spec))
+
+;;;###autoload
+(defun fzfa-resume ()
+  "Resume the most recent `fzfa--read' session.
+
+Replays the last call with the user's edited commands, display
+states, narrow target, and filter input restored.  Errors when no
+session is available.  Sessions persist across Emacs lifetime
+\(in-memory; capped by `fzfa-sessions-max')."
+  (interactive)
+  (unless fzfa--sessions
+    (user-error "No fzfa session to resume"))
+  (let* ((session (car fzfa--sessions))
+         (specs (cl-map 'list #'fzfa--session-restore-spec
+                        (plist-get session :sources))))
+    (fzfa--read specs
+                :prompt (plist-get session :prompt)
+                :narrow-idx (plist-get session :narrow-idx))))
 
 ;;;###autoload
 (defun fzfa-multi-read (commands &rest options)
