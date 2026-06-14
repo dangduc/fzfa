@@ -310,8 +310,8 @@ Three paths:
 (defun fzfa-replay--session-to-candidate (session idx)
   "Build a picker candidate string for SESSION at position IDX.
 
-The displayed text is a short summary (date + command name +
-directory); an invisible per-IDX tofu suffix is appended to
+The displayed text is a short summary — `DATE  COMMAND  QUERY
+DIRECTORY' — followed by an invisible per-IDX tofu suffix to
 guarantee `string='-uniqueness so two captures with the same
 visible columns don't get collapsed by vertico's
 `delete-consecutive-dups' (the suffix is the same trick the
@@ -319,25 +319,38 @@ multi-source path uses for cross-source disambiguation).  The
 full session plist rides on the string as a `fzfa-replay-session'
 text property at index 0 — the snapshot-lookup recovery in
 `fzfa--read''s post-result block restores it on selection so
-`fzfa-replay--action' can dispatch."
+`fzfa-replay--action' can dispatch.
+
+QUERY is baked into the candidate string rather than tacked on by
+`:annotate' so it surfaces under every frontend (ivy and helm
+don't render annotations natively; vertico does but the column
+gets lost in vertico-buffer mode trimming).  Inline columns are
+the lowest-common-denominator that works everywhere."
   (let* ((ts (or (plist-get session :timestamp) 0))
          (time-str (format-time-string "%a %H:%M" ts))
          (cmd (or (plist-get session :command) "?"))
          (dir (abbreviate-file-name
                (or (plist-get session :directory) "")))
-         (display (concat (format "%s  %-24s  %s" time-str cmd dir)
+         (sources (plist-get session :sources))
+         (target (or (plist-get session :narrow-idx) 0))
+         (filter (or (and sources (< target (length sources))
+                          (plist-get (aref sources target) :initial-input))
+                     ""))
+         (filter-col (if (string-empty-p filter) "—" filter))
+         (display (concat (format "%s  %-24s  %-16s  %s"
+                                  time-str cmd filter-col dir)
                           (fzfa--tofu-suffix idx))))
     (propertize display 'fzfa-replay-session session)))
 
 (defun fzfa-replay--annotate (cand)
-  "Annotation function: append filter + source count to CAND."
+  "Annotation function: source count only.
+
+The filter / query is baked into the candidate display string
+itself (see `fzfa-replay--session-to-candidate') so it shows on
+ivy / helm too; the annotation is just the source-count
+afterthought that vertico happens to render."
   (when-let* ((session (get-text-property 0 'fzfa-replay-session cand)))
-    (let* ((sources (plist-get session :sources))
-           (n (length sources))
-           (target (or (plist-get session :narrow-idx) 0))
-           (filter (and (< target n)
-                        (plist-get (aref sources target) :initial-input))))
-      (format "  %s  %d src" (or filter "—") n))))
+    (format "  %d src" (length (plist-get session :sources)))))
 
 (defun fzfa-replay--group (cand transform)
   "Group function: bucket CAND by date (Today / Yesterday / Week / Older)."

@@ -1976,16 +1976,54 @@ collapse same-minute / same-directory sessions."
     (should (equal (substring a 0 (1- (length a)))
                    (substring b 0 (1- (length b)))))))
 
-(ert-deftest fzfa-replay-annotate-includes-filter-and-count ()
-  "Annotation shows the narrow target's filter + source count."
+(ert-deftest fzfa-replay-annotate-includes-source-count ()
+  "Annotation shows the source count.
+
+Filter / query lives in the candidate display string itself now
+\(see `fzfa-replay-session-to-candidate-bakes-in-filter') so it
+surfaces under ivy / helm where annotations aren't rendered;
+annotation carries the source-count afterthought for vertico."
   (let* ((session (list :narrow-idx 0
                         :sources
                         (vector (list :initial-input "phx" :snapshot nil)
                                 (list :initial-input nil :snapshot nil))))
          (cand (propertize "stub" 'fzfa-replay-session session))
          (ann (fzfa-replay--annotate cand)))
-    (should (string-match-p "phx" ann))
     (should (string-match-p "2 src" ann))))
+
+(ert-deftest fzfa-replay-session-to-candidate-bakes-in-filter ()
+  "Captured `:initial-input' is in the candidate display string itself.
+
+Inline columns guarantee the query surfaces under every frontend
+\(ivy, helm don't render `:annotate'; vertico-buffer mode trims
+the annotation column).  The candidate format is
+`DATE  COMMAND  QUERY  DIR'."
+  (let* ((session
+          (list :timestamp 0
+                :command 'fzfa-fd
+                :directory "/dir/"
+                :narrow-idx 0
+                :sources
+                (vector (list :initial-input "needle" :snapshot nil))))
+         (cand (fzfa-replay--session-to-candidate session 0)))
+    (should (string-match-p "needle" cand))
+    (should (string-match-p "fzfa-fd" cand))))
+
+(ert-deftest fzfa-replay-session-to-candidate-shows-dash-for-empty-query ()
+  "Empty / nil `:initial-input' renders as a dash in the query column.
+
+Empty filter would collapse the column and visually mis-align
+the directory across candidates.  An en-dash placeholder keeps
+the columns rectangular."
+  (let* ((session
+          (list :timestamp 0
+                :command 'fzfa-fd
+                :directory "/dir/"
+                :narrow-idx 0
+                :sources
+                (vector (list :initial-input nil :snapshot nil))))
+         (cand (fzfa-replay--session-to-candidate session 0)))
+    (should (string-match-p "—" cand))))
 
 (ert-deftest fzfa-replay-group-buckets-by-recency ()
   "Sessions older than a week land in the Older bucket."
