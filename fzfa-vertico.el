@@ -136,7 +136,7 @@ automatically as the selection moves between bands — moving
 past the last visible band's bottom row brings the next band
 into view; moving past the top scrolls back.
 
-Counted as `(ceil PAGE-SIZE / fzfa-vertico-columns-max)' bands.
+Counted as `(ceil PAGE-SIZE / `fzfa-vertico-columns-max')' bands.
 With the default of 6 and `fzfa-vertico-columns-max' = 3 you see
 2 bands of 3 columns at a time.  Each visible band gets a larger
 share of `vertico-count' rows than it would if every band were
@@ -223,7 +223,7 @@ definitions without touching multiform — you can then enable
   "Completion categories that should auto-activate columns mode.
 
 Each symbol is registered with `vertico-multiform-categories'
-as (CATEGORY fzfa-vertico-columns-mode), so opening a
+as (CATEGORY `fzfa-vertico-columns-mode'), so opening a
 `completing-read' under one of these categories turns the
 columns layout on for that session and tears it down on exit.
 Defaults to `fzfa-multi' — the category used by
@@ -569,7 +569,7 @@ pick right-anchored truncation for path-bearing candidates."
 
 (defconst fzfa-vertico--match-faces
   '(completions-common-part completions-first-difference)
-  "Faces vertico applies to matched characters in `vertico--hilit'.
+  "Faces vertico applies to matched characters in function `vertico--hilit'.
 
 Used to detect when right-truncation would drop a matched span
 off the leading edge, so the ellipsis can carry the hint forward.")
@@ -831,7 +831,7 @@ who use other completion UIs.  Otherwise, when
 
   1. Each symbol in `fzfa-vertico-multiform-categories' is added to
      `vertico-multiform-categories' as
-     (CATEGORY fzfa-vertico-columns-mode), so the columns layout
+     (CATEGORY `fzfa-vertico-columns-mode'), so the columns layout
      auto-activates inside those categories' `completing-read' sessions.
   2. `vertico-multiform-mode' is turned on if not already, so the
      categories list is honored."

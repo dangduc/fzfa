@@ -102,7 +102,7 @@ Tolerates org-fold renames across Emacs versions."
 
 SCOPE is one of:
   a list of buffers — walked one at a time via `with-current-buffer';
-  the symbol `agenda' — walks every file in `org-agenda-files'.
+  the symbol `agenda' — walks every file in variable `org-agenda-files'.
 
 MATCH, when non-nil, is forwarded as the second argument to
 `org-map-entries' (agenda match syntax: tags, properties, TODO
@@ -185,7 +185,7 @@ of one argument (the marker); defaults to `fzfa-org--jump'."
       (funcall (or action #'fzfa-org--jump) m))))
 
 (defun fzfa-org--ensure-agenda-files ()
-  "Signal a user-error when no `org-agenda-files' are configured."
+  "Signal a user-error when no variable `org-agenda-files' are configured."
   (require 'org-agenda)
   (unless (org-agenda-files t t)
     (user-error "`org-agenda-files' is empty")))
@@ -220,7 +220,7 @@ captured marker."
 
 ;;;###autoload
 (defun fzfa-org-agenda ()
-  "Jump to a heading across `org-agenda-files' using fzf.
+  "Jump to a heading across variable `org-agenda-files' using fzf.
 
 Files not currently visited are loaded by `org-map-entries' as needed."
   (interactive)
@@ -230,7 +230,7 @@ Files not currently visited are loaded by `org-map-entries' as needed."
 
 ;;;###autoload
 (defun fzfa-org-todo ()
-  "Jump to a TODO-state heading across `org-agenda-files' using fzf.
+  "Jump to a TODO-state heading across variable `org-agenda-files'.
 
 The PREDICATE step in `fzfa-org--collect' filters to headings with
 a non-nil `org-get-todo-state', covering any keyword the user has
@@ -250,7 +250,7 @@ excluding DONE-class keywords."
 (defun fzfa-org-tags-view ()
   "Pick a tag, then pick a heading carrying that tag, via fzf.
 
-Tags and headings are sourced from `org-agenda-files'.  Two-step
+Tags and headings are sourced from variable `org-agenda-files'.  Two-step
 flow: the first prompt picks one tag from the deduplicated tag set;
 the second prompt picks an entry filtered to that tag via an
 `+TAG' match string passed to `org-map-entries'."

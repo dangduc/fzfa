@@ -77,7 +77,7 @@ Default is `fzfa-helm-multi-source-candidate-limit' × 10."
 
 Covers BOTH `:apply' lambdas (side-effecting commands like buffer
 kill or compile re-run) AND regular `:persistent-action' previews
-(file content peek, etc.).  When nil (the default), helm only
+\(file content peek, etc.).  When nil (the default), helm only
 fires the persistent action when the user presses `C-j' or
 `fzfa-preview-key' — matching fzfa's preview-on-demand paradigm
 across frontends (vertico/icomplete also wait for the key).
@@ -704,7 +704,7 @@ multi-source commands, by `fzfa-multi-read''s inner per-source
 plists).  Dispatches `:command' to `fzfa-helm-make-async-source'
 and `:candidates' to `fzfa-helm-make-sync-source'.
 
-The plist's `:action' (typically the `:inject' lambda fzfa-multi-read
+The plist's `:action' (typically the `:inject' lambda `fzfa-multi-read'
 installed) is wrapped to also `add-to-history' onto `:history' —
 mirroring the HIST push the inner `completing-read' would have done,
 which is skipped when we bypass it via `:inject' mode."

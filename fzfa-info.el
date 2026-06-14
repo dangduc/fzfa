@@ -80,7 +80,7 @@ indexed, or when a manual has changed on disk."
 (defun fzfa-info--manual-entries (manual)
   "Return a list of (ENTRY . NODE) index pairs for MANUAL.
 
-Walks every node in `Info-index-nodes' for the manual, parsing
+Walks every node in function `Info-index-nodes' for the manual, parsing
 each menu entry.  Result is memoised in `fzfa-info--cache'."
   (or (gethash manual fzfa-info--cache)
       (let (entries err)

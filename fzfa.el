@@ -2102,7 +2102,9 @@ Extracts CMD from the buffer's `<sep>CMD<sep>' shape into SOURCE's
 compact-mode display overlays.  No-op when SOURCE is already
 hidden.  Used by `fzfa-multi-read' on widen / source-switch so the
 buffer's `#cmd#filter' shape doesn't linger past the narrow that
-established it."
+established it.
+
+Afterwards display INITIAL-CHAR."
   (unless (eq (fzfa-source-display-state source) 'hidden)
     (setf (fzfa-source-command source)
           (fzfa--display-extract
@@ -2630,11 +2632,14 @@ plist with `:setup' / `:preview' / `:exit' / `:return' slots plus a
 callers stash this in the outer preview session so per-candidate
 dispatch outside the router can reach the right source's `:opener'.
 
+CANDIDATE->SOURCE is the source of the candidate.
+
 For each source, a fresh handler plist is resolved via
 `fzfa--preview-handler' using the source's own `:preview' override
 and `:category'.  Per-source state is stored in its own session
 cell, so an `:opener' stashed by one source's `:setup' never
 collides with another's.
+
 
 Lifecycle:
   :setup    Broadcast to every source; propagates origin
@@ -3985,7 +3990,7 @@ SPECS is the input source plist list.  SOURCES is the runtime
 display-state.  PROMPT is the call's prompt.  NARROW-IDX is the
 active narrow at exit (nil = widened).  LAST-QUERY is the most
 recent filter the user typed, captured by the table arm / ivy
-push closure.  ENTRY-COMMAND is `this-command' at fzfa--read
+push closure.  ENTRY-COMMAND is `this-command' at `fzfa--read'
 entry — the user-facing command name shown in the picker and used
 as part of the dedup key.
 
@@ -4004,7 +4009,7 @@ Exclusion: when ENTRY-COMMAND is in `fzfa-sessions-exclude-commands'
 the push is skipped entirely.  Used to keep the replay pickers
 themselves out of the ring (replaying a replay is confusing) and
 to drop helm's exit dispatcher (`helm-maybe-exit-minibuffer')
-which would otherwise mask every helm-mode pick."
+which would otherwise mask every `helm-mode' pick."
   (unless (memq entry-command fzfa-sessions-exclude-commands)
   (let* ((n (length sources))
          (target (or narrow-idx 0))

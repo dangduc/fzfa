@@ -253,8 +253,9 @@ disk reload round-trip."
      (message "fzfa-replay-save-list: %s" (error-message-string err)))))
 
 (defun fzfa-replay-load-list ()
-  "Load saved sessions from `fzfa-replay-file' into
-`fzfa-replay--persisted-sessions'.
+  "Load saved sessions from `fzfa-replay-file'.
+
+Saved sessions are loaded into `fzfa-replay--persisted-sessions'.
 
 No-op when the file does not exist (first run).  Errors during
 load are logged via `message' — a corrupt or partial file should
@@ -428,12 +429,14 @@ expect to feed `fzfa-completing-read'."
 The filter / query is baked into the candidate display string
 itself (see `fzfa-replay--session-to-candidate') so it shows on
 ivy / helm too; the annotation is just the source-count
-afterthought that vertico happens to render."
+afterthought that vertico happens to render.
+Argument CAND Candidate to annotate."
   (when-let* ((session (get-text-property 0 'fzfa-replay-session cand)))
     (format "  %d src" (length (plist-get session :sources)))))
 
 (defun fzfa-replay--group (cand transform)
-  "Group function: bucket CAND by date (Today / Yesterday / Week / Older)."
+  "Group function: bucket CAND by date (Today / Yesterday / Week / Older).
+Argument TRANSFORM If transform, return CAND."
   (if transform
       cand
     (or (when-let* ((session (get-text-property 0 'fzfa-replay-session cand))
@@ -497,7 +500,8 @@ need to generalize yet."
   (fzfa-replay--picker fzfa--sessions "Replay (memory): "))
 
 (defun fzfa-replay--file-producer (_input cb)
-  "2-arg `:candidates' producer that loads `fzfa-replay-file' async.
+  "2-arg `:candidates' producer that load `fzfa-replay-file' async.
+
 INPUT is ignored; CB is invoked with the session-candidate list
 once the file read finishes (or immediately on cache hit).  Uses
 `fzfa-replay--sessions-to-candidates' so column widths are
