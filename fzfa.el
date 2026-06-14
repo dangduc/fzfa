@@ -4019,6 +4019,7 @@ limit.  Set higher if you want a deeper resume ring."
   '(fzfa-replay-from-memory
     fzfa-replay-from-file
     fzfa-replay-any
+    fzfa-replay
     helm-maybe-exit-minibuffer
     matcha-me-mx)
   "Commands whose `fzfa--read' invocations are NOT captured for replay."
