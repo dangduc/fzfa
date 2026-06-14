@@ -653,9 +653,9 @@ category default from `fzfa-apply-functions'.
 Single: return `fzfa--session-apply' (already pre-resolved against
 `fzfa-apply-functions' at constructor time)."
   (cond
-   ((bound-and-true-p fzfa--multi-active-sources)
+   ((bound-and-true-p fzfa--active-sources)
     (when-let* ((src (fzfa--multi-source-of
-                      cand fzfa--multi-active-sources nil)))
+                      cand fzfa--active-sources nil)))
       (or (plist-get src :apply)
           (plist-get src :action)
           (plist-get
@@ -673,9 +673,9 @@ Multi: source plist's `:directory' + `:resolve-paths'.
 Single:  the minibuffer's `default-directory' (set by the constructor's
 setup hook) + `fzfa--session-resolve-paths'."
   (let* ((clean (fzfa--tofu-hide cand))
-         (src (and (bound-and-true-p fzfa--multi-active-sources)
+         (src (and (bound-and-true-p fzfa--active-sources)
                    (fzfa--multi-source-of
-                    cand fzfa--multi-active-sources nil)))
+                    cand fzfa--active-sources nil)))
          (dir (if src
                   (plist-get src :directory)
                 default-directory))
@@ -1564,10 +1564,10 @@ one place instead of four."
         (fzfa--bridge-defcustoms #'fzf-native-highlight-all sorted query))
       sorted))))
 
-(defun fzfa--multi-tagged-p (cand)
+(defun fzfa--tagged-p (cand)
   "Non-nil if CAND carries an invisible multi-source tofu suffix.
 
-The suffix is added by `fzfa--multi-tag' to make cross-source
+The suffix is added by `fzfa--tag' to make cross-source
 duplicates `string='-distinct.  Its codepoint sits at
 `fzfa--tofu-base' or higher (Unicode PUA range).  Used by
 `fzfa--sort-by-history' to detect multi-source input — the multi
@@ -1605,7 +1605,7 @@ Branches dispatched in order:
   (let ((query (fzfa--current-query "")))
     (cond
      ((null completions) nil)
-     ((fzfa--multi-tagged-p (car completions))
+     ((fzfa--tagged-p (car completions))
       completions)
      ((string-empty-p query)
       (if-let* ((hist (fzfa--history-hash)))
@@ -2384,12 +2384,12 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
           :skip-executable-check skip-executable-check)
          directory resolve-paths)))
     ;; Non-helm path: build a 1-source plist and dispatch through
-    ;; `fzfa--multi-read'.  N=1 fast paths inside `fzfa--multi-read'
+    ;; `fzfa--read'.  N=1 fast paths inside `fzfa--read'
     ;; restore the legacy single-source UX (no narrow menu, no tofu
     ;; suffix on candidates, source-direct metadata, post-action
     ;; `fzfa--maybe-expand') while sharing the multi-source plumbing.
     (let ((completion-styles '(fzfa)))
-      (fzfa--multi-read
+      (fzfa--read
        (list (list :name "fzfa"
                    :prompt prompt
                    :command command
@@ -2519,15 +2519,15 @@ See consult's `consult--tofu-encode' for the same trick.")
 (defvar fzfa--tofu-cache (make-hash-table :test 'eql)
   "Cache of propertized tofu suffix strings, keyed by source index.")
 
-(defvar fzfa--multi-active-sources nil
-  "Source vector bound across the active `fzfa--multi-read' session.
+(defvar fzfa--active-sources nil
+  "Source vector bound across the active `fzfa--read' session.
 
 Read by frontends that need per-source rendering — currently the
 ivy display transformer in `fzfa-ivy.el', which decodes each
 candidate's tofu suffix into its source name.")
 
-(defvar fzfa--multi-cand->src nil
-  "Candidate→source-idx hash bound across the active `fzfa--multi-read' session.
+(defvar fzfa--candidate->source nil
+  "Candidate→source-idx hash bound across the active `fzfa--read' session.
 
 Used by `fzfa--multi-source-of' / `fzfa--multi-source-idx' for dispatch
 when callers don't have direct access to the session-local hash table.")
@@ -2551,7 +2551,7 @@ Returns S unchanged when there is no tofu suffix."
       (substring s 0 (1- (length s)))
     s))
 
-(defun fzfa--multi-tag (cand idx hash &optional multi-p)
+(defun fzfa--tag (cand idx hash &optional multi-p)
   "Return CAND associated with source IDX in HASH.
 
 When MULTI-P is non-nil (the cross-source case), appends an
@@ -2580,9 +2580,9 @@ ambiguity to disambiguate."
   "Return the source plist responsible for CAND, or nil.
 
 SOURCES-V is the vector of source plists.  HASH maps CAND to source index;
-when nil, falls back to the session-bound `fzfa--multi-cand->src' dynvar."
+when nil, falls back to the session-bound `fzfa--candidate->source' dynvar."
   (and (stringp cand) (> (length cand) 0)
-       (when-let* ((tbl (or hash fzfa--multi-cand->src))
+       (when-let* ((tbl (or hash fzfa--candidate->source))
                    (idx (gethash cand tbl)))
          (aref sources-v idx))))
 
@@ -2590,12 +2590,12 @@ when nil, falls back to the session-bound `fzfa--multi-cand->src' dynvar."
   "Return the source index for CAND, or nil.
 
 HASH maps CAND to source index; when nil, falls back to the session-bound
-`fzfa--multi-cand->src' dynvar."
+`fzfa--candidate->source' dynvar."
   (and (stringp cand) (> (length cand) 0)
-       (when-let* ((tbl (or hash fzfa--multi-cand->src)))
+       (when-let* ((tbl (or hash fzfa--candidate->source)))
          (gethash cand tbl))))
 
-(defun fzfa--multi-build-router (sources-v cand->src)
+(defun fzfa--multi-build-router (sources-v candidate->source)
   "Build a synthetic preview handler that dispatches per source.
 
 SOURCES-V is the vector of source plists; CAND->SRC is the
@@ -2657,7 +2657,7 @@ Lifecycle:
          :preview
          (lambda (cand)
            (if-let* ((i (and cand
-                             (fzfa--multi-source-idx cand cand->src)))
+                             (fzfa--multi-source-idx cand candidate->source)))
                      (cell (aref cells i)))
                (let ((fzfa--preview-session cell))
                  (fzfa--preview-call :preview (fzfa--tofu-hide cand)))
@@ -2666,7 +2666,7 @@ Lifecycle:
          :exit  (lambda () (broadcast :exit))
          :return
          (lambda (cand)
-           (let ((i (and cand (fzfa--multi-source-idx cand cand->src))))
+           (let ((i (and cand (fzfa--multi-source-idx cand candidate->source))))
              (broadcast :return cand i)))
          ;; Expose cells so callers can route per-source from outside.
          :multi-cells cells)))))
@@ -2686,13 +2686,13 @@ the property set by `fzf-native-score-all'.  Returns 0 on empty input."
         0))
    (t (or (get-text-property 0 'completion-score (car results)) 0))))
 
-(defun fzfa--multi-candidates-fetch (source idx query cand->src &optional multi-p)
+(defun fzfa--multi-candidates-fetch (source idx query candidate->source &optional multi-p)
   "Refetch SOURCE's producer for QUERY iff QUERY changed.
 
 IDX is the source's index in the multi-read session — used by
-`fzfa--multi-tag' to stamp the candidate→source mapping.
+`fzfa--tag' to stamp the candidate→source mapping.
 CAND->SRC is the candidate→source-idx hash table.  MULTI-P is
-forwarded to `fzfa--multi-tag' — non-nil applies the tofu suffix
+forwarded to `fzfa--tag' — non-nil applies the tofu suffix
 \(cross-source case), nil keeps candidates verbatim (N=1).
 
 Reads/writes SOURCE's prod-input, prod-token, snapshot, total
@@ -2709,7 +2709,7 @@ Returns non-nil iff a fetch was actually issued."
                    (let ((tagged
                           (mapcar
                            (lambda (s)
-                             (fzfa--multi-tag s idx cand->src multi-p))
+                             (fzfa--tag s idx candidate->source multi-p))
                            (or cands '()))))
                      (setf (fzfa-source-snapshot source) tagged
                            (fzfa-source-total source) (length tagged)))))))
@@ -2852,7 +2852,7 @@ their :name via `fzfa--multi-derive-narrow-key'."
         (push (plist-put (copy-sequence src) :narrow s) result)))
     (nreverse result)))
 
-(cl-defun fzfa--multi-read (sources &key (prompt "fzf-multi: "))
+(cl-defun fzfa--read (sources &key (prompt "fzf-multi: "))
   "Run `completing-read' across multiple SOURCES, fzfa style.
 
 PROMPT is shown in the minibuffer.
@@ -2901,14 +2901,14 @@ Per-source plist keys:
    ((eq (car-safe fzfa--multi-mode) :inject)
     (let ((cand (cdr fzfa--multi-mode)))
       (setq fzfa--multi-mode nil)
-      (cl-return-from fzfa--multi-read cand))))
+      (cl-return-from fzfa--read cand))))
   (when (bound-and-true-p helm-mode)
-    (if (fboundp 'fzfa-helm--multi-read)
-        (cl-return-from fzfa--multi-read
-          (fzfa-helm--multi-read sources :prompt prompt))
+    (if (fboundp 'fzfa-helm--read)
+        (cl-return-from fzfa--read
+          (fzfa-helm--read sources :prompt prompt))
       (user-error "Fzfa--multi-read does not yet support helm-mode")))
   (cl-assert (> (length sources) 0) nil
-             "fzfa--multi-read: SOURCES must contain at least one source")
+             "fzfa--read: SOURCES must contain at least one source")
   (let* ((specs        sources)              ; cl-defun arg renamed
          (n            (length specs))
          (multi-p      (> n 1))              ; gates tofu tagging, narrow
@@ -2925,7 +2925,7 @@ Per-source plist keys:
                                   (fzfa-make-source :spec spec))
                                 specs)))
          (limit        (fzfa--candidate-limit))
-         (cand->src    (make-hash-table :test 'equal :size 1024))
+         (candidate->source    (make-hash-table :test 'equal :size 1024))
          (last-exhibit 0.0)
          ;; Session-level plist keys live on source 0 — the original
          ;; `fzfa-completing-read' contract is that these are
@@ -2940,7 +2940,7 @@ Per-source plist keys:
          (default-val   (and (not multi-p) (plist-get s0 :default)))
          (initial-input (and (not multi-p) (plist-get s0 :initial-input)))
          ;; `:apply' is consumed via `fzfa--apply-resolve' which
-         ;; reads it off the source plist through `cand->src'
+         ;; reads it off the source plist through `candidate->source'
          ;; dispatch — no local binding needed.
          ;; Compute `init-text' + `init-point' from the source plist
          ;; (mirrors the legacy `fzfa-completing-read' setup).  At N=1
@@ -3131,7 +3131,7 @@ Per-source plist keys:
                                        h query limit)))
                                  (prod
                                   (fzfa--multi-candidates-fetch
-                                   src i prod-input cand->src multi-p)
+                                   src i prod-input candidate->source multi-p)
                                   (let ((snap (fzfa-source-snapshot src)))
                                     (cond
                                      ((null snap) '())
@@ -3154,12 +3154,12 @@ Per-source plist keys:
                             ;; score-all' returns input strings unchanged
                             ;; for the rank tail, and content-equal copies
                             ;; for the highlighted top-N — both dispatch
-                            ;; through `cand->src' via content-equality.
+                            ;; through `candidate->source' via content-equality.
                             (when h
                               (setq out
                                     (mapcar
                                      (lambda (c)
-                                       (fzfa--multi-tag c i cand->src multi-p))
+                                       (fzfa--tag c i candidate->source multi-p))
                                      out)))
                             (setf (fzfa-source-last-result src) out
                                   (fzfa-source-rank src)
@@ -3360,13 +3360,13 @@ Per-source plist keys:
                       (when (bound-and-true-p ivy-mode)
                         (ivy--exhibit))))
                 (setq menu-active nil)))))
-         (router      (fzfa--multi-build-router specs-v cand->src))
+         (router      (fzfa--multi-build-router specs-v candidate->source))
          (fzfa--preview-session
           (and router
                ;; Stash the candidate→source-idx table for per-candidate
                ;; routing outside the router; cells exposed via
                ;; `:multi-cells' on ROUTER itself.
-               (list router :multi-cand->src cand->src)))
+               (list router :multi-candidate->source candidate->source)))
          retry-timer timer result)
     ;; Bind the forward-declared closures.  Order: `multi-refresh-fn'
     ;; references `ivy-push-multi' (which was bound in let*);
@@ -3450,7 +3450,7 @@ Per-source plist keys:
                                             (point-max))))
                                     (when (> (length s) 0)
                                       (setq selected-idx
-                                            (gethash s cand->src)))))
+                                            (gethash s candidate->source)))))
                                 nil 'local)
                       ;; Install narrow-key binding as a per-instance
                       ;; child of the active completion keymap so we
@@ -3488,8 +3488,8 @@ Per-source plist keys:
                       ;; single-source seeding lives here now).
                       (when init-point
                         (goto-char (+ (minibuffer-prompt-end) init-point))))
-                  (let ((fzfa--multi-active-sources specs-v)
-                        (fzfa--multi-cand->src cand->src)
+                  (let ((fzfa--active-sources specs-v)
+                        (fzfa--candidate->source candidate->source)
                         ;; `read-from-minibuffer' strips text properties
                         ;; from its return value by default — under
                         ;; `vertico' that means the candidate string `fzf-native'
@@ -3553,7 +3553,7 @@ Per-source plist keys:
                              :group
                              (lambda (cand transform)
                                (let* ((src (fzfa--multi-source-of
-                                            cand specs-v cand->src))
+                                            cand specs-v candidate->source))
                                       (g   (plist-get src :group)))
                                  (if transform
                                      ;; Per-source :group transform — lets a
@@ -3594,7 +3594,7 @@ Per-source plist keys:
                                        (mapcar
                                         (lambda (c)
                                           (let* ((src (fzfa--multi-source-of
-                                                       c specs-v cand->src))
+                                                       c specs-v candidate->source))
                                                  (g (and src
                                                          (plist-get src :group))))
                                             (or (and g (funcall
@@ -3607,7 +3607,7 @@ Per-source plist keys:
                                  (cl-mapcar
                                   (lambda (cand _display)
                                     (let* ((src (fzfa--multi-source-of
-                                                 cand specs-v cand->src))
+                                                 cand specs-v candidate->source))
                                            (ann (and src
                                                      (plist-get src :annotate)))
                                            (s   (and ann (funcall
@@ -3674,7 +3674,7 @@ Per-source plist keys:
                                                  h query limit)))
                                            (prod
                                             (fzfa--multi-candidates-fetch
-                                             src i prod-input cand->src multi-p)
+                                             src i prod-input candidate->source multi-p)
                                             (let ((snap (fzfa-source-snapshot src)))
                                               (cond
                                                ((null snap) '())
@@ -3701,13 +3701,13 @@ Per-source plist keys:
                                       ;; sync scorer preserves identity
                                       ;; (tail) or content-equality
                                       ;; (highlighted top-N) — both
-                                      ;; dispatch through `cand->src'.
+                                      ;; dispatch through `candidate->source'.
                                       ;; out may be nil (zero matches) — ok.
                                       (when h
                                         (setq out
                                               (mapcar
                                                (lambda (c)
-                                                 (fzfa--multi-tag c i cand->src multi-p))
+                                                 (fzfa--tag c i candidate->source multi-p))
                                                out)))
                                       (setf (fzfa-source-last-result src) out
                                             (fzfa-source-rank src)
@@ -3781,7 +3781,7 @@ Per-source plist keys:
     (when result
       (let* ((src    (or (and selected-idx (aref specs-v selected-idx))
                          (fzfa--multi-source-of
-                          result specs-v cand->src)))
+                          result specs-v candidate->source)))
              (action (and src (plist-get src :action)))
              (clean  (fzfa--tofu-hide result))
              (hist   (and src (plist-get src :history)))
@@ -3812,11 +3812,11 @@ that source (KEY is a single character — symbol, ?char, or string).
 Each command is funcalled twice per multi session — once in
 `:extract' mode (capture keyword args, abort), once in `:inject' mode after
 the user picks (so the command's post-action runs).  OPTIONS is forwarded
-to `fzfa--multi-read'.  Commands whose body does not reach
+to `fzfa--read'.  Commands whose body does not reach
 `fzfa-completing-read' are skipped.
 Commands must be arg-less (no interactive `read-*' prompts in their body).
 
-Composes: if a command in COMMANDS itself calls `fzfa--multi-read'
+Composes: if a command in COMMANDS itself calls `fzfa--read'
 \(e.g. `fzfa-find-any'), its inner sources are flattened in alongside
 the other commands' sources, with each inner source keeping its own
 :action.  Explicit :narrow on a nested-multi entry is ignored —
@@ -3884,7 +3884,7 @@ inner sources receive auto-derived keys from their own :name."
     ;; explicit `:narrow' annotations.
     (unless (eq fzfa--multi-mode :extract)
       (setq sources (fzfa--multi-allocate-narrow-keys sources)))
-    (apply #'fzfa--multi-read sources options)))
+    (apply #'fzfa--read sources options)))
 
 (defcustom fzfa-find-any-commands
   '((fzfa-frames :narrow F)

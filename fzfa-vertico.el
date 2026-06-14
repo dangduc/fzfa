@@ -314,13 +314,13 @@ group is produced."
 (defun fzfa-vertico--src-idx-of (part)
   "Return PART's first candidate source index, or `most-positive-fixnum'.
 
-Looked up via the session-bound `fzfa--multi-cand->src' hash; used as
+Looked up via the session-bound `fzfa--candidate->source' hash; used as
 the sort key for the `source-idx' ordering mode."
   (let ((c (cadr part)))
     (or (and (stringp c)
              (> (length c) 0)
-             (bound-and-true-p fzfa--multi-cand->src)
-             (gethash c fzfa--multi-cand->src))
+             (bound-and-true-p fzfa--candidate->source)
+             (gethash c fzfa--candidate->source))
         most-positive-fixnum)))
 
 (defun fzfa-vertico--empty-query-p ()
@@ -343,7 +343,7 @@ follow, and async arrival order would otherwise shuffle columns."
      ;; Empty query → lock declared order so async streaming doesn't
      ;; shuffle columns as sources arrive at different times.  With a
      ;; query, follow `vertico--candidates' discovery order, which
-     ;; `fzfa--multi-read' merges in rank order (strongest source first).
+     ;; `fzfa--read' merges in rank order (strongest source first).
      (if (fzfa-vertico--empty-query-p)
          (sort parts (lambda (a b) (< (fzfa-vertico--src-idx-of a)
                                       (fzfa-vertico--src-idx-of b))))

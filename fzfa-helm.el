@@ -14,7 +14,7 @@
 ;; Helm frontend for `fzfa'.  Loaded automatically when `helm' is in
 ;; `fzfa-extensions' and `fzfa-setup' has been called.  Once loaded,
 ;; the two internal entry points (`fzfa-helm--completing-read' and
-;; `fzfa-helm--multi-read') are picked up by `fzfa.el's dispatch
+;; `fzfa-helm--read') are picked up by `fzfa.el's dispatch
 ;; sites via `fboundp', gated on `helm-mode'.
 ;;
 ;; Public source constructors for building helm commands directly:
@@ -44,7 +44,7 @@
 (require 'fzfa)
 
 (defcustom fzfa-helm-multi-source-candidate-limit 200
-  "Per-source candidate cap inside `fzfa-helm--multi-read'.
+  "Per-source candidate cap inside `fzfa-helm--read'.
 
 `helm' renders every candidate the source returns so we cap it here.
 This cap is applied to both the `fzf-native'
@@ -101,7 +101,7 @@ effects, hence the conservative default."
 Called by `fzfa--ensure-setup' when `helm' is in `fzfa-extensions'.
 The body is intentionally empty — invoking it through the autoload
 stub loads this file, which is the wiring.  The dispatch sites in
-`fzfa.el' (`fzfa-helm--completing-read', `fzfa-helm--multi-read')
+`fzfa.el' (`fzfa-helm--completing-read', `fzfa-helm--read')
 become `fboundp' once the file is loaded and pick up
 `helm-mode' automatically.")
 
@@ -375,7 +375,7 @@ the subprocess with the new command.  Same UX as the `completing-read'
 path.
 
 Internal — used by both `fzfa-helm-make-async-source' (single-source)
-and `fzfa-helm--multi-read' (batch with bulk-stop)."
+and `fzfa-helm--read' (batch with bulk-stop)."
   (let* ((dir (expand-file-name (or directory default-directory)))
          (initial-char fzfa-separator)
          ;; Per-source state lives on the struct.  `command' slot is
@@ -768,7 +768,7 @@ OVERRIDES is a keyword args plist merged on top of the extracted args
 have N inner sources, no single set of args to override).
 
 Caveat for multi-source commands: each inner source gets its own
-polling timer (no shared timer like `fzfa-helm--multi-read' uses).
+polling timer (no shared timer like `fzfa-helm--read' uses).
 For pure-fzfa multis with several async sources, `fzfa-multi-read'
 is faster.  Composition into helm-mini-style sessions is the
 intended use case.
@@ -870,7 +870,7 @@ vertico / icomplete rely on.  Side effect: bypassing
       (unless (executable-find prog)
         (user-error "%s not found in exec-path" prog))))
   ;; Build a 1-source plist and dispatch through
-  ;; `fzfa-helm--multi-read'.  N=1 fast paths inside the multi
+  ;; `fzfa-helm--read'.  N=1 fast paths inside the multi
   ;; entry point (pre-set `narrowed-name', skip the `<' menu,
   ;; single-source buffer name/prompt/default) restore the legacy
   ;; UX while sharing the multi-source plumbing.
@@ -878,7 +878,7 @@ vertico / icomplete rely on.  Side effect: bypassing
                     (when command
                       (concat (car (split-string command nil t)) ": "))
                     (when candidates "fzf > "))))
-    (fzfa-helm--multi-read
+    (fzfa-helm--read
      (list (list :name "fzfa"
                  :prompt prompt
                  :command command
@@ -897,10 +897,10 @@ vertico / icomplete rely on.  Side effect: bypassing
                  :action #'identity))
      :prompt prompt)))
 
-;;; Multi handler — dispatched from `fzfa--multi-read'
+;;; Multi handler — dispatched from `fzfa--read'
 
-(cl-defun fzfa-helm--multi-read (sources &key prompt)
-  "Helm dispatch for `fzfa--multi-read'.
+(cl-defun fzfa-helm--read (sources &key prompt)
+  "Helm dispatch for `fzfa--read'.
 
 SOURCES is the same list of plists as the `completing-read' path.
 PROMPT is the prompt string shown in the helm session.
@@ -923,7 +923,7 @@ it changes.  Replaces helm's default \"first non-empty source\"
 positioning, which is declared-order-arbitrary and structurally wrong
 for fuzzy-multi-source UX."
   (cl-assert (> (length sources) 0) nil
-             "fzfa-helm--multi-read: SOURCES must contain at least one source")
+             "fzfa-helm--read: SOURCES must contain at least one source")
   (fzfa-helm--ensure-loaded)
   (let* ((helm-completion-style 'emacs)
          (n-sources (length sources))

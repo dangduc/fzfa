@@ -608,8 +608,8 @@ when the inner sources arrive without `:narrow'."
          (fzfa-preview-delay 0.3)
          (sources-v (vector (list :name "A" :category 'cat-a)
                             (list :name "B" :category 'cat-b)))
-         (cand->src (make-hash-table :test 'equal))
-         (router (fzfa--multi-build-router sources-v cand->src))
+         (candidate->source (make-hash-table :test 'equal))
+         (router (fzfa--multi-build-router sources-v candidate->source))
          ;; Pretend the framework already installed and set origin/dir.
          (fzfa--preview-session (list router)))
     (fzfa-preview-put :origin-window nil)
@@ -619,11 +619,11 @@ when the inner sources arrive without `:narrow'."
     (funcall (plist-get router :setup))
     ;; Source 0 candidate
     (let ((c0 (propertize "alpha" 'fzfa-src-idx 0)))
-      (puthash c0 0 cand->src)
+      (puthash c0 0 candidate->source)
       (funcall (plist-get router :preview) c0))
     ;; Source 1 candidate
     (let ((c1 (propertize "beta" 'fzfa-src-idx 1)))
-      (puthash c1 1 cand->src)
+      (puthash c1 1 candidate->source)
       (funcall (plist-get router :preview) c1))
     (should (equal (reverse calls)
                    '((0 . "alpha") (1 . "beta"))))))
@@ -649,15 +649,15 @@ when the inner sources arrive without `:narrow'."
          (fzfa-preview-delay 0.3)
          (sources-v (vector (list :name "A" :category 'cat-a)
                             (list :name "B" :category 'cat-b)))
-         (cand->src (make-hash-table :test 'equal))
-         (router (fzfa--multi-build-router sources-v cand->src))
+         (candidate->source (make-hash-table :test 'equal))
+         (router (fzfa--multi-build-router sources-v candidate->source))
          (fzfa--preview-session (list router))
          (sel (propertize "picked" 'fzfa-src-idx 1)))
     (fzfa-preview-put :origin-window nil)
     (fzfa-preview-put :origin-buffer nil)
     (fzfa-preview-put :default-directory "/")
     (funcall (plist-get router :setup))
-    (puthash sel 1 cand->src)
+    (puthash sel 1 candidate->source)
     (funcall (plist-get router :return) sel)
     ;; Source 1 got the candidate; source 0 got nil.
     (should (equal (sort (copy-sequence returns) (lambda (a b)
@@ -1383,12 +1383,12 @@ order is canonical."
   "Multi-source input (tofu-tagged head) passes through verbatim — the
 multi loop already applied per-source sort + highlight; a global
 re-sort would trample the source-block ordering."
-  (skip-unless (fboundp 'fzfa--multi-tag))
+  (skip-unless (fboundp 'fzfa--tag))
   (let* ((hash    (make-hash-table :test 'equal))
          ;; Tag candidates as if they came from two different sources.
-         (a (fzfa--multi-tag (copy-sequence "alpha")  0 hash))
-         (b (fzfa--multi-tag (copy-sequence "beta")   1 hash))
-         (c (fzfa--multi-tag (copy-sequence "gamma")  0 hash))
+         (a (fzfa--tag (copy-sequence "alpha")  0 hash))
+         (b (fzfa--tag (copy-sequence "beta")   1 hash))
+         (c (fzfa--tag (copy-sequence "gamma")  0 hash))
          (input (list a b c)))
     (cl-letf (((symbol-function 'fzfa--current-query)
                (lambda (&rest _) "a"))
