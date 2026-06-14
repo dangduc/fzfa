@@ -200,6 +200,129 @@ not break the in-memory replay path."
     (cancel-timer fzfa-replay-auto-save-timer)
     (setq fzfa-replay-auto-save-timer nil)))
 
+;;; Pickers
+
+(defun fzfa-replay--session-to-candidate (session)
+  "Build a picker candidate string for SESSION.
+
+The displayed text is a short summary (date + directory).  The
+full session plist rides on the string as a `fzfa-replay-session'
+text property at index 0 — the snapshot-lookup recovery in
+`fzfa--read''s post-result block restores it on selection so
+`fzfa-replay--action' can dispatch."
+  (let* ((ts (or (plist-get session :timestamp) 0))
+         (time-str (format-time-string "%a %H:%M" ts))
+         (dir (abbreviate-file-name
+               (or (plist-get session :directory) ""))))
+    (propertize (format "%s  %s" time-str dir)
+                'fzfa-replay-session session)))
+
+(defun fzfa-replay--annotate (cand)
+  "Annotation function: append filter + source count to CAND."
+  (when-let* ((session (get-text-property 0 'fzfa-replay-session cand)))
+    (let* ((sources (plist-get session :sources))
+           (n (length sources))
+           (target (or (plist-get session :narrow-idx) 0))
+           (filter (and (< target n)
+                        (plist-get (aref sources target) :initial-input))))
+      (format "  %s  %d src" (or filter "—") n))))
+
+(defun fzfa-replay--group (cand transform)
+  "Group function: bucket CAND by date (Today / Yesterday / Week / Older)."
+  (if transform
+      cand
+    (or (when-let* ((session (get-text-property 0 'fzfa-replay-session cand))
+                    (ts (plist-get session :timestamp)))
+          (let ((days-ago (/ (- (float-time) ts) 86400)))
+            (cond
+             ((< days-ago 1) "Today")
+             ((< days-ago 2) "Yesterday")
+             ((< days-ago 7) "This week")
+             (t "Older"))))
+        "Unknown")))
+
+(defun fzfa-replay--replay-session (session)
+  "Restore SESSION's specs and run `fzfa--read'."
+  (let ((specs (cl-map 'list #'fzfa--session-restore-spec
+                       (plist-get session :sources))))
+    (fzfa--read specs
+                :prompt (plist-get session :prompt)
+                :narrow-idx (plist-get session :narrow-idx))))
+
+(defun fzfa-replay--action (cand)
+  "Picker action: read the session off CAND and replay it."
+  (when-let* ((session (and (stringp cand) (> (length cand) 0)
+                            (get-text-property 0 'fzfa-replay-session
+                                               cand))))
+    (fzfa-replay--replay-session session)))
+
+(defun fzfa-replay--picker (sessions prompt)
+  "Run a session picker over SESSIONS with PROMPT.
+
+SESSIONS is a list of session plists (most recent first); empty
+signals a `user-error'.  Each session renders as a summary
+candidate carrying the full plist via text property; selection
+calls `fzfa-replay--action'."
+  (unless sessions
+    (user-error "No fzfa sessions to replay"))
+  (let ((cand (fzfa-completing-read
+               :candidates (mapcar #'fzfa-replay--session-to-candidate
+                                   sessions)
+               :prompt prompt
+               :category 'fzfa-replay-session
+               :annotate #'fzfa-replay--annotate
+               :group #'fzfa-replay--group
+               :require-match t)))
+    (fzfa-replay--action cand)))
+
+;;;###autoload
+(defun fzfa-replay-from-memory ()
+  "Pick from the in-memory session ring (`fzfa--sessions') and replay."
+  (interactive)
+  (fzfa-replay--picker fzfa--sessions "Replay (memory): "))
+
+;;;###autoload
+(defun fzfa-replay-from-file ()
+  "Pick from the persisted session list and replay.
+
+Reads `fzfa-replay--persisted-sessions' synchronously; the async
+load path lands in Phase B-4."
+  (interactive)
+  (fzfa-replay--picker fzfa-replay--persisted-sessions
+                       "Replay (file): "))
+
+;;;###autoload
+(defun fzfa-replay-any ()
+  "Pick from in-memory + persisted sessions and replay.
+
+Multi-source over both rings as separate sources with narrow keys
+`m' (memory) and `f' (file).  Empty rings are skipped; both empty
+signals a `user-error'."
+  (interactive)
+  (let ((mem fzfa--sessions)
+        (file fzfa-replay--persisted-sessions))
+    (when (and (null mem) (null file))
+      (user-error "No fzfa sessions to replay"))
+    (fzfa--read
+     (delq nil
+           (list (when mem
+                   (list :name "memory" :narrow "m"
+                         :candidates
+                         (mapcar #'fzfa-replay--session-to-candidate mem)
+                         :category 'fzfa-replay-session
+                         :annotate #'fzfa-replay--annotate
+                         :group    #'fzfa-replay--group
+                         :action   #'fzfa-replay--action))
+                 (when file
+                   (list :name "file" :narrow "f"
+                         :candidates
+                         (mapcar #'fzfa-replay--session-to-candidate file)
+                         :category 'fzfa-replay-session
+                         :annotate #'fzfa-replay--annotate
+                         :group    #'fzfa-replay--group
+                         :action   #'fzfa-replay--action))))
+     :prompt "Replay (any): ")))
+
 ;;;###autoload
 (define-minor-mode fzfa-replay-mode
   "Persist `fzfa' session history across Emacs lifetimes.

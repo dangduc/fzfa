@@ -1852,6 +1852,39 @@ in-band metadata."
                            '("a" "b")))))
       (delete-file tmpfile))))
 
+;;; fzfa-replay pickers
+
+(ert-deftest fzfa-replay-session-to-candidate-attaches-session-prop ()
+  "The summary candidate carries the full session as a text property."
+  (let* ((session (list :prompt "p: " :timestamp 1718411234.5
+                        :directory "/tmp/" :sources []))
+         (cand (fzfa-replay--session-to-candidate session)))
+    (should (stringp cand))
+    (should (eq (get-text-property 0 'fzfa-replay-session cand)
+                session))))
+
+(ert-deftest fzfa-replay-annotate-includes-filter-and-count ()
+  "Annotation shows the narrow target's filter + source count."
+  (let* ((session (list :narrow-idx 0
+                        :sources
+                        (vector (list :initial-input "phx" :snapshot nil)
+                                (list :initial-input nil :snapshot nil))))
+         (cand (propertize "stub" 'fzfa-replay-session session))
+         (ann (fzfa-replay--annotate cand)))
+    (should (string-match-p "phx" ann))
+    (should (string-match-p "2 src" ann))))
+
+(ert-deftest fzfa-replay-group-buckets-by-recency ()
+  "Sessions older than a week land in the Older bucket."
+  (let* ((session (list :timestamp (- (float-time) (* 86400 30))))
+         (cand (propertize "stub" 'fzfa-replay-session session)))
+    (should (equal (fzfa-replay--group cand nil) "Older"))))
+
+(ert-deftest fzfa-replay-group-passes-through-on-transform ()
+  "Group with TRANSFORM non-nil returns the candidate unchanged."
+  (let ((cand "any-string"))
+    (should (eq (fzfa-replay--group cand t) cand))))
+
 (ert-deftest fzfa-replay-save-respects-max-saved-items ()
   "Save truncates to `fzfa-replay-max-saved-items'."
   (let* ((tmpfile (make-temp-file "fzfa-replay-test-"))
