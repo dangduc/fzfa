@@ -2801,42 +2801,34 @@ the property set by `fzf-native-score-all'.  Returns 0 on empty input."
         0))
    (t (or (get-text-property 0 'completion-score (car results)) 0))))
 
-(defun fzfa--multi-candidates-fetch (source idx query candidate->source
-                                            &optional multi-p refresh-fn)
+(defun fzfa--source-fetch (source query &optional refresh-fn on-deliver)
   "Refetch SOURCE's producer for QUERY iff QUERY changed.
 
-IDX is the source's index in the multi-read session — used by
-`fzfa--tag' to stamp the candidate→source mapping.
-CANDIDATE->SOURCE is the candidate→source-idx hash table.  MULTI-P
-is forwarded to `fzfa--tag' — non-nil applies the tofu suffix
-\(cross-source case), nil keeps candidates verbatim (N=1).
+Protocol-only: updates SOURCE's `prod-input', `prod-token',
+`snapshot', `total' slots.  Discards stale callbacks via the
+`prod-token' check (a newer fetch bumps the token; the old
+callback's `(= my-token …)' test fails and it no-ops).
+
+ON-DELIVER, when non-nil, is `(lambda (CANDS) → VALUE)' invoked
+inside the callback with the producer's output before snapshot
+write.  Returns the value to store as the snapshot.  Used by
+`fzfa--multi-candidates-fetch' to stamp each candidate with the
+source→idx mapping via `fzfa--tag'; nil callers (helm) take the
+producer output verbatim.
 
 REFRESH-FN, when non-nil, is a 0-arg closure that fires the
-frontend's redraw (typically
-`(lambda () (fzfa--frontend-push ivy-push-multi))', same value
-the sibling `fzfa-source--restart' takes).  Used for
-*async-firing* producers — sync producers invoke their callback
-inline while the caller still holds the table-arm tick and the
-same pass consumes the new snapshot, but async producers (e.g.
-`fzfa-replay--file-producer' on first-call cache miss, jsonrpc,
-any external IPC source) deliver later and need an explicit
-push to surface the just-arrived candidates.
+frontend's redraw.  Sync-vs-async detection: a local SYNC-CALL
+flag is t during the funcall, flipped to nil afterwards.  The
+callback consults it — sync producers don't schedule a refresh
+\(the caller's pass already sees the new snapshot); async
+producers (callback fires post-funcall) schedule
+`(run-with-idle-timer 0 nil refresh-fn)' so the frontend
+re-renders.
 
-Sync-vs-async detection: a local SYNC-CALL flag is t during the
-funcall, flipped to nil afterwards; the callback consults it to
-decide whether the caller's pass will already see the snapshot
-or whether it must schedule its own push via
-`run-with-idle-timer'.
-
-Mirrors `fzfa-source--restart''s callback-driven refresh
-pattern — the difference is that restart unconditionally calls
-REFRESH-FN (its caller never reads the snapshot in the same
-tick), while fetch only fires when async.
-
-Reads/writes SOURCE's prod-input, prod-token, snapshot, total
-slots.  The callback closes over SOURCE, IDX, and
-CANDIDATE->SOURCE and discards stale arrivals via the prod-token
-check.
+Mirrors `fzfa-source--restart''s callback-driven refresh pattern
+\(restart unconditionally fires REFRESH-FN because its caller
+never reads the snapshot in the same tick; fetch only fires when
+async).
 
 Returns non-nil iff a fetch was actually issued."
   (unless (equal query (fzfa-source-prod-input source))
@@ -2846,17 +2838,40 @@ Returns non-nil iff a fetch was actually issued."
       (funcall (fzfa-source-cands-fn source) (or query "")
                (lambda (cands)
                  (when (= my-token (fzfa-source-prod-token source))
-                   (let ((tagged
-                          (mapcar
-                           (lambda (s)
-                             (fzfa--tag s idx candidate->source multi-p))
-                           (or cands '()))))
-                     (setf (fzfa-source-snapshot source) tagged
-                           (fzfa-source-total source) (length tagged))
+                   (let* ((delivered (or cands '()))
+                          (value (if on-deliver
+                                     (funcall on-deliver delivered)
+                                   delivered)))
+                     (setf (fzfa-source-snapshot source) value
+                           (fzfa-source-total source) (length value))
                      (when (and (not sync-call) refresh-fn)
                        (run-with-idle-timer 0 nil refresh-fn))))))
       (setq sync-call nil))
     t))
+
+(defun fzfa--multi-candidates-fetch (source idx query candidate->source
+                                            &optional multi-p refresh-fn)
+  "Tagging wrapper over `fzfa--source-fetch' for the multi path.
+
+IDX is the source's index in the multi-read session — used by
+`fzfa--tag' to stamp the candidate→source mapping.
+CANDIDATE->SOURCE is the candidate→source-idx hash table.  MULTI-P
+is forwarded to `fzfa--tag' — non-nil applies the tofu suffix
+\(cross-source case), nil keeps candidates verbatim (N=1).
+
+See `fzfa--source-fetch' for the underlying producer protocol +
+REFRESH-FN semantics.  Helm callers skip this wrapper — they
+have no candidate→source hash and don't need the tofu tagging,
+so they call `fzfa--source-fetch' directly with their own
+refresh closure (helm-force-update guarded by helm-alive-p).
+
+Returns non-nil iff a fetch was actually issued."
+  (fzfa--source-fetch
+   source query refresh-fn
+   (lambda (cands)
+     (mapcar (lambda (s)
+               (fzfa--tag s idx candidate->source multi-p))
+             cands))))
 
 (defun fzfa--multi-poll-bumped-p (sources-v)
   "Non-nil iff any source in SOURCES-V has a fresh generation.

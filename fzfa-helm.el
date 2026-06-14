@@ -569,8 +569,15 @@ callback so helm re-reads candidates with the fresh snapshot."
          ;; (list / zero) don't use the display-state or producer
          ;; slots but the source still bundles the per-source state
          ;; uniformly.
+         ;; Populate `cands-fn' for producer kinds (sync / async) so
+         ;; the shared `fzfa--source-fetch' helper finds the producer
+         ;; on the struct rather than via lexical capture.  Static
+         ;; kinds (`list' / `zero') keep nil — they short-circuit
+         ;; before any fetch dispatch.
          (source (fzfa-make-source :directory default-directory
-                                   :display (or display 'hidden)))
+                                   :display (or display 'hidden)
+                                   :candidates (and producer-kind-p
+                                                    items)))
          (display-cycle
           (lambda ()
             (interactive)
@@ -623,21 +630,16 @@ callback so helm re-reads candidates with the fresh snapshot."
                                         (lambda (x) (setq snap x)))
                                snap))
                        (async
-                        (unless (equal cmd (fzfa-source-prod-input source))
-                          (setf (fzfa-source-prod-input source) cmd)
-                          (let ((my-token
-                                 (cl-incf (fzfa-source-prod-token source))))
-                            (funcall items (or cmd "")
-                                     (lambda (cands-result)
-                                       (when (= my-token
-                                                (fzfa-source-prod-token source))
-                                         (setf (fzfa-source-snapshot source)
-                                               cands-result)
-                                         (when (and (boundp 'helm-alive-p)
-                                                    helm-alive-p)
-                                           (run-with-idle-timer
-                                            0 nil
-                                            #'helm-force-update)))))))
+                        ;; Producer protocol + async-refresh dispatch
+                        ;; live in the shared `fzfa--source-fetch'
+                        ;; helper; the closure adapts its REFRESH-FN
+                        ;; contract to helm's `helm-force-update'
+                        ;; gated on `helm-alive-p'.
+                        (fzfa--source-fetch
+                         source cmd
+                         (lambda ()
+                           (when (and (boundp 'helm-alive-p) helm-alive-p)
+                             (helm-force-update))))
                         (fzfa-source-snapshot source))))
                     (r (while-no-input
                          (if (string-empty-p filter)
@@ -1174,7 +1176,15 @@ for fuzzy-multi-source UX."
                ;; firing sources keep their snapshot in source-local
                ;; closure state and trigger `helm-force-update' when
                ;; the callback arrives.
-               (let* ((source (fzfa-make-source :directory directory))
+               (let* ((source (fzfa-make-source :directory directory
+                                                ;; Populate `cands-fn'
+                                                ;; on the struct so the
+                                                ;; async branch's
+                                                ;; `fzfa--source-fetch'
+                                                ;; finds the producer.
+                                                ;; `--normalize-candidates'
+                                                ;; handles all shapes.
+                                                :candidates cands))
                       (kind
                        (cond
                         ((listp cands) 'list)
@@ -1236,33 +1246,21 @@ for fuzzy-multi-source UX."
                                                        (setq snap x)))
                                             snap))
                                     (async
-                                     ;; Fire producer when CMD changes
-                                     ;; since the last fire.  Callback
-                                     ;; updates source's snapshot slot
-                                     ;; and schedules a force-update;
-                                     ;; meanwhile we return the current
-                                     ;; snapshot (possibly stale for one
-                                     ;; tick).
-                                     (unless (equal cmd (fzfa-source-prod-input
-                                                         source))
-                                       (setf (fzfa-source-prod-input source) cmd)
-                                       (let ((my-token
-                                              (cl-incf
-                                               (fzfa-source-prod-token source))))
-                                         (funcall cands (or cmd "")
-                                                  (lambda (cands-result)
-                                                    (when (= my-token
-                                                             (fzfa-source-prod-token
-                                                              source))
-                                                      (setf
-                                                       (fzfa-source-snapshot source)
-                                                       cands-result)
-                                                      (when
-                                                          (and (boundp 'helm-alive-p)
-                                                               helm-alive-p)
-                                                        (run-with-idle-timer
-                                                         0 nil
-                                                         #'helm-force-update)))))))
+                                     ;; Producer protocol + async-refresh
+                                     ;; dispatch live in the shared
+                                     ;; `fzfa--source-fetch' helper; the
+                                     ;; closure adapts its REFRESH-FN
+                                     ;; contract to helm's
+                                     ;; `helm-force-update' gated on
+                                     ;; `helm-alive-p'.  Meanwhile we
+                                     ;; return the current snapshot
+                                     ;; (possibly stale for one tick).
+                                     (fzfa--source-fetch
+                                      source cmd
+                                      (lambda ()
+                                        (when (and (boundp 'helm-alive-p)
+                                                   helm-alive-p)
+                                          (helm-force-update))))
                                      (fzfa-source-snapshot source))))
                                  (r (while-no-input
                                       (if (string-empty-p filter)

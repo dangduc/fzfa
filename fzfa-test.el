@@ -2467,5 +2467,86 @@ snapshot — a refresh would be a redundant tick."
     ;; Should not signal even though refresh-fn was nil
     (should (equal (fzfa-source-snapshot source) '("late")))))
 
+;;; `fzfa--source-fetch' — protocol-only helper shared by helm + multi
+
+(ert-deftest fzfa-source-fetch-writes-snapshot-and-total ()
+  "Producer output lands in `snapshot' and `total' after fetch."
+  (let* ((producer (lambda (_in cb) (funcall cb '("a" "b" "c"))))
+         (source (fzfa-make-source :spec `(:candidates ,producer))))
+    (fzfa--source-fetch source "q")
+    (should (equal (fzfa-source-snapshot source) '("a" "b" "c")))
+    (should (= (fzfa-source-total source) 3))
+    (should (equal (fzfa-source-prod-input source) "q"))))
+
+(ert-deftest fzfa-source-fetch-skips-on-equal-query ()
+  "Re-firing with the same query no-ops — producer not called again."
+  (let* ((calls 0)
+         (producer (lambda (_in cb) (cl-incf calls) (funcall cb '("x"))))
+         (source (fzfa-make-source :spec `(:candidates ,producer))))
+    (fzfa--source-fetch source "q")
+    (fzfa--source-fetch source "q")
+    (should (= calls 1))))
+
+(ert-deftest fzfa-source-fetch-stale-callback-discarded ()
+  "Re-firing with a new query bumps prod-token; old callback no-ops.
+
+`prod-token' is the staleness guard — an async producer whose
+callback arrives after a newer fetch has been issued must not
+overwrite the fresher snapshot."
+  (let* ((cbs nil)
+         (producer (lambda (_in cb) (push cb cbs)))
+         (source (fzfa-make-source :spec `(:candidates ,producer))))
+    (fzfa--source-fetch source "q1")
+    (fzfa--source-fetch source "q2")
+    ;; cbs are in push order; (car cbs) is q2's, (cadr cbs) is q1's.
+    (funcall (cadr cbs) '("stale"))
+    (should-not (fzfa-source-snapshot source))
+    (funcall (car cbs) '("fresh"))
+    (should (equal (fzfa-source-snapshot source) '("fresh")))))
+
+(ert-deftest fzfa-source-fetch-on-deliver-transforms-snapshot ()
+  "ON-DELIVER's return becomes the snapshot value.
+
+This is the tagging seam: `fzfa--multi-candidates-fetch' threads
+its `fzfa--tag' mapper through here so candidates carry the
+source→idx mapping by the time they hit the snapshot.  Helm
+callers pass nil and take output verbatim."
+  (let* ((producer (lambda (_in cb) (funcall cb '("a" "b"))))
+         (source (fzfa-make-source :spec `(:candidates ,producer))))
+    (fzfa--source-fetch source "q" nil
+                        (lambda (cands)
+                          (mapcar #'upcase cands)))
+    (should (equal (fzfa-source-snapshot source) '("A" "B")))))
+
+(ert-deftest fzfa-source-fetch-async-schedules-refresh-fn ()
+  "Async producer schedules REFRESH-FN; sync skips it.
+
+Same shape as `fzfa-multi-candidates-fetch-async-refresh' but
+exercises the underlying helper directly so the contract is
+locked even if the wrapper changes."
+  (let* ((refresh-fn (lambda () 'sentinel))
+         (async-cb nil)
+         (producer (lambda (_in cb) (setq async-cb cb)))
+         (source (fzfa-make-source :spec `(:candidates ,producer)))
+         (before (length timer-idle-list)))
+    (fzfa--source-fetch source "q" refresh-fn)
+    (should (= (length timer-idle-list) before))
+    (funcall async-cb '("alpha"))
+    (should (equal (fzfa-source-snapshot source) '("alpha")))
+    (should (= (length timer-idle-list) (1+ before)))
+    (let ((tm (car timer-idle-list)))
+      (should (eq (timer--function tm) refresh-fn))
+      (cancel-timer tm))))
+
+(ert-deftest fzfa-source-fetch-sync-no-refresh ()
+  "Sync producer's inline callback does NOT schedule REFRESH-FN."
+  (let* ((refresh-fn (lambda () 'sentinel))
+         (producer (lambda (_in cb) (funcall cb '("x" "y"))))
+         (source (fzfa-make-source :spec `(:candidates ,producer)))
+         (before (length timer-idle-list)))
+    (fzfa--source-fetch source "q" refresh-fn)
+    (should (equal (fzfa-source-snapshot source) '("x" "y")))
+    (should (= (length timer-idle-list) before))))
+
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here
