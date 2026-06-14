@@ -33,6 +33,16 @@
   "Persisted replay for `fzfa' sessions."
   :group 'fzfa)
 
+(defface fzfa-replay-query
+  '((t :underline t))
+  "Face for the captured query column in a replay candidate.
+
+Underline by default so the eye finds the query quickly when
+scanning a list of otherwise-similar sessions (same command,
+same directory, different queries).  Same idea as
+`fzfa-regexp-match' on the regexp picker."
+  :group 'fzfa-replay)
+
 (defcustom fzfa-replay-file
   (locate-user-emacs-file ".fzfa-replay")
   "File where `fzfa-replay-mode' persists the session list."
@@ -336,7 +346,10 @@ the lowest-common-denominator that works everywhere."
          (filter (or (and sources (< target (length sources))
                           (plist-get (aref sources target) :initial-input))
                      ""))
-         (filter-col (if (string-empty-p filter) "—" filter))
+         (filter-col
+          (if (string-empty-p filter)
+              (propertize "—" 'face 'shadow)
+            (propertize filter 'face 'fzfa-replay-query)))
          (display (concat (format "%s  %-24s  %-16s  %s"
                                   time-str cmd filter-col dir)
                           (fzfa--tofu-suffix idx))))

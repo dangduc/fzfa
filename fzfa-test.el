@@ -2025,6 +2025,22 @@ the columns rectangular."
          (cand (fzfa-replay--session-to-candidate session 0)))
     (should (string-match-p "—" cand))))
 
+(ert-deftest fzfa-replay-session-to-candidate-underlines-query ()
+  "Non-empty query string gets the `fzfa-replay-query' face for visibility."
+  (let* ((session
+          (list :timestamp 0
+                :command 'fzfa-fd
+                :directory "/dir/"
+                :narrow-idx 0
+                :sources
+                (vector (list :initial-input "needle" :snapshot nil))))
+         (cand (fzfa-replay--session-to-candidate session 0))
+         (start (string-match "needle" cand)))
+    (should start)
+    (let ((face (get-text-property start 'face cand)))
+      (should (or (eq face 'fzfa-replay-query)
+                  (and (listp face) (memq 'fzfa-replay-query face)))))))
+
 (ert-deftest fzfa-replay-group-buckets-by-recency ()
   "Sessions older than a week land in the Older bucket."
   (let* ((session (list :timestamp (- (float-time) (* 86400 30))))
