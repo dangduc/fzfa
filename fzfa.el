@@ -3485,6 +3485,13 @@ Per-source plist keys:
                         (goto-char (+ (minibuffer-prompt-end) init-point))))
                   (let ((fzfa--multi-active-sources specs-v)
                         (fzfa--multi-cand->src cand->src)
+                        ;; `read-from-minibuffer' strips text properties
+                        ;; from its return value by default — under
+                        ;; `vertico' that means the candidate string `fzf-native'
+                        ;; scored over comes back bare, dropping any
+                        ;; metadata callers carried in-band (e.g.
+                        ;; `fzfa-location' for `fzfa-swiper').
+                        (minibuffer-allow-text-properties t)
                         (ivy-completing-read-dynamic-collection t)
                         (ivy-count-format
                          (if (and (bound-and-true-p ivy-mode) wants-decoration)
