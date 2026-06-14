@@ -297,6 +297,9 @@ See *Extensions* below.)
 | ~fzfa-project-buffer~         | ~counsel-projectile-switch-to-buffer~           | ~consult-project-buffer~            | ~helm-projectile-switch-to-buffer~ |
 | ~fzfa-project-recentf~        | ~counsel-projectile-recentf~                    | —                                   | ~helm-projectile-recentf~          |
 | ~fzfa-project-switch-project~ | ~counsel-projectile-switch-project~             | —                                   | ~helm-projectile-switch-project~   |
+| ~fzfa-replay-from-memory~     | ~ivy-resume~                                    | ~vertico-repeat~?                   | ~helm-resume~                      |
+| ~fzfa-replay-from-file~       | —                                               | —                                   | —                                  |
+| ~fzfa-replay-any~             | —                                               | —                                   | —                                  |
 
 ** Content search
 
@@ -554,6 +557,43 @@ does not reset and continues generating results we can score/filter against.
 This lets one prompt combine, say, ~recentf~ entries (sync list) alongside a
 streaming ~rg~ search (async producer) and have both groups score
 against the same query as the user types:
+
+* Replay
+
+Every ~fzfa-completing-read~ / ~fzfa-multi-read~ session is captured
+to an in-memory ring at exit — the source specs, the active narrow,
+the typed filter, any in-session edits to the shell command, and the
+display state.  ~fzfa-replay~-* commands let you pick a past
+session and replay it as if you'd just invoked the original command.
+
+Two rings: an in-memory list (current Emacs lifetime, recent
+activity, capped by ~fzfa-sessions-max~), and an on-disk file
+(across Emacs lifetimes capped by ~fzfa-replay-max-saved-items~).
+ The disk ring is opt-in via ~fzfa-replay-mode~ — without it,
+replay still works for the current (in-memory) Emacs session.
+
+** Commands
+
+| Command                   | Source ring                   |
+|---------------------------+-------------------------------|
+| ~fzfa-replay-from-memory~ | in-memory (current Emacs)     |
+| ~fzfa-replay-from-file~   | on-disk (past Emacs sessions) |
+| ~fzfa-replay-any~         | both, as multi-source         |
+
+Note, this is a Replay, not a Resume (e.g. ~helm-resume~), it attempts to
+replay a past ~fzfa-*~ command's inputs (e.g. command, directory, query, etc).
+
+** Configuration
+
+| Variable                         | What it controls                                           |
+|----------------------------------+------------------------------------------------------------|
+| ~fzfa-sessions-max~              | In-memory ring cap (default 16)                            |
+| ~fzfa-sessions-exclude-commands~ | Commands to exclude from replay                            |
+| ~fzfa-replay-file~               | On-disk path (default ~~/.emacs.d/.fzfa-replay~)           |
+| ~fzfa-replay-max-saved-items~    | On-disk ring cap (default 20)                              |
+| ~fzfa-replay-save-file-modes~    | Permission bits on the file (default ~#o600~ — owner-only) |
+| ~fzfa-replay-auto-save-interval~ | Idle seconds between background saves (default 300)        |
+| ~fzfa-replay-any-commands~       | Sources shown by ~fzfa-replay-any~ (default memory + file) |
 
 * Extensions
 
