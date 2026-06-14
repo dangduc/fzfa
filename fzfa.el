@@ -2945,7 +2945,12 @@ Per-source plist keys:
                           (or (plist-get s0 :require-match)
                               (and (plist-get s0 :candidates) t))))
          (default-val   (and (not multi-p) (plist-get s0 :default)))
-         (initial-input (and (not multi-p) (plist-get s0 :initial-input)))
+         ;; `:initial-input' is read off the narrow-target spec (or
+         ;; source 0 when widened / at N=1) regardless of multi-p so
+         ;; `fzfa-resume' can replay the filter for multi sessions
+         ;; too — that's where the captured filter lives.
+         (initial-input
+          (plist-get (aref specs-v (or narrow-idx 0)) :initial-input))
          ;; `:apply' is consumed via `fzfa--apply-resolve' which
          ;; reads it off the source plist through `candidate->source'
          ;; dispatch — no local binding needed.
@@ -3894,11 +3899,23 @@ push closure."
 
 Walks the captured `:command' / `:display' / `:initial-input'
 slots and writes them onto a copy of the original spec so
-`fzfa--read' sees the exit-state values."
+`fzfa--read' sees the exit-state values.
+
+`:command' is dropped when empty — the runtime slot defaults to
+\"\" on `:candidates'-only sources, and overlaying that onto a
+spec that has no `:command' would trick the eager-start loop into
+spawning a shell handle with an empty command (kills the sync
+path's result set)."
   (let ((spec (cl-copy-list (plist-get record :spec))))
-    (dolist (key '(:command :display :initial-input))
-      (let ((v (plist-get record key)))
-        (when v (setq spec (plist-put spec key v)))))
+    (let ((cmd (plist-get record :command)))
+      (when (and (stringp cmd) (not (string-empty-p cmd)))
+        (setq spec (plist-put spec :command cmd))))
+    (let ((display (plist-get record :display)))
+      (when display
+        (setq spec (plist-put spec :display display))))
+    (let ((input (plist-get record :initial-input)))
+      (when input
+        (setq spec (plist-put spec :initial-input input))))
     spec))
 
 ;;;###autoload

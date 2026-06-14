@@ -1675,6 +1675,22 @@ backspace-to-empty frame."
     (should (eq (plist-get restored :display) 'hidden))
     (should-not (plist-get restored :initial-input))))
 
+(ert-deftest fzfa-session-restore-spec-drops-empty-command ()
+  "Empty `:command' capture does not overlay onto a :candidates spec.
+
+`fzfa-make-source' defaults the runtime `command' slot to \"\" for
+sources that have no `:command' in their spec.  Overlaying that
+back onto the spec would trick `fzfa--read''s eager-start loop
+into firing a shell handle on an empty cmd — kills the sync path."
+  (let* ((spec (list :name "buffers" :candidates '("a" "b")
+                     :category 'buffer))
+         (rec  (list :spec spec :command "" :display 'hidden
+                     :initial-input "m"))
+         (restored (fzfa--session-restore-spec rec)))
+    (should-not (plist-get restored :command))
+    (should (equal (plist-get restored :candidates) '("a" "b")))
+    (should (equal (plist-get restored :initial-input) "m"))))
+
 (ert-deftest fzfa-sessions-push-trims-to-max ()
   "Pushing past `fzfa-sessions-max' drops the oldest entries."
   (let ((fzfa--sessions nil)

@@ -1513,6 +1513,12 @@ for fuzzy-multi-source UX."
                                  (plist-get s0 :prompt))
                             "fzf-multi: ")
                 :default (and (not multi-p) (plist-get s0 :default))
+                ;; `:initial-input' lives on the narrow target's spec
+                ;; (or source 0 if widened) — read it here so resume
+                ;; replays the filter under helm too, matching the
+                ;; vertico / ivy paths.
+                :input (plist-get (nth (or narrow-idx 0) sources)
+                                  :initial-input)
                 :buffer (if multi-p "*helm fzfa multi*" "*helm fzfa*")))
       (remove-hook 'helm-after-update-hook jump-fn)
       (remove-hook 'helm-after-update-hook update-last-query)
