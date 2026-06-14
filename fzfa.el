@@ -393,6 +393,35 @@ Intended for `let'-binding when extending built-in commands:
 
 Priority: `fzfa-directory' > project backend > `default-directory'.")
 
+;; Preview Variables
+
+(defvar fzfa--preview-session)
+
+(defvar fzfa--preview-session nil
+  "Active preview session: (HANDLER . STATE-PLIST).
+
+`let'-bound by `fzfa-sync/async-completing-read' so the session is
+visible from :setup, :preview, :exit, and :return.  Use
+`fzfa-preview-get' / `fzfa-preview-put' to access the state plist.")
+
+(defvar-local fzfa--preview-timer nil
+  "Buffer-local debounce timer; lives in the minibuffer only.")
+(defvar-local fzfa--preview-last 'unset
+  "Last previewed candidate in this minibuffer (for change detection).")
+
+;; Tofu
+
+(defconst fzfa--tofu-base #x100000
+  "Base Unicode Private Use Area codepoint for source-disambiguation suffixes.
+
+Each multi source's candidates carry a single trailing codepoint at
+`fzfa--tofu-base' + source-idx, propertized `display \"\"' so it renders
+invisibly while making cross-source duplicates `string='-unique.
+See consult's `consult--tofu-encode' for the same trick.")
+
+(defvar fzfa--tofu-cache (make-hash-table :test 'eql)
+  "Cache of propertized tofu suffix strings, keyed by source index.")
+
 ;;; `completion-styles'
 
 (defun fzfa-try-completion (string _table _pred _point)
@@ -685,8 +714,6 @@ setup hook) + `fzfa--session-resolve-paths'."
                     fzfa--session-resolve-paths)))
     (fzfa--maybe-expand clean dir resolve)))
 
-(defvar fzfa--preview-session)
-
 (defun fzfa--pin-window-buffer (window buffer)
   "Ensure WINDOW stays on BUFFER once the active minibuffer session exits.
 
@@ -865,18 +892,6 @@ or `setq') to add categories of your own."
                                              (:exit function)
                                              (:return function))))
   :group 'fzfa)
-
-(defvar fzfa--preview-session nil
-  "Active preview session: (HANDLER . STATE-PLIST).
-
-`let'-bound by `fzfa-sync/async-completing-read' so the session is
-visible from :setup, :preview, :exit, and :return.  Use
-`fzfa-preview-get' / `fzfa-preview-put' to access the state plist.")
-
-(defvar-local fzfa--preview-timer nil
-  "Buffer-local debounce timer; lives in the minibuffer only.")
-(defvar-local fzfa--preview-last 'unset
-  "Last previewed candidate in this minibuffer (for change detection).")
 
 (defun fzfa-preview-get (key &optional default)
   "Return KEY from the active preview session's state plist, or DEFAULT."
@@ -2533,17 +2548,6 @@ narrowing entirely."
   :type '(choice (const :tag "Disabled" nil)
                  (string :tag "Key string (passed to `kbd')"))
   :group 'fzfa)
-
-(defconst fzfa--tofu-base #x100000
-  "Base Unicode Private Use Area codepoint for source-disambiguation suffixes.
-
-Each multi source's candidates carry a single trailing codepoint at
-`fzfa--tofu-base' + source-idx, propertized `display \"\"' so it renders
-invisibly while making cross-source duplicates `string='-unique.
-See consult's `consult--tofu-encode' for the same trick.")
-
-(defvar fzfa--tofu-cache (make-hash-table :test 'eql)
-  "Cache of propertized tofu suffix strings, keyed by source index.")
 
 (defvar fzfa--active-sources nil
   "Source vector bound across the active `fzfa--read' session.
