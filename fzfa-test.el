@@ -1925,6 +1925,47 @@ collapse same-minute / same-directory sessions."
           (should (equal got '(cached-marker))))
       (delete-file tmpfile))))
 
+(ert-deftest fzfa-replay-save-skips-unreadable-sessions ()
+  "Sessions with non-readable nested values (markers etc.) are dropped on save."
+  (let* ((tmpfile (make-temp-file "fzfa-replay-skip-"))
+         (fzfa-replay-file tmpfile)
+         ;; A marker prints as `#<marker ...>' — not readable.
+         (bad-cand (with-temp-buffer
+                     (propertize "marker-laden"
+                                 'fzfa-marker (point-marker))))
+         (good-session
+          (list :prompt "p: " :narrow-idx nil
+                :timestamp 1.0 :directory "/tmp/"
+                :sources (vector
+                          (list :spec '(:name "g")
+                                :command "" :display 'hidden
+                                :initial-input "ok" :snapshot nil))))
+         (bad-session
+          (list :prompt "p: " :narrow-idx nil
+                :timestamp 2.0 :directory "/tmp/"
+                :sources (vector
+                          ;; Function `:candidates' gets substituted with
+                          ;; `:snapshot' by the scrubber — the marker
+                          ;; nested in the snapshot rides into the spec
+                          ;; and trips the readable-p round-trip check.
+                          (list :spec `(:name "b" :candidates ,(lambda () nil))
+                                :command "" :display 'hidden
+                                :initial-input nil
+                                :snapshot (list bad-cand)))))
+         (fzfa--sessions (list bad-session good-session))
+         (fzfa-replay--persisted-sessions nil))
+    (unwind-protect
+        (progn
+          (fzfa-replay-save-list)
+          (fzfa-replay-load-list)
+          ;; Only the good session round-trips.
+          (should (= (length fzfa-replay--persisted-sessions) 1))
+          (let ((src (aref (plist-get
+                            (car fzfa-replay--persisted-sessions) :sources)
+                           0)))
+            (should (equal (plist-get src :initial-input) "ok"))))
+      (delete-file tmpfile))))
+
 (ert-deftest fzfa-replay-save-invalidates-load-cache ()
   "`save-list' clears the mtime cache so the next load re-reads."
   (let* ((tmpfile (make-temp-file "fzfa-replay-cache-"))
