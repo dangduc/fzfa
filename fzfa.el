@@ -3924,6 +3924,16 @@ limit.  Set higher if you want a deeper resume ring."
   :type 'natnum
   :group 'fzfa)
 
+(defcustom fzfa-sessions-exclude-commands
+  '(fzfa-replay-from-memory
+    fzfa-replay-from-file
+    fzfa-replay-any
+    helm-maybe-exit-minibuffer
+    matcha-me-mx)
+  "Commands whose `fzfa--read' invocations are NOT captured for replay."
+  :type '(repeat function)
+  :group 'fzfa)
+
 (defvar fzfa--sessions nil
   "List of recent `fzfa--read' session snapshots, most recent first.
 
@@ -3988,7 +3998,14 @@ Dedup: before pushing, any existing session with the same
 \(command, directory, narrow-idx, filter) key is removed.  Five
 identical \\[fzfa-fd]'s from the same dir with the same query
 collapse into one — keeping the in-memory ring meaningful and
-preventing the on-disk file from accumulating duplicates."
+preventing the on-disk file from accumulating duplicates.
+
+Exclusion: when ENTRY-COMMAND is in `fzfa-sessions-exclude-commands'
+the push is skipped entirely.  Used to keep the replay pickers
+themselves out of the ring (replaying a replay is confusing) and
+to drop helm's exit dispatcher (`helm-maybe-exit-minibuffer')
+which would otherwise mask every helm-mode pick."
+  (unless (memq entry-command fzfa-sessions-exclude-commands)
   (let* ((n (length sources))
          (target (or narrow-idx 0))
          (records
@@ -4027,7 +4044,7 @@ preventing the on-disk file from accumulating duplicates."
                      fzfa--sessions)))
     (when (> (length fzfa--sessions) fzfa-sessions-max)
       (setq fzfa--sessions
-            (cl-subseq fzfa--sessions 0 fzfa-sessions-max)))))
+            (cl-subseq fzfa--sessions 0 fzfa-sessions-max))))))
 
 (defun fzfa--session-restore-spec (record)
   "Return RECORD's spec with captured runtime state overlaid.

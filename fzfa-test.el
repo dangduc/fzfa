@@ -1753,6 +1753,28 @@ into firing a shell handle on an empty cmd — kills the sync path."
     (should (equal (plist-get restored :candidates) '("a" "b")))
     (should (equal (plist-get restored :initial-input) "m"))))
 
+(ert-deftest fzfa-sessions-push-skips-excluded-command ()
+  "ENTRY-COMMAND in `fzfa-sessions-exclude-commands' is not pushed.
+
+Replay pickers themselves capture into the ring would let the
+user replay a replay (confusing — the user wants the underlying
+session, not the picker that surfaced it).  Same goes for helm's
+`helm-maybe-exit-minibuffer' dispatcher."
+  (let ((fzfa--sessions nil)
+        (fzfa-sessions-exclude-commands '(fzfa-replay-from-memory
+                                          helm-maybe-exit-minibuffer))
+        (sources (vector (fzfa-make-source :spec '(:name "x")))))
+    (fzfa--sessions-push '((:name "x")) sources "p: " nil ""
+                         'fzfa-replay-from-memory)
+    (should-not fzfa--sessions)
+    (fzfa--sessions-push '((:name "x")) sources "p: " nil ""
+                         'helm-maybe-exit-minibuffer)
+    (should-not fzfa--sessions)
+    ;; A non-excluded command still pushes.
+    (fzfa--sessions-push '((:name "x")) sources "p: " nil ""
+                         'fzfa-fd)
+    (should (= (length fzfa--sessions) 1))))
+
 (ert-deftest fzfa-sessions-push-trims-to-max ()
   "Pushing past `fzfa-sessions-max' drops the oldest entries.
 
