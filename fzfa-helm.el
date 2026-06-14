@@ -1210,9 +1210,20 @@ for fuzzy-multi-source UX."
                                  ;; kinds route CMD to INPUT and
                                  ;; FILTER to fzf scoring.  Static
                                  ;; kinds have no CMD; whole pattern
-                                 ;; is the FILTER.
+                                 ;; is the FILTER.  Use the
+                                 ;; display-state-aware `fzfa--split'
+                                 ;; \(not the raw `fzfa--split-input')
+                                 ;; so non-shell producer sources in
+                                 ;; hidden mode (e.g.
+                                 ;; `fzfa-replay--file-producer') route
+                                 ;; the whole pattern through FILTER
+                                 ;; instead of treating it as CMD and
+                                 ;; leaving FILTER empty.
                                  (split (and (memq kind '(sync async))
-                                             (fzfa--split-input pat)))
+                                             (fzfa--split
+                                              pat
+                                              (fzfa-source-display-state source)
+                                              (fzfa-source-command source))))
                                  (cmd (and split (car split)))
                                  (filter (if split (cdr split) pat))
                                  (all
