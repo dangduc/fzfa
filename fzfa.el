@@ -2916,6 +2916,15 @@ Per-source plist keys:
       (user-error "Fzfa--read does not yet support helm-mode")))
   (cl-assert (> (length sources) 0) nil
              "fzfa--read: SOURCES must contain at least one source")
+  ;; Bind here so every caller (including `fzfa-resume', which doesn't
+  ;; go through the shim wrappers) routes candidates through fzfa's
+  ;; passthrough style.  Without this, the user's default completion
+  ;; styles (orderless, flex, etc.) re-filter our pre-scored
+  ;; candidates against their own substring / fuzzy logic and silently
+  ;; drop sources whose content doesn't match — that's how resume of
+  ;; `fzfa-find-any' lost every source except the few whose pool
+  ;; happened to substring-match the seeded filter.
+  (let ((completion-styles '(fzfa)))
   (let* ((specs        sources)              ; cl-defun arg renamed
          (n            (length specs))
          (multi-p      (> n 1))              ; gates tofu tagging, narrow
@@ -3823,7 +3832,7 @@ Per-source plist keys:
         ;; consistent whether picked directly or via a multi.
         (when (and hist (symbolp hist) (not (eq hist t)))
           (add-to-history hist expanded))
-        (if action (funcall action expanded) expanded)))))
+        (if action (funcall action expanded) expanded))))))
 
 ;;; Resume
 
