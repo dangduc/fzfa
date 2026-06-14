@@ -72,7 +72,7 @@ Default is `fzfa-helm-multi-source-candidate-limit' × 10."
   :type 'integer
   :group 'fzfa)
 
-(defcustom fzfa-helm-apply-follow nil
+(defcustom fzfa-helm-want-follow nil
   "Whether helm should auto-fire the persistent action on selection move.
 
 Covers BOTH `:apply' lambdas (side-effecting commands like buffer
@@ -364,7 +364,7 @@ Overridden by APPLY when both are set.
 
 APPLY, when non-nil, is a (CAND) -> ANY function bound to `helm''s
 `:persistent-action' slot, taking precedence over PERSISTENT-ACTION.
-`:follow' tracks `fzfa-helm-apply-follow' — auto-fire on every
+`:follow' tracks `fzfa-helm-want-follow' — auto-fire on every
 selection move (default) or on `helm-execute-persistent-action'.
 
 Display cycling: `fzfa-display-key' (default `>') is bound in
@@ -471,10 +471,10 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
              (cond
               (apply
                (append (list :persistent-action apply)
-                       (when fzfa-helm-apply-follow '(:follow 1))))
+                       (when fzfa-helm-want-follow '(:follow 1))))
               (persistent-action
                (append (list :persistent-action persistent-action)
-                       (when fzfa-helm-apply-follow '(:follow 1)))))))
+                       (when fzfa-helm-want-follow '(:follow 1)))))))
      stop)))
 
 (cl-defun fzfa-helm-make-async-source
@@ -525,7 +525,7 @@ action dispatch operate on the raw candidate.
 
 PERSISTENT-ACTION wires preview-as-you-scroll under helm; APPLY wires
 fzfa's `:apply' (persistent-action proper) and takes precedence.
-`:follow' tracks `fzfa-helm-apply-follow' when APPLY is in use, else
+`:follow' tracks `fzfa-helm-want-follow' when APPLY is in use, else
 defaults to 1 for PERSISTENT-ACTION.
 
 HISTORY is an optional history variable symbol.  When set and
@@ -689,10 +689,10 @@ callback so helm re-reads candidates with the fresh snapshot."
             (cond
              (apply
               (append (list :persistent-action apply)
-                      (when fzfa-helm-apply-follow '(:follow 1))))
+                      (when fzfa-helm-want-follow '(:follow 1))))
              (persistent-action
               (append (list :persistent-action persistent-action)
-                      (when fzfa-helm-apply-follow '(:follow 1)))))))))
+                      (when fzfa-helm-want-follow '(:follow 1)))))))))
 
 ;;; Composition helper — fzfa command -> helm source(s)
 
@@ -1177,7 +1177,7 @@ for fuzzy-multi-source UX."
                             (list :persistent-action
                                   (fzfa-helm--make-debounced-preview-fn
                                    preview-cell))
-                            (when fzfa-helm-apply-follow
+                            (when fzfa-helm-want-follow
                               '(:follow 1))))))))
               (cands
                ;; Sync source inlined here (rather than via
@@ -1328,7 +1328,7 @@ for fuzzy-multi-source UX."
                             (list :persistent-action
                                   (fzfa-helm--make-debounced-preview-fn
                                    preview-cell))
-                            (when fzfa-helm-apply-follow
+                            (when fzfa-helm-want-follow
                               '(:follow 1))))))))
               (t
                (error
