@@ -379,6 +379,16 @@ via `fzfa-replay--file-producer'."
    :prompt "Replay (any): "))
 
 ;;;###autoload
+(defun fzfa-replay-setup ()
+  "Enable `fzfa-replay-mode' from `fzfa--ensure-setup'.
+
+Called automatically when `replay' is in `fzfa-extensions'.
+Loading this file via the autoload stub registers the mode; the
+mode toggle hooks in disk persistence (idle save timer, final
+`kill-emacs-hook' save, startup load)."
+  (fzfa-replay-mode 1))
+
+;;;###autoload
 (define-minor-mode fzfa-replay-mode
   "Persist `fzfa' session history across Emacs lifetimes.
 
