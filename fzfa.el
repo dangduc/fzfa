@@ -2916,21 +2916,30 @@ Returns S unchanged when there is no tofu suffix."
       (substring s 0 (1- (length s)))
     s))
 
-(defun fzfa--multi-tag (cand idx hash)
-  "Return CAND tagged for source IDX.
+(defun fzfa--multi-tag (cand idx hash &optional multi-p)
+  "Return CAND associated with source IDX in HASH.
 
-Appends an invisible tofu suffix so cross-source duplicates remain
-`string='-distinct, and records the tagged string in HASH as the
-candidate→source-idx lookup table used by `fzfa--multi-source-of'.
-
-Idempotent: strips any pre-existing TOFU suffix from CAND first,
+When MULTI-P is non-nil (the cross-source case), appends an
+invisible tofu suffix so cross-source duplicates remain
+`string='-distinct and records the *tagged* string in HASH.
+Idempotent: strips any pre-existing tofu suffix from CAND first,
 so calling on an already-tagged string yields the same content
 \(safe to re-tag producer-path output after `fzf-native-score-all'
-preserves the snapshot's TOFU suffix)."
-  (let* ((clean (fzfa--tofu-hide cand))
-         (tagged (concat clean (fzfa--tofu-suffix idx))))
-    (puthash tagged idx hash)
-    tagged))
+preserves the snapshot's tofu suffix).
+
+When MULTI-P is nil (N=1 fast path), no suffix is appended — CAND
+is hashed and returned verbatim, skipping the per-candidate
+`propertize'+`concat' cost.  At N=1 there's no cross-source
+ambiguity to disambiguate."
+  (cond
+   (multi-p
+    (let* ((clean (fzfa--tofu-hide cand))
+           (tagged (concat clean (fzfa--tofu-suffix idx))))
+      (puthash tagged idx hash)
+      tagged))
+   (t
+    (puthash cand idx hash)
+    cand)))
 
 (defun fzfa--multi-source-of (cand sources-v hash)
   "Return the source plist responsible for CAND, or nil.
@@ -3042,12 +3051,14 @@ the property set by `fzf-native-score-all'.  Returns 0 on empty input."
         0))
    (t (or (get-text-property 0 'completion-score (car results)) 0))))
 
-(defun fzfa--multi-candidates-fetch (source idx query cand->src)
+(defun fzfa--multi-candidates-fetch (source idx query cand->src &optional multi-p)
   "Refetch SOURCE's producer for QUERY iff QUERY changed.
 
 IDX is the source's index in the multi-read session — used by
 `fzfa--multi-tag' to stamp the candidate→source mapping.
-CAND->SRC is the candidate→source-idx hash table.
+CAND->SRC is the candidate→source-idx hash table.  MULTI-P is
+forwarded to `fzfa--multi-tag' — non-nil applies the tofu suffix
+\(cross-source case), nil keeps candidates verbatim (N=1).
 
 Reads/writes SOURCE's prod-input, prod-token, snapshot, total
 slots.  The callback closes over SOURCE, IDX, and CAND->SRC and
@@ -3063,7 +3074,7 @@ Returns non-nil iff a fetch was actually issued."
                    (let ((tagged
                           (mapcar
                            (lambda (s)
-                             (fzfa--multi-tag s idx cand->src))
+                             (fzfa--multi-tag s idx cand->src multi-p))
                            (or cands '()))))
                      (setf (fzfa-source-snapshot source) tagged
                            (fzfa-source-total source) (length tagged)))))))
@@ -3261,8 +3272,12 @@ Per-source plist keys:
         (cl-return-from fzfa--multi-read
           (fzfa-helm--multi-read sources :prompt prompt))
       (user-error "Fzfa--multi-read does not yet support helm-mode")))
+  (cl-assert (> (length sources) 0) nil
+             "fzfa--multi-read: SOURCES must contain at least one source")
   (let* ((specs        sources)              ; cl-defun arg renamed
          (n            (length specs))
+         (multi-p      (> n 1))              ; gates tofu tagging, narrow
+                                             ; menu, source-name headers
          (specs-v      (vconcat specs))      ; plist vector (helper callsites)
          ;; All per-source runtime state — handle, current-cmd, snapshot,
          ;; prod-token, prod-input, last-result, rank, total, filtered,
@@ -3277,17 +3292,43 @@ Per-source plist keys:
          (limit        (fzfa--candidate-limit))
          (cand->src    (make-hash-table :test 'equal :size 1024))
          (last-exhibit 0.0)
+         ;; Prompt-fn arg builder.  Single source of truth for the
+         ;; `:source-kind' / `:directory' / `:command' triple so the
+         ;; refresh-overlay tick, the ivy pre-prompt closure, and the
+         ;; wants-decoration probe all agree.  At N=1 the args
+         ;; reflect the lone source (matches the historical
+         ;; single-source prompt: DIR + filtered/total); at N>1 they
+         ;; describe the aggregate multi session.  Caller passes EXTRA
+         ;; — a plist with `:index', `:filtered', `:total',
+         ;; `:narrow-name'.
+         (prompt-fn-args
+          (lambda (extra)
+            (let* ((s0 (aref specs-v 0)))
+              (append
+               (list :source-kind
+                     (cond (multi-p :multi)
+                           ((plist-get s0 :command) :command)
+                           (t :candidates))
+                     :prompt prompt
+                     :directory
+                     (and (not multi-p)
+                          (plist-get s0 :command)
+                          (let ((d (or (plist-get s0 :directory)
+                                       default-directory)))
+                            (and d (abbreviate-file-name
+                                    (expand-file-name d)))))
+                     :command
+                     (and (not multi-p)
+                          (fzfa-source-command (aref sources 0))))
+               extra))))
          ;; See the single-source `wants-decoration' probe for the rule.
          (wants-decoration
           (and (funcall fzfa-prompt-function
-                        (list :source-kind :multi
-                              :prompt prompt
-                              :directory nil
-                              :command nil
-                              :index nil
-                              :filtered 0
-                              :total 0
-                              :narrow-name nil))
+                        (funcall prompt-fn-args
+                                 (list :index nil
+                                       :filtered 0
+                                       :total 0
+                                       :narrow-name nil)))
                t))
          (stats-overlay nil)
          ;; Captured by `minibuffer-exit-hook' from the propertized text
@@ -3296,9 +3337,13 @@ Per-source plist keys:
          ;; the same string appears in multiple sources.
          (selected-idx nil)
          ;; Index into specs-v / sources of the currently-narrowed source,
-         ;; or nil for "all sources".  Mutated by `narrow-handler' on a
-         ;; narrow key press and read by the candidate function in `'t' below.
-         (narrow-idx nil)
+         ;; or nil for "all sources" (multi-source widened state).  At
+         ;; N=1 there is no "widened" — the lone source is permanently
+         ;; the narrow target, so initialize to 0 so the rest of the
+         ;; code paths (display-cycle gate, candidate-fetch CMD split,
+         ;; metadata source resolution, etc.) behave as if narrowed
+         ;; from the first frame onward.
+         (narrow-idx (unless multi-p 0))
          ;; When the narrow menu is on screen (during the
          ;; `narrow-handler''s `read-char') we must NOT overwrite the
          ;; overlay with the stats line on every tick — otherwise async
@@ -3315,21 +3360,19 @@ Per-source plist keys:
                  stats-overlay 'display
                  (funcall
                   fzfa-prompt-function
-                  (list :source-kind :multi
-                        :prompt prompt
-                        :directory nil
-                        :command nil
-                        :index (fzfa--frontend-index)
-                        :filtered (cl-loop for s across sources
-                                           sum (fzfa-source-filtered s))
-                        :total (cl-loop for s across sources
-                                        sum (fzfa-source-total s))
-                        :narrow-name
-                        (and narrow-idx
-                             (or (plist-get
-                                  (aref specs-v narrow-idx)
-                                  :name)
-                                 "?")))))))
+                  (funcall
+                   prompt-fn-args
+                   (list :index (fzfa--frontend-index)
+                         :filtered (cl-loop for s across sources
+                                            sum (fzfa-source-filtered s))
+                         :total (cl-loop for s across sources
+                                         sum (fzfa-source-total s))
+                         :narrow-name
+                         (and multi-p narrow-idx
+                              (or (plist-get
+                                   (aref specs-v narrow-idx)
+                                   :name)
+                                  "?"))))))))
             (fzfa--insert-prompt-if-ivy)))
          ;; Forward placeholders — these closures reference each other
          ;; in a cycle (`ivy-push-multi' → `narrow-do-restart' →
@@ -3405,7 +3448,7 @@ Per-source plist keys:
                                        h query limit)))
                                  (prod
                                   (fzfa--multi-candidates-fetch
-                                   src i prod-input cand->src)
+                                   src i prod-input cand->src multi-p)
                                   (let ((snap (fzfa-source-snapshot src)))
                                     (cond
                                      ((null snap) '())
@@ -3433,7 +3476,7 @@ Per-source plist keys:
                               (setq out
                                     (mapcar
                                      (lambda (c)
-                                       (fzfa--multi-tag c i cand->src))
+                                       (fzfa--multi-tag c i cand->src multi-p))
                                      out)))
                             (setf (fzfa-source-last-result src) out
                                   (fzfa-source-rank src)
@@ -3511,7 +3554,7 @@ Per-source plist keys:
          ;; `ivy-dispatching-call' triggers the action menu via
          ;; `fzfa-multi-narrow-key' in the keymap install.
          (ivy-multi-actions
-          (when (bound-and-true-p ivy-mode)
+          (when (and multi-p (bound-and-true-p ivy-mode))
             (let (acts)
               (dotimes (i n)
                 (when-let* ((spec    (aref specs-v i))
@@ -3731,10 +3774,14 @@ Per-source plist keys:
                       ;; under other frontends, run the in-house
                       ;; `narrow-handler' that does its own read-char
                       ;; menu.
-                      (when (or fzfa-multi-narrow-key fzfa-display-key)
+                      (when (or (and multi-p fzfa-multi-narrow-key)
+                                fzfa-display-key)
                         (let ((map (make-sparse-keymap)))
                           (set-keymap-parent map (current-local-map))
-                          (when fzfa-multi-narrow-key
+                          ;; `<' (narrow-switch) only meaningful when
+                          ;; there are multiple sources to switch
+                          ;; between.
+                          (when (and multi-p fzfa-multi-narrow-key)
                             (define-key map (kbd fzfa-multi-narrow-key)
                                         (if (bound-and-true-p ivy-mode)
                                             #'ivy-dispatching-call
@@ -3761,104 +3808,116 @@ Per-source plist keys:
                            (lambda ()
                              (or (funcall
                                   fzfa-prompt-function
-                                  (list :source-kind :multi
-                                        :prompt prompt
-                                        :directory nil
-                                        :command nil
-                                        :index (fzfa--frontend-index)
-                                        :filtered
-                                        (cl-loop for s across sources
-                                                 sum (fzfa-source-filtered s))
-                                        :total (cl-loop for s across sources
-                                                        sum (fzfa-source-total s))
-                                        :narrow-name
-                                        (and narrow-idx
-                                             (or (plist-get
-                                                  (aref specs-v
-                                                        narrow-idx)
-                                                  :name)
-                                                 "?"))))
+                                  (funcall
+                                   prompt-fn-args
+                                   (list :index (fzfa--frontend-index)
+                                         :filtered
+                                         (cl-loop for s across sources
+                                                  sum (fzfa-source-filtered s))
+                                         :total
+                                         (cl-loop for s across sources
+                                                  sum (fzfa-source-total s))
+                                         :narrow-name
+                                         (and multi-p narrow-idx
+                                              (or (plist-get
+                                                   (aref specs-v
+                                                         narrow-idx)
+                                                   :name)
+                                                  "?")))))
                                  "")))))
                     (completing-read
                      prompt
                      (lambda (str _pred action)
                        (pcase action
                          ('metadata
-                          (fzfa--completion-metadata
-                           'fzfa-multi
-                           :group
-                           (lambda (cand transform)
-                             (let* ((src (fzfa--multi-source-of
-                                          cand specs-v cand->src))
-                                    (g   (plist-get src :group)))
-                               (if transform
-                                   ;; Per-source :group transform — lets a
-                                   ;; source strip an internal "IDX:" prefix
-                                   ;; or otherwise reshape its display string
-                                   ;; while keeping the raw value as the
-                                   ;; lookup/match key.  Falls back to the raw
-                                   ;; candidate when a source has no :group
-                                   ;; function (or its transform returns nil).
-                                   ;; The tofu suffix is hidden via its
-                                   ;; `display ""' text property, so the raw
-                                   ;; CAND fallback renders cleanly without an
-                                   ;; explicit strip.
-                                   (or (and g (funcall
-                                               g (fzfa--tofu-hide cand) t))
-                                       cand)
-                                 ;; Section header.  When narrowed to a single
-                                 ;; source, delegate to the per-source :group's
-                                 ;; nil branch so any internal sub-grouping
-                                 ;; (e.g. per-file headers for grep-style
-                                 ;; sources) takes over — matching the
-                                 ;; standalone command's layout.  Across
-                                 ;; sources, the source name is the only
-                                 ;; header that meaningfully separates them.
-                                 (or (and narrow-idx g
-                                          (funcall g (fzfa--tofu-hide cand) nil))
-                                     (plist-get src :name) ""))))
-                           :affix
-                           ;; Pin annotations to window-relative column
-                           ;; maxw+1 via a `(space :align-to ...)' display
-                           ;; spec.  Vertico just concatenates suffixes
-                           ;; verbatim (no padding of its own) so it needs
-                           ;; the spec; icomplete's own slice-relative
-                           ;; padding stacks badly with literal spaces, so
-                           ;; the spec wins there too.
-                           (lambda (cands)
-                             (let* ((displays
-                                     (mapcar
-                                      (lambda (c)
-                                        (let* ((src (fzfa--multi-source-of
-                                                     c specs-v cand->src))
-                                               (g (and src
-                                                       (plist-get src :group))))
-                                          (or (and g (funcall
-                                                      g (fzfa--tofu-hide c) t))
-                                              c)))
-                                      cands))
-                                    (maxw (apply #'max 0
-                                                 (mapcar #'string-width
-                                                         displays))))
-                               (cl-mapcar
-                                (lambda (cand _display)
-                                  (let* ((src (fzfa--multi-source-of
-                                               cand specs-v cand->src))
-                                         (ann (and src
-                                                   (plist-get src :annotate)))
-                                         (s   (and ann (funcall
-                                                        ann
-                                                        (fzfa--tofu-hide cand)))))
-                                    (list cand ""
-                                          (if s
-                                              (concat
-                                               (propertize
-                                                " " 'display
-                                                `(space :align-to
-                                                        (+ left ,(1+ maxw))))
-                                               s)
-                                            ""))))
-                                cands displays)))))
+                          (if (not multi-p)
+                              ;; N=1: surface the lone source's
+                              ;; category + annotation hooks directly so
+                              ;; downstream tools (embark targets,
+                              ;; marginalia, vertico/icomplete
+                              ;; affixation) see the same metadata they
+                              ;; got from the legacy single-source path.
+                              (let ((s0 (aref specs-v 0)))
+                                (fzfa--completion-metadata
+                                 (or (plist-get s0 :category) 'fzfa-multi)
+                                 :annotate (plist-get s0 :annotate)
+                                 :affix    (plist-get s0 :affix)
+                                 :group    (plist-get s0 :group)))
+                            (fzfa--completion-metadata
+                             'fzfa-multi
+                             :group
+                             (lambda (cand transform)
+                               (let* ((src (fzfa--multi-source-of
+                                            cand specs-v cand->src))
+                                      (g   (plist-get src :group)))
+                                 (if transform
+                                     ;; Per-source :group transform — lets a
+                                     ;; source strip an internal "IDX:" prefix
+                                     ;; or otherwise reshape its display string
+                                     ;; while keeping the raw value as the
+                                     ;; lookup/match key.  Falls back to the raw
+                                     ;; candidate when a source has no :group
+                                     ;; function (or its transform returns nil).
+                                     ;; The tofu suffix is hidden via its
+                                     ;; `display ""' text property, so the raw
+                                     ;; CAND fallback renders cleanly without an
+                                     ;; explicit strip.
+                                     (or (and g (funcall
+                                                 g (fzfa--tofu-hide cand) t))
+                                         cand)
+                                   ;; Section header.  When narrowed to a single
+                                   ;; source, delegate to the per-source :group's
+                                   ;; nil branch so any internal sub-grouping
+                                   ;; (e.g. per-file headers for grep-style
+                                   ;; sources) takes over — matching the
+                                   ;; standalone command's layout.  Across
+                                   ;; sources, the source name is the only
+                                   ;; header that meaningfully separates them.
+                                   (or (and narrow-idx g
+                                            (funcall g (fzfa--tofu-hide cand) nil))
+                                       (plist-get src :name) ""))))
+                             :affix
+                             ;; Pin annotations to window-relative column
+                             ;; maxw+1 via a `(space :align-to ...)' display
+                             ;; spec.  Vertico just concatenates suffixes
+                             ;; verbatim (no padding of its own) so it needs
+                             ;; the spec; icomplete's own slice-relative
+                             ;; padding stacks badly with literal spaces, so
+                             ;; the spec wins there too.
+                             (lambda (cands)
+                               (let* ((displays
+                                       (mapcar
+                                        (lambda (c)
+                                          (let* ((src (fzfa--multi-source-of
+                                                       c specs-v cand->src))
+                                                 (g (and src
+                                                         (plist-get src :group))))
+                                            (or (and g (funcall
+                                                        g (fzfa--tofu-hide c) t))
+                                                c)))
+                                        cands))
+                                      (maxw (apply #'max 0
+                                                   (mapcar #'string-width
+                                                           displays))))
+                                 (cl-mapcar
+                                  (lambda (cand _display)
+                                    (let* ((src (fzfa--multi-source-of
+                                                 cand specs-v cand->src))
+                                           (ann (and src
+                                                     (plist-get src :annotate)))
+                                           (s   (and ann (funcall
+                                                          ann
+                                                          (fzfa--tofu-hide cand)))))
+                                      (list cand ""
+                                            (if s
+                                                (concat
+                                                 (propertize
+                                                  " " 'display
+                                                  `(space :align-to
+                                                          (+ left ,(1+ maxw))))
+                                                 s)
+                                              ""))))
+                                  cands displays))))))
                          (`(boundaries . ,_) (cons 0 0))
                          ('lambda t)
                          ('t
@@ -3910,7 +3969,7 @@ Per-source plist keys:
                                                  h query limit)))
                                            (prod
                                             (fzfa--multi-candidates-fetch
-                                             src i prod-input cand->src)
+                                             src i prod-input cand->src multi-p)
                                             (let ((snap (fzfa-source-snapshot src)))
                                               (cond
                                                ((null snap) '())
@@ -3943,7 +4002,7 @@ Per-source plist keys:
                                         (setq out
                                               (mapcar
                                                (lambda (c)
-                                                 (fzfa--multi-tag c i cand->src))
+                                                 (fzfa--multi-tag c i cand->src multi-p))
                                                out)))
                                       (setf (fzfa-source-last-result src) out
                                             (fzfa-source-rank src)
