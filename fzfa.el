@@ -4180,6 +4180,9 @@ through here so all replay paths share one dispatch."
     (let* ((specs (cl-map 'list #'fzfa--session-restore-spec
                           (plist-get session :sources)))
            (entry-cmd (plist-get session :command))
+           ;; Let `fzfa--read''s capture site see the *replayed*
+           ;; command (e.g. `fzfa-fd') instead of `fzfa-replay'.
+           (this-command (or entry-cmd this-command))
            (result (fzfa--read specs
                                :prompt (plist-get session :prompt)
                                :narrow-idx (plist-get session :narrow-idx))))

@@ -1856,6 +1856,65 @@ would dedup to one — see `fzfa-sessions-push-dedups-by-key')."
   (let ((fzfa--sessions nil))
     (should-error (fzfa-replay) :type 'user-error)))
 
+(ert-deftest fzfa-replay-rebinds-this-command-to-entry-cmd ()
+  "`fzfa-replay' lets `this-command' to the session's captured command.
+
+Inside the inner `fzfa--read', the capture site reads
+`this-command' to stamp the session's `:command' field.  Without
+the rebind, a replay of an `fzfa-fd' session would push a new
+session under `:command fzfa-replay' — the replay machinery's
+name, not the work the user is doing.  With it, extending the
+seeded filter (e.g. \"q\" → \"qe\") lands a fresh `fzfa-fd'
+session in the ring."
+  (let ((captured-this-command nil)
+        (fzfa--sessions
+         (list
+          (list :command 'fzfa-fd
+                :prompt "fd: "
+                :sources (vector (list :spec '(:name "fzfa")
+                                       :command "fd"
+                                       :display 'hidden
+                                       :initial-input "q"))))))
+    (cl-letf (((symbol-function 'fzfa--read)
+               (lambda (&rest _)
+                 (setq captured-this-command this-command)
+                 nil)))
+      (let ((this-command 'fzfa-replay))
+        (fzfa-replay)))
+    (should (eq captured-this-command 'fzfa-fd))))
+
+(ert-deftest fzfa-replay-accepts-explicit-session-arg ()
+  "`fzfa-replay' accepts an optional REPLAY-SESSION argument.
+
+Picker-route commands (`fzfa-replay-from-memory' /
+`-from-file' / `-any') feed their selection through here so all
+replay paths share one dispatch.  The arg overrides
+`(car fzfa--sessions)' — replaying an off-head session shouldn't
+require shuffling the ring."
+  (let ((seen-prompt nil)
+        ;; Head of the ring is a fzfa-buffer session — explicit arg
+        ;; should win and replay the fzfa-fd one instead.
+        (fzfa--sessions
+         (list (list :command 'fzfa-buffer
+                     :prompt "buffer: "
+                     :sources (vector (list :spec '(:name "fzfa")
+                                            :command ""
+                                            :display 'hidden
+                                            :initial-input nil)))))
+        (target-session
+         (list :command 'fzfa-fd
+               :prompt "fd: "
+               :sources (vector (list :spec '(:name "fzfa")
+                                      :command "fd"
+                                      :display 'hidden
+                                      :initial-input "q")))))
+    (cl-letf (((symbol-function 'fzfa--read)
+               (lambda (_sources &rest args)
+                 (setq seen-prompt (plist-get args :prompt))
+                 nil)))
+      (fzfa-replay target-session))
+    (should (equal seen-prompt "fd: "))))
+
 ;;; Property recovery via snapshot lookup
 
 (ert-deftest fzfa-snapshot-lookup-recovers-stripped-properties ()
