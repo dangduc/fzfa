@@ -1579,13 +1579,24 @@ re-sort here would trample the per-source ordering."
          (and (> n 0)
               (>= (aref cand (1- n)) fzfa--tofu-base)))))
 
-(defun fzfa--sort-by-history (completions)
+(defun fzfa--sort-by-history (completions &optional history-sym)
   "Order COMPLETIONS by score, history recency, then length.
 
 Primary key is the `completion-score' text property attached on
 the sync path by `fzf-native-score-all'.  Ties break by position
-in the active minibuffer history (more recent first), then by
+in HISTORY-SYM (a history variable, more recent first), then by
 candidate length (shorter first).
+
+HISTORY-SYM is the source's `:history' variable symbol.  Nil
+means \"this source opted out of history-based ordering\" — the
+history branch is skipped entirely.  Notably, nil does NOT fall
+back to the global `minibuffer-history' (which carries noise
+from unrelated commands — `eval-expression', `read-string', etc.
+— none of which overlap meaningfully with fzfa candidates).
+
+Bound into per-session metadata as a closure by
+`fzfa--completion-metadata' so the active source's `:history' is
+captured at session-construction time.
 
 Branches dispatched in order:
 - nil COMPLETIONS                  → nil
@@ -1595,21 +1606,22 @@ Branches dispatched in order:
                                      highlights, so a global re-sort
                                      across source boundaries would
                                      trample that ordering
-- empty query                      → rank by history only
+- empty query, HISTORY-SYM set     → rank by that source's history
+- empty query, HISTORY-SYM nil     → pass through (no reorder)
 - head lacks `completion-score'    → single-source async; C order is
                                      canonical, pass through
-- otherwise                        → single-source sync: full sort,
-                                     then post-sort highlight refresh
-                                     via `fzf-native-highlight-all'
-                                     so the visible top-N matches
-                                     after history/length tiebreak"
+- otherwise                        → single-source sync: score
+                                     + (history if HISTORY-SYM set)
+                                     + length sort, then post-sort
+                                     highlight refresh"
   (let ((query (fzfa--current-query "")))
     (cond
      ((null completions) nil)
      ((fzfa--tagged-p (car completions))
       completions)
      ((string-empty-p query)
-      (if-let* ((hist (fzfa--history-hash)))
+      (if-let* ((hist (and history-sym
+                           (fzfa--build-history-hash history-sym))))
           (mapcar
            #'car
            (sort
@@ -1623,7 +1635,9 @@ Branches dispatched in order:
       completions)
      (t
       (let ((sorted (fzfa--score-history-length-sort
-                     completions (fzfa--history-hash))))
+                     completions
+                     (and history-sym
+                          (fzfa--build-history-hash history-sym)))))
         (when (fboundp 'fzf-native-highlight-all)
           (fzfa--bridge-defcustoms #'fzf-native-highlight-all sorted query))
         sorted)))))
@@ -1659,7 +1673,7 @@ multi's outer `completing-read' is intentionally called with HIST nil."
            candidates)
           (lambda (a b) (< (cdr a) (cdr b)))))))))
 
-(cl-defun fzfa--completion-metadata (category &key annotate affix group)
+(cl-defun fzfa--completion-metadata (category &key annotate affix group history)
   "Return the `metadata' alist for fzfa's `completing-read' collection lambdas.
 
 CATEGORY is the completion category symbol.  Optional ANNOTATE / AFFIX /
@@ -1667,14 +1681,23 @@ GROUP attach `annotation-function', `affixation-function', and
 `group-function' when non-nil.  `display-sort-function' and
 `cycle-sort-function' route through `fzfa--sort-by-history' so the empty
 query surfaces recent picks first, while scored output produced by the C
-scorer is preserved verbatim."
-  `(metadata
-    (category . ,category)
-    (display-sort-function . fzfa--sort-by-history)
-    (cycle-sort-function . fzfa--sort-by-history)
-    ,@(when annotate `((annotation-function . ,annotate)))
-    ,@(when affix    `((affixation-function . ,affix)))
-    ,@(when group    `((group-function      . ,group)))))
+scorer is preserved verbatim.
+
+HISTORY is the active source's `:history' variable symbol; when non-nil,
+the sort function is wrapped in a per-session closure so the empty-query
+reorder and sync tiebreak use that specific history.  Nil keeps the bare
+function — `fzfa--sort-by-history' then skips history entirely (does NOT
+fall back to global `minibuffer-history')."
+  (let ((sort-fn (if history
+                     (lambda (cands) (fzfa--sort-by-history cands history))
+                   #'fzfa--sort-by-history)))
+    `(metadata
+      (category . ,category)
+      (display-sort-function . ,sort-fn)
+      (cycle-sort-function . ,sort-fn)
+      ,@(when annotate `((annotation-function . ,annotate)))
+      ,@(when affix    `((affixation-function . ,affix)))
+      ,@(when group    `((group-function      . ,group))))))
 
 (defun fzfa--maybe-expand (result directory resolve-paths)
   "Return RESULT expanded against DIRECTORY when RESOLVE-PATHS is non-nil.
@@ -3584,6 +3607,7 @@ Per-source plist keys:
                               (let ((s0 (aref specs-v 0)))
                                 (fzfa--completion-metadata
                                  (or (plist-get s0 :category) 'fzfa-multi)
+                                 :history  (plist-get s0 :history)
                                  :annotate (plist-get s0 :annotate)
                                  :affix    (plist-get s0 :affix)
                                  :group    (plist-get s0 :group)))

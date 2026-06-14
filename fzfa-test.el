@@ -1652,6 +1652,66 @@ backspace-to-empty frame."
          (ret (fzfa-all-completions "a" table nil 0)))
     (should (equal ret cands))))
 
+;;; fzfa--sort-by-history HISTORY-SYM threading
+
+(ert-deftest fzfa-sort-by-history-nil-history-skips-history-on-empty-query ()
+  "Nil HISTORY-SYM keeps input order on empty query — no global-history leak."
+  (cl-letf (((symbol-function 'fzfa--current-query) (lambda (&rest _) ""))
+            (minibuffer-history '("zeta" "alpha" "gamma")))
+    (should (equal (fzfa--sort-by-history '("alpha" "beta" "gamma") nil)
+                   '("alpha" "beta" "gamma")))))
+
+(ert-deftest fzfa-sort-by-history-with-history-reorders-empty-query ()
+  "Non-nil HISTORY-SYM reorders by that history's recency."
+  (let ((my-hist '("gamma" "alpha")))
+    (cl-letf (((symbol-function 'fzfa--current-query) (lambda (&rest _) "")))
+      (cl-progv '(my-hist-sym) (list my-hist)
+        (let ((sym (make-symbol "my-test-history")))
+          (set sym my-hist)
+          (should (equal (fzfa--sort-by-history '("alpha" "beta" "gamma") sym)
+                         ;; gamma is most-recent, alpha next, beta absent → fallback
+                         '("gamma" "alpha" "beta"))))))))
+
+(ert-deftest fzfa-sort-by-history-nil-history-no-tiebreak-on-sync ()
+  "Nil HISTORY-SYM on score-tied candidates falls straight through to length."
+  (let* ((a (copy-sequence "zzz"))
+         (b (copy-sequence "ab"))
+         (c (copy-sequence "yyyy")))
+    (dolist (s (list a b c))
+      (put-text-property 0 1 'completion-score 50 s))
+    (cl-letf (((symbol-function 'fzfa--current-query) (lambda (&rest _) "x"))
+              (minibuffer-history '("zzz" "yyyy" "ab")))
+      (let ((sorted (fzfa--sort-by-history (list a c b) nil)))
+        ;; Score-tied → length asc: "ab" (2), "zzz" (3), "yyyy" (4).
+        ;; `minibuffer-history' contents are NOT consulted — if they
+        ;; were, "zzz" (most recent) would have outranked the length
+        ;; tiebreak.
+        (should (equal (substring-no-properties (nth 0 sorted)) "ab"))
+        (should (equal (substring-no-properties (nth 1 sorted)) "zzz"))
+        (should (equal (substring-no-properties (nth 2 sorted)) "yyyy"))))))
+
+;;; fzfa--completion-metadata closure
+
+(ert-deftest fzfa-completion-metadata-bare-fn-when-no-history ()
+  "Without `:history', `display-sort-function' is the bare symbol — no closure."
+  (let ((md (fzfa--completion-metadata 'fzfa-misc)))
+    (should (eq (alist-get 'display-sort-function (cdr md))
+                #'fzfa--sort-by-history))
+    (should (eq (alist-get 'cycle-sort-function (cdr md))
+                #'fzfa--sort-by-history))))
+
+(ert-deftest fzfa-completion-metadata-closure-when-history-set ()
+  "With `:history', the sort entry is a closure that captures the symbol."
+  (let* ((sym (make-symbol "test-hist"))
+         (_ (set sym '("aaa")))
+         (md (fzfa--completion-metadata 'fzfa-misc :history sym))
+         (fn (alist-get 'display-sort-function (cdr md))))
+    (should (functionp fn))
+    (should-not (eq fn #'fzfa--sort-by-history))
+    ;; The closure should invoke sort with the captured history symbol.
+    (cl-letf (((symbol-function 'fzfa--current-query) (lambda (&rest _) "")))
+      (should (equal (funcall fn '("bbb" "aaa")) '("aaa" "bbb"))))))
+
 ;;; Resume
 
 (ert-deftest fzfa-session-restore-spec-overlays-runtime-state ()
