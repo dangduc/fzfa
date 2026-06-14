@@ -987,16 +987,25 @@ closure stores its top-fzf-score in a `ranks' vector, and a
 it changes.  Replaces helm's default \"first non-empty source\"
 positioning, which is declared-order-arbitrary and structurally wrong
 for fuzzy-multi-source UX."
+  (cl-assert (> (length sources) 0) nil
+             "fzfa-helm--multi-read: SOURCES must contain at least one source")
   (fzfa-helm--ensure-loaded)
   (let* ((helm-completion-style 'emacs)
+         (n-sources (length sources))
+         (multi-p (> n-sources 1))            ; gates narrow menu + tofu
          ;; Per-source render cap.  `min' of the multi cap and the
          ;; single cap — multi cap dominates with defaults (200 < 2000),
          ;; but the `min' guard means a user lowering
          ;; `fzfa-helm-candidate-limit' below the multi cap still wins.
-         (limit (min fzfa-helm-candidate-limit
-                     fzfa-helm-multi-source-candidate-limit))
+         (limit (if multi-p
+                    (min fzfa-helm-candidate-limit
+                         fzfa-helm-multi-source-candidate-limit)
+                  ;; N=1: full single-source cap.
+                  fzfa-helm-candidate-limit))
          (result nil)
-         (n-sources (length sources))
+         ;; At N=1, source 0's plist holds the session-level keys the
+         ;; legacy `fzfa-helm--completing-read' consumed.
+         (s0 (car sources))
          ;; Per-source runtime state — handle, snapshot, prod-token,
          ;; prod-input, last-result, rank, total, filtered, last-gen,
          ;; retry-timer — lives on each struct.  Populated inside the
@@ -1404,8 +1413,12 @@ for fuzzy-multi-source UX."
                ;; the minibuffer where `narrow-display-cycle' fires.
                ;; Track the narrowed source name in our own closure
                ;; var; narrow-fn keeps it in sync with the helm-side
-               ;; filter.
-               (narrowed-name nil)
+               ;; filter.  At N=1 we pre-set it to the lone source's
+               ;; name so `>' cycles immediately (no `<' prefix needed
+               ;; — there's no other source to switch to).
+               (narrowed-name
+                (unless multi-p
+                  (or (plist-get s0 :name) "fzfa")))
                ;; Force any source that's about to leave the narrow
                ;; window back to `hidden' so its `#cmd#filter' buffer
                ;; shape doesn't leak into the new view.  `before' and
@@ -1491,7 +1504,9 @@ for fuzzy-multi-source UX."
                ;; preserved.
                (helm-map
                 (let ((m (copy-keymap helm-map)))
-                  (when fzfa-multi-narrow-key
+                  ;; `<' (narrow-switch) only meaningful when there are
+                  ;; multiple sources to switch between.
+                  (when (and multi-p fzfa-multi-narrow-key)
                     (define-key m (kbd fzfa-multi-narrow-key) narrow-fn))
                   (when fzfa-display-key
                     (define-key m (kbd fzfa-display-key)
@@ -1499,8 +1514,12 @@ for fuzzy-multi-source UX."
                   m)))
           (add-hook 'helm-after-update-hook jump-fn)
           (helm :sources helm-sources
-                :prompt (or prompt "fzf-multi: ")
-                :buffer "*helm fzfa multi*"))
+                :prompt (or prompt
+                            (and (not multi-p)
+                                 (plist-get s0 :prompt))
+                            "fzf-multi: ")
+                :default (and (not multi-p) (plist-get s0 :default))
+                :buffer (if multi-p "*helm fzfa multi*" "*helm fzfa*")))
       (remove-hook 'helm-after-update-hook jump-fn)
       (when poll-timer (cancel-timer poll-timer))
       ;; Bulk-stop async producers; idempotent — :cleanup may have
