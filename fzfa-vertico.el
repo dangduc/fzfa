@@ -152,9 +152,17 @@ Set to 0 or nil to disable pagination (all bands always visible)."
   :type 'natnum
   :group 'fzfa-vertico)
 
-(defcustom fzfa-vertico-columns-max-width 60
-  "Maximum width per column, in characters."
-  :type 'natnum
+(defcustom fzfa-vertico-columns-max-width nil
+  "Maximum width per column, in characters.
+
+When nil (default), columns expand to fill the window evenly —
+the layout always uses the full frame width regardless of the
+column count.  Set to a positive integer to cap each column;
+useful when you'd rather keep individual columns readable and
+leave the rest of the frame blank than let a wide column stretch
+the whole row."
+  :type '(choice (const :tag "Expand to fill window" nil)
+                 (natnum :tag "Maximum width in characters"))
   :group 'fzfa-vertico)
 
 (defcustom fzfa-vertico-columns-separator
@@ -745,8 +753,10 @@ qualifier; falls through to the default implementation otherwise."
              (win-w (vertico--window-width))
              (avail (max ncols (- win-w (* (max 0 (1- ncols)) sepw))))
              (col-w (max fzfa-vertico-columns-min-width
-                         (min fzfa-vertico-columns-max-width
-                              (/ avail ncols))))
+                         (if fzfa-vertico-columns-max-width
+                             (min fzfa-vertico-columns-max-width
+                                  (/ avail ncols))
+                           (/ avail ncols))))
              (header? fzfa-vertico-columns-headers)
              ;; Distribute `vertico-count' rows across VISIBLE bands.
              ;; Pagination's headline benefit: fewer bands on-screen →
