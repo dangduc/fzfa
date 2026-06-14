@@ -449,20 +449,12 @@ Argument TRANSFORM If transform, return CAND."
              (t "Older"))))
         "Unknown")))
 
-(defun fzfa-replay--replay-session (session)
-  "Restore SESSION's specs and run `fzfa--read'."
-  (let ((specs (cl-map 'list #'fzfa--session-restore-spec
-                       (plist-get session :sources))))
-    (fzfa--read specs
-                :prompt (plist-get session :prompt)
-                :narrow-idx (plist-get session :narrow-idx))))
-
 (defun fzfa-replay--action (cand)
   "Picker action: read the session off CAND and replay it."
   (when-let* ((session (and (stringp cand) (> (length cand) 0)
                             (get-text-property 0 'fzfa-replay-session
                                                cand))))
-    (fzfa-replay--replay-session session)))
+    (fzfa-replay session)))
 
 (defvar fzfa-vertico-columns-truncate)
 

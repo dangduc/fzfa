@@ -4163,31 +4163,33 @@ path's result set)."
     spec))
 
 ;;;###autoload
-(defun fzfa-replay ()
-  "Replay the most recent `fzfa--read' session.
+(defun fzfa-replay (&optional replay-session)
+  "Replay REPLAY-SESSION, or the most recent session interactively.
 
-Re-runs the last call with the user's edited commands, display
-states, narrow target, and filter input restored — a fresh
-session seeded from captured state, not a resumed minibuffer.
-Errors when no session is available.  Sessions live in memory
-\(capped by `fzfa-sessions-max') for the lifetime of Emacs."
+When REPLAY-SESSION is non-nil, restore its captured specs and
+run the session; otherwise default to `(car fzfa--sessions)' —
+the most recent capture.  Errors when no session is available.
+
+The picker-route commands (`fzfa-replay-from-memory',
+`fzfa-replay-from-file', `fzfa-replay-any') feed their selection
+through here so all replay paths share one dispatch."
   (interactive)
-  (unless fzfa--sessions
-    (user-error "No fzfa session to replay"))
-  (let* ((session (car fzfa--sessions))
-         (specs (cl-map 'list #'fzfa--session-restore-spec
-                        (plist-get session :sources)))
-         (entry-cmd (plist-get session :command))
-         (result (fzfa--read specs
-                             :prompt (plist-get session :prompt)
-                             :narrow-idx (plist-get session :narrow-idx))))
-    ;; `fzfa--read' returns the picked candidate but the original
-    ;; command's body (e.g. `(fzfa-visit-file result)' for `fzfa-fd')
-    ;; ran outside it.  Re-invoke the entry command in :inject mode
-    ;; so its body fires on replay too.
-    (when (and result entry-cmd (fboundp entry-cmd))
-      (let ((fzfa--multi-mode (cons :inject result)))
-        (funcall entry-cmd)))))
+  (let ((session (or replay-session (car fzfa--sessions))))
+    (unless session
+      (user-error "No fzfa session to replay"))
+    (let* ((specs (cl-map 'list #'fzfa--session-restore-spec
+                          (plist-get session :sources)))
+           (entry-cmd (plist-get session :command))
+           (result (fzfa--read specs
+                               :prompt (plist-get session :prompt)
+                               :narrow-idx (plist-get session :narrow-idx))))
+      ;; `fzfa--read' returns the picked candidate but the original
+      ;; command's body (e.g. `(fzfa-visit-file result)' for
+      ;; `fzfa-fd') ran outside it.  Re-invoke the entry command in
+      ;; :inject mode so its body fires on replay too.
+      (when (and result entry-cmd (fboundp entry-cmd))
+        (let ((fzfa--multi-mode (cons :inject result)))
+          (funcall entry-cmd))))))
 
 ;;;###autoload
 (defun fzfa-multi-read (commands &rest options)
