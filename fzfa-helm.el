@@ -899,11 +899,15 @@ vertico / icomplete rely on.  Side effect: bypassing
 
 ;;; Multi handler — dispatched from `fzfa--read'
 
-(cl-defun fzfa-helm--read (sources &key prompt)
+(cl-defun fzfa-helm--read (sources &key prompt narrow-idx)
   "Helm dispatch for `fzfa--read'.
 
 SOURCES is the same list of plists as the `completing-read' path.
 PROMPT is the prompt string shown in the helm session.
+NARROW-IDX, when non-nil, seeds the active narrow at session
+start to that source index — used by `fzfa-resume' to replay a
+session that exited narrowed.  Nil restores the default (N=1
+always narrows to 0, N>1 starts widened).
 Each `fzfa' source maps to a `helm' source:
   :command     -> async (eager-start, no per-source polling timer)
   :candidates  -> sync (fzf-native-score-all on each `helm-pattern'
@@ -976,6 +980,21 @@ for fuzzy-multi-source UX."
          (handles nil)   ; reversed: list of fzf-native handles (async only)
          (stops nil)     ; reversed: list of 0-arg stop closures (async only)
          poll-timer
+         ;; Most recent user filter, updated by `update-last-query'
+         ;; (below) on each `helm-after-update-hook' tick.  Read by
+         ;; the resume-snapshot block in the unwind-protect cleanup
+         ;; to persist the filter as the narrow target's
+         ;; `:initial-input' for the next replay.
+         (last-query "")
+         ;; Hoisted out of the inner `let*' so they're visible to the
+         ;; unwind-protect cleanup (where we `remove-hook' them, and
+         ;; where `narrowed-name' is read by the snapshot block to
+         ;; derive the session's `:narrow-idx').  Closures bound in
+         ;; the inner let* don't survive its end — cleanup runs
+         ;; after the inner scope closes.
+         update-last-query
+         restore-narrow
+         narrowed-name
          (helm-sources
           (cl-loop
            for src in sources
@@ -1350,10 +1369,18 @@ for fuzzy-multi-source UX."
                ;; var; narrow-fn keeps it in sync with the helm-side
                ;; filter.  At N=1 we pre-set it to the lone source's
                ;; name so `>' cycles immediately (no `<' prefix needed
-               ;; — there's no other source to switch to).
-               (narrowed-name
-                (unless multi-p
-                  (or (plist-get s0 :name) "fzfa")))
+               ;; — there's no other source to switch to).  A
+               ;; caller-supplied `:narrow-idx' (`fzfa-resume') wins
+               ;; over both — it restores a saved narrow target.
+               ;; `narrowed-name' is hoisted to the outer let* so the
+               ;; resume-snapshot cleanup can read its final value;
+               ;; this is the in-session seed (which `narrow-fn'
+               ;; mutates) on top of that outer binding.
+               (_narrow-init
+                (setq narrowed-name
+                      (cond
+                       (narrow-idx (aref source-names narrow-idx))
+                       ((not multi-p) (or (plist-get s0 :name) "fzfa")))))
                ;; Force any source that's about to leave the narrow
                ;; window back to `hidden' so its `#cmd#filter' buffer
                ;; shape doesn't leak into the new view.  `before' and
@@ -1447,7 +1474,39 @@ for fuzzy-multi-source UX."
                     (define-key m (kbd fzfa-display-key)
                                 narrow-display-cycle))
                   m)))
+          ;; Per-tick filter capture for `fzfa-resume'.  Computes the
+          ;; FILTER portion of `helm-pattern' against the narrowed
+          ;; source's display state + command (so compact / full
+          ;; sessions persist just the filter, not the `<sep>CMD<sep>'
+          ;; prefix), and stashes it in `last-query'.  Widened reads
+          ;; `helm-pattern' verbatim.  `update-last-query' and
+          ;; `restore-narrow' are hoisted to the outer let* so they
+          ;; survive into the cleanup; setq here installs the closures.
+          (setq update-last-query
+                (lambda ()
+                  (let* ((idx (and narrowed-name
+                                   (cl-position narrowed-name source-names
+                                                :test #'equal)))
+                         (src (and idx (aref sources-v idx)))
+                         (display (and src (fzfa-source-display-state src)))
+                         (filter
+                          (if (and src display (not (eq display 'hidden)))
+                              (cdr (fzfa--split (or helm-pattern "")
+                                                display
+                                                (fzfa-source-command src)))
+                            (or helm-pattern ""))))
+                    (setq last-query (or filter "")))))
+          (when (and multi-p narrow-idx)
+            (let ((target (aref source-names narrow-idx)))
+              (setq restore-narrow
+                    (lambda ()
+                      (helm-set-source-filter (list target))
+                      (remove-hook 'helm-after-update-hook
+                                   restore-narrow)))))
           (add-hook 'helm-after-update-hook jump-fn)
+          (add-hook 'helm-after-update-hook update-last-query)
+          (when restore-narrow
+            (add-hook 'helm-after-update-hook restore-narrow))
           (helm :sources helm-sources
                 :prompt (or prompt
                             (and (not multi-p)
@@ -1456,6 +1515,21 @@ for fuzzy-multi-source UX."
                 :default (and (not multi-p) (plist-get s0 :default))
                 :buffer (if multi-p "*helm fzfa multi*" "*helm fzfa*")))
       (remove-hook 'helm-after-update-hook jump-fn)
+      (remove-hook 'helm-after-update-hook update-last-query)
+      (when restore-narrow
+        (remove-hook 'helm-after-update-hook restore-narrow))
+      ;; Snapshot for `fzfa-resume' BEFORE async producers stop —
+      ;; `current-cmd' / `display-state' (set by `>'-edits) are
+      ;; preserved by `--stop' but kept here for symmetry with the
+      ;; vertico / ivy capture site.  Translate `narrowed-name' back
+      ;; to its source index for the session-level `:narrow-idx'.
+      (fzfa--sessions-push
+       sources sources-v
+       (or prompt (and (not multi-p) (plist-get s0 :prompt))
+           "fzf-multi: ")
+       (and narrowed-name
+            (cl-position narrowed-name source-names :test #'equal))
+       last-query)
       (when poll-timer (cancel-timer poll-timer))
       ;; Bulk-stop async producers; idempotent — :cleanup may have
       ;; already fired on normal helm exit.

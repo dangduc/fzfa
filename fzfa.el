@@ -2910,8 +2910,10 @@ Per-source plist keys:
   (when (bound-and-true-p helm-mode)
     (if (fboundp 'fzfa-helm--read)
         (cl-return-from fzfa--read
-          (fzfa-helm--read sources :prompt prompt))
-      (user-error "Fzfa--multi-read does not yet support helm-mode")))
+          (fzfa-helm--read sources
+                           :prompt prompt
+                           :narrow-idx narrow-idx))
+      (user-error "Fzfa--read does not yet support helm-mode")))
   (cl-assert (> (length sources) 0) nil
              "fzfa--read: SOURCES must contain at least one source")
   (let* ((specs        sources)              ; cl-defun arg renamed
