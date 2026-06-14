@@ -284,6 +284,7 @@ Read at session start; changing it does not affect running sessions."
     (pass      . "password-store (pass)")
     (project   . "project.el")
     (regexp    . "Regexp (buffer-line picker)")
+    (replay    . "Persisted replay")
     (rg        . "ripgrep (rg)")
     (safari    . "Safari bookmarks + history (macOS)")
     (shell     . "Shell command + history")
