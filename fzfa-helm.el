@@ -73,17 +73,19 @@ Default is `fzfa-helm-multi-source-candidate-limit' × 10."
   :group 'fzfa)
 
 (defcustom fzfa-helm-apply-follow nil
-  "Whether helm should auto-fire `:apply' on every selection move.
+  "Whether helm should auto-fire the persistent action on selection move.
 
-Defaults to nil to match fzfa's preview-on-demand paradigm across
-frontends (vertico/icomplete use `fzfa-preview-key', helm uses
-`C-j' or `fzfa-preview-key' — see the helm-source keymap setup).
-Side-effecting `:apply' lambdas (buffer kill, command execute) used
-to auto-fire on every arrow-key press under the old non-nil
-default, which was a footgun.
+Covers BOTH `:apply' lambdas (side-effecting commands like buffer
+kill or compile re-run) AND regular `:persistent-action' previews
+(file content peek, etc.).  When nil (the default), helm only
+fires the persistent action when the user presses `C-j' or
+`fzfa-preview-key' — matching fzfa's preview-on-demand paradigm
+across frontends (vertico/icomplete also wait for the key).
 
-Set to non-nil to opt into auto-fire — bridged fzfa sources with an
-`:apply' lambda then add `:follow 1' on their helm source."
+When non-nil, helm sources add `:follow 1', which fires the
+persistent action on every arrow-key press.  That's convenient
+for live preview but a footgun for `:apply' lambdas with side
+effects, hence the conservative default."
   :type 'boolean
   :group 'fzfa)
 
@@ -489,7 +491,8 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
                (append (list :persistent-action apply)
                        (when fzfa-helm-apply-follow '(:follow 1))))
               (persistent-action
-               (list :persistent-action persistent-action :follow 1)))))
+               (append (list :persistent-action persistent-action)
+                       (when fzfa-helm-apply-follow '(:follow 1)))))))
      stop)))
 
 (cl-defun fzfa-helm-make-async-source
@@ -706,7 +709,8 @@ callback so helm re-reads candidates with the fresh snapshot."
               (append (list :persistent-action apply)
                       (when fzfa-helm-apply-follow '(:follow 1))))
              (persistent-action
-              (list :persistent-action persistent-action :follow 1)))))))
+              (append (list :persistent-action persistent-action)
+                      (when fzfa-helm-apply-follow '(:follow 1)))))))))
 
 ;;; Composition helper — fzfa command -> helm source(s)
 
@@ -1162,10 +1166,12 @@ for fuzzy-multi-source UX."
                                (fzfa-helm--make-display-transformer
                                 annotate))
                          (when preview-cell
-                           (list :persistent-action
-                                 (fzfa-helm--make-debounced-preview-fn
-                                  preview-cell)
-                                 :follow 1))))))
+                           (append
+                            (list :persistent-action
+                                  (fzfa-helm--make-debounced-preview-fn
+                                   preview-cell))
+                            (when fzfa-helm-apply-follow
+                              '(:follow 1))))))))
               (cands
                ;; Sync source inlined here (rather than via
                ;; `fzfa-helm-make-sync-source') so its `:candidates'
@@ -1311,10 +1317,12 @@ for fuzzy-multi-source UX."
                                (fzfa-helm--make-display-transformer
                                 annotate))
                          (when preview-cell
-                           (list :persistent-action
-                                 (fzfa-helm--make-debounced-preview-fn
-                                  preview-cell)
-                                 :follow 1))))))
+                           (append
+                            (list :persistent-action
+                                  (fzfa-helm--make-debounced-preview-fn
+                                   preview-cell))
+                            (when fzfa-helm-apply-follow
+                              '(:follow 1))))))))
               (t
                (error
                 "Fzfa helm multi source has neither :command nor :candidates: %S"
