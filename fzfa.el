@@ -498,6 +498,35 @@ standard `icomplete-exhibit' to repopulate the overlay's
   (icomplete-exhibit)
   (fzfa--icomplete-fit-mini-window))
 
+(defvar-local fzfa--icomplete-cursor-mark nil
+  "Last buffer position fzfa marked with `cursor t' text property.
+
+Tracked buffer-locally so the next `post-command-hook' tick can
+wipe it before re-marking at the new (point).  See
+`fzfa--icomplete-cursor-override'.")
+
+(defun fzfa--icomplete-cursor-override ()
+  "Pin the visible cursor to (point) under `icomplete-mode'.
+
+`icomplete-exhibit' sets `cursor t' on its after-string overlay
+at `field-end' (icomplete.el:780), which jumps the visible cursor
+away from mid-buffer point in fzfa's `compact' / `full' display.
+Mark the char at (point) with the same property — the closest
+`cursor t' to point wins."
+  (when (and (bound-and-true-p icomplete-mode)
+             (minibufferp))
+    (with-silent-modifications
+      (when (and fzfa--icomplete-cursor-mark
+                 (< fzfa--icomplete-cursor-mark (point-max)))
+        (remove-text-properties
+         fzfa--icomplete-cursor-mark
+         (1+ fzfa--icomplete-cursor-mark)
+         '(cursor nil)))
+      (setq fzfa--icomplete-cursor-mark nil)
+      (when (< (point) (point-max))
+        (put-text-property (point) (1+ (point)) 'cursor t)
+        (setq fzfa--icomplete-cursor-mark (point))))))
+
 (defun fzfa--frontend-exhibit ()
   "Trigger a display refresh in the active completion UI.
 
@@ -3404,6 +3433,10 @@ Per-source plist keys:
                 (minibuffer-with-setup-hook
                     (lambda ()
                       (fzfa--minibuffer-format-reset wants-decoration)
+                      (when (bound-and-true-p icomplete-mode)
+                        (add-hook 'post-command-hook
+                                  #'fzfa--icomplete-cursor-override
+                                  nil t))
                       (when router (fzfa--preview-install))
                       ;; Capture source idx from the propertized minibuffer
                       ;; text before completing-read returns and strips text
