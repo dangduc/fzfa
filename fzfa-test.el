@@ -2124,5 +2124,71 @@ collapse same-minute / same-directory sessions."
   (should-not (fzfa-locate--external-p "/tmp/foo.txt"))
   (should-not (fzfa-locate--external-p "/tmp/foo"))) ; no extension
 
+;;; Multi-candidates-fetch — async producer refresh
+
+(ert-deftest fzfa-multi-candidates-fetch-async-refresh ()
+  "Async-firing producer's callback schedules REFRESH-FN.
+
+`fzfa-replay--file-producer'-shaped sources (callback fires from a
+deferred timer, not inline) need an explicit push so the
+just-arrived snapshot reaches the frontend.  Mirrors the existing
+`fzfa-source--restart' contract.  Without this, the first
+`fzfa-replay-any' call surfaces no file replays until the user
+types something to re-tick the table arm.
+
+Inspects `timer-idle-list' for the scheduled timer rather than
+waiting for it to fire — `run-with-idle-timer 0 nil' needs idle
+events to elapse, which batch mode doesn't generate."
+  (let* ((refresh-fn (lambda () 'sentinel))
+         (async-cb nil)                 ; captured callback, fired later
+         (producer
+          (lambda (_input cb)
+            (setq async-cb cb)))        ; defer — caller returns before
+                                        ; the callback runs
+         (source (fzfa-make-source :spec `(:candidates ,producer)))
+         (hash (make-hash-table :test 'equal))
+         (before (length timer-idle-list)))
+    (fzfa--multi-candidates-fetch source 0 "q" hash nil refresh-fn)
+    ;; sync-call window is closed; callback hasn't fired yet
+    (should-not (fzfa-source-snapshot source))
+    (should (= (length timer-idle-list) before))
+    ;; Fire the deferred callback with candidates
+    (funcall async-cb '("alpha" "beta"))
+    (should (equal (fzfa-source-snapshot source) '("alpha" "beta")))
+    ;; Scheduled an idle timer that wraps `refresh-fn'
+    (should (= (length timer-idle-list) (1+ before)))
+    (let ((tm (car timer-idle-list)))
+      (should (eq (timer--function tm) refresh-fn))
+      (cancel-timer tm))))
+
+(ert-deftest fzfa-multi-candidates-fetch-sync-no-refresh ()
+  "Sync producer's inline callback does NOT schedule REFRESH-FN.
+
+Sync producers fire their callback during the funcall, so the
+caller's pass (table arm / ivy push) already sees the new
+snapshot — a refresh would be a redundant tick."
+  (let* ((refresh-fn (lambda () 'sentinel))
+         (producer
+          (lambda (_input cb) (funcall cb '("x" "y"))))
+         (source (fzfa-make-source :spec `(:candidates ,producer)))
+         (hash (make-hash-table :test 'equal))
+         (before (length timer-idle-list)))
+    (fzfa--multi-candidates-fetch source 0 "q" hash nil refresh-fn)
+    ;; Snapshot landed inline
+    (should (equal (fzfa-source-snapshot source) '("x" "y")))
+    ;; No scheduled refresh — the sync-call flag suppressed it
+    (should (= (length timer-idle-list) before))))
+
+(ert-deftest fzfa-multi-candidates-fetch-async-without-refresh-fn ()
+  "Omitted REFRESH-FN: async callback still writes snapshot, no push."
+  (let* ((async-cb nil)
+         (producer (lambda (_input cb) (setq async-cb cb)))
+         (source (fzfa-make-source :spec `(:candidates ,producer)))
+         (hash (make-hash-table :test 'equal)))
+    (fzfa--multi-candidates-fetch source 0 "q" hash)
+    (funcall async-cb '("late"))
+    ;; Should not signal even though refresh-fn was nil
+    (should (equal (fzfa-source-snapshot source) '("late")))))
+
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here

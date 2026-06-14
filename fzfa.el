@@ -2710,23 +2710,48 @@ the property set by `fzf-native-score-all'.  Returns 0 on empty input."
         0))
    (t (or (get-text-property 0 'completion-score (car results)) 0))))
 
-(defun fzfa--multi-candidates-fetch (source idx query candidate->source &optional multi-p)
+(defun fzfa--multi-candidates-fetch (source idx query candidate->source
+                                            &optional multi-p refresh-fn)
   "Refetch SOURCE's producer for QUERY iff QUERY changed.
 
 IDX is the source's index in the multi-read session — used by
 `fzfa--tag' to stamp the candidate→source mapping.
-CAND->SRC is the candidate→source-idx hash table.  MULTI-P is
-forwarded to `fzfa--tag' — non-nil applies the tofu suffix
+CANDIDATE->SOURCE is the candidate→source-idx hash table.  MULTI-P
+is forwarded to `fzfa--tag' — non-nil applies the tofu suffix
 \(cross-source case), nil keeps candidates verbatim (N=1).
 
+REFRESH-FN, when non-nil, is a 0-arg closure that fires the
+frontend's redraw (typically
+`(lambda () (fzfa--frontend-push ivy-push-multi))', same value
+the sibling `fzfa-source--restart' takes).  Used for
+*async-firing* producers — sync producers invoke their callback
+inline while the caller still holds the table-arm tick and the
+same pass consumes the new snapshot, but async producers (e.g.
+`fzfa-replay--file-producer' on first-call cache miss, jsonrpc,
+any external IPC source) deliver later and need an explicit
+push to surface the just-arrived candidates.
+
+Sync-vs-async detection: a local SYNC-CALL flag is t during the
+funcall, flipped to nil afterwards; the callback consults it to
+decide whether the caller's pass will already see the snapshot
+or whether it must schedule its own push via
+`run-with-idle-timer'.
+
+Mirrors `fzfa-source--restart''s callback-driven refresh
+pattern — the difference is that restart unconditionally calls
+REFRESH-FN (its caller never reads the snapshot in the same
+tick), while fetch only fires when async.
+
 Reads/writes SOURCE's prod-input, prod-token, snapshot, total
-slots.  The callback closes over SOURCE, IDX, and CAND->SRC and
-discards stale arrivals via the prod-token check.
+slots.  The callback closes over SOURCE, IDX, and
+CANDIDATE->SOURCE and discards stale arrivals via the prod-token
+check.
 
 Returns non-nil iff a fetch was actually issued."
   (unless (equal query (fzfa-source-prod-input source))
     (setf (fzfa-source-prod-input source) query)
-    (let ((my-token (cl-incf (fzfa-source-prod-token source))))
+    (let ((my-token (cl-incf (fzfa-source-prod-token source)))
+          (sync-call t))
       (funcall (fzfa-source-cands-fn source) (or query "")
                (lambda (cands)
                  (when (= my-token (fzfa-source-prod-token source))
@@ -2736,7 +2761,10 @@ Returns non-nil iff a fetch was actually issued."
                              (fzfa--tag s idx candidate->source multi-p))
                            (or cands '()))))
                      (setf (fzfa-source-snapshot source) tagged
-                           (fzfa-source-total source) (length tagged)))))))
+                           (fzfa-source-total source) (length tagged))
+                     (when (and (not sync-call) refresh-fn)
+                       (run-with-idle-timer 0 nil refresh-fn))))))
+      (setq sync-call nil))
     t))
 
 (defun fzfa--multi-poll-bumped-p (sources-v)
@@ -3187,7 +3215,8 @@ Per-source plist keys:
                                        h query limit)))
                                  (prod
                                   (fzfa--multi-candidates-fetch
-                                   src i prod-input candidate->source multi-p)
+                                   src i prod-input candidate->source
+                                   multi-p multi-refresh-fn)
                                   (let ((snap (fzfa-source-snapshot src)))
                                     (cond
                                      ((null snap) '())
@@ -3738,7 +3767,8 @@ Per-source plist keys:
                                                  h query limit)))
                                            (prod
                                             (fzfa--multi-candidates-fetch
-                                             src i prod-input candidate->source multi-p)
+                                             src i prod-input candidate->source
+                                             multi-p multi-refresh-fn)
                                             (let ((snap (fzfa-source-snapshot src)))
                                               (cond
                                                ((null snap) '())
