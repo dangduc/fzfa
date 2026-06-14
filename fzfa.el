@@ -3898,7 +3898,12 @@ SPECS is the input source plist list.  SOURCES is the runtime
 display-state.  PROMPT is the call's prompt.  NARROW-IDX is the
 active narrow at exit (nil = widened).  LAST-QUERY is the most
 recent filter the user typed, captured by the table arm / ivy
-push closure."
+push closure.
+
+Each per-source record carries its `:snapshot' — the captured
+producer output — so disk persistence (`fzfa-replay-save-list')
+can substitute function-shaped `:candidates' with their actual
+list at save time."
   (let* ((n (length sources))
          (target (or narrow-idx 0))
          (records
@@ -3910,6 +3915,11 @@ push closure."
            (list :spec spec
                  :command (fzfa-source-command src)
                  :display (fzfa-source-display-state src)
+                 ;; Captured producer output — preserves the
+                 ;; exit-time candidate list so the persisted form
+                 ;; can substitute non-serializable function
+                 ;; `:candidates' on save.  Nil for shell sources.
+                 :snapshot (fzfa-source-snapshot src)
                  ;; Persist the last filter only on the narrow
                  ;; target — that's where it logically belongs.
                  ;; Sources outside the narrow weren't user-edited
@@ -3917,6 +3927,11 @@ push closure."
                  :initial-input (when (eql i target) last-query)))))
     (push (list :prompt prompt
                 :narrow-idx narrow-idx
+                ;; Session-level stamps — feed the picker's
+                ;; annotation / group functions and the persistence
+                ;; layer's mtime-keyed sort.
+                :timestamp (float-time)
+                :directory default-directory
                 :sources (vconcat records))
           fzfa--sessions)
     (when (> (length fzfa--sessions) fzfa-sessions-max)

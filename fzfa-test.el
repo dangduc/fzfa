@@ -15,6 +15,7 @@
 (require 'fzfa)
 (require 'fzfa-emacs)
 (require 'fzfa-hungry)
+(require 'fzfa-replay)
 
 ;;; fzfa-hungry--deduplicate-dirs
 
@@ -1769,6 +1770,112 @@ in-band metadata."
          (returned "c")
          (recovered (or (car (member returned snapshot)) returned)))
     (should (equal recovered "c"))))
+
+;;; fzfa-replay serialization
+
+(ert-deftest fzfa-replay-scrub-spec-substitutes-fn-candidates ()
+  "Function-valued `:candidates' is replaced with the captured snapshot."
+  (let* ((spec '(:name "x" :candidates (lambda () (buffer-list))
+                 :category buffer))
+         (snapshot '("*scratch*" "*Messages*"))
+         (scrubbed (fzfa-replay--scrub-spec spec snapshot)))
+    (should (equal (plist-get scrubbed :candidates) snapshot))
+    (should (equal (plist-get scrubbed :name) "x"))
+    (should (eq (plist-get scrubbed :category) 'buffer))))
+
+(ert-deftest fzfa-replay-scrub-spec-passes-through-static-candidates ()
+  "Static-list `:candidates' is preserved verbatim."
+  (let* ((spec '(:name "x" :candidates ("a" "b") :category misc))
+         (scrubbed (fzfa-replay--scrub-spec spec nil)))
+    (should (equal (plist-get scrubbed :candidates) '("a" "b")))))
+
+(ert-deftest fzfa-replay-scrub-spec-drops-other-function-slots ()
+  "Lambdas under `:action' / `:annotate' / etc. are dropped (not readable)."
+  (let* ((spec `(:name "x" :command "fd"
+                 :action ,(lambda (c) c)
+                 :annotate ,(lambda (c) "ann")
+                 :group ,(lambda (c _) c)))
+         (scrubbed (fzfa-replay--scrub-spec spec nil)))
+    (should (equal (plist-get scrubbed :name) "x"))
+    (should (equal (plist-get scrubbed :command) "fd"))
+    (should-not (plist-get scrubbed :action))
+    (should-not (plist-get scrubbed :annotate))
+    (should-not (plist-get scrubbed :group))))
+
+(ert-deftest fzfa-replay-scrub-session-preserves-metadata ()
+  "Session-level metadata round-trips through the scrubber."
+  (let* ((session
+          (list :prompt "p: " :narrow-idx 1
+                :timestamp 1718411234.5
+                :directory "/tmp/"
+                :sources
+                (vector (list :spec '(:name "a")
+                              :command "fd" :display 'hidden
+                              :initial-input "x"
+                              :snapshot nil))))
+         (scrubbed (fzfa-replay--scrub-session session)))
+    (should (equal (plist-get scrubbed :prompt) "p: "))
+    (should (eq    (plist-get scrubbed :narrow-idx) 1))
+    (should (=     (plist-get scrubbed :timestamp) 1718411234.5))
+    (should (equal (plist-get scrubbed :directory) "/tmp/"))
+    (let ((src (aref (plist-get scrubbed :sources) 0)))
+      (should (equal (plist-get src :command) "fd"))
+      (should (eq    (plist-get src :display) 'hidden))
+      (should (equal (plist-get src :initial-input) "x")))))
+
+(ert-deftest fzfa-replay-save-load-round-trip ()
+  "`save-list' + `load-list' round-trips sessions through a temp file."
+  (let* ((tmpfile (make-temp-file "fzfa-replay-test-"))
+         (fzfa-replay-file tmpfile)
+         (fzfa-replay-max-saved-items 10)
+         (fzfa--sessions
+          (list (list :prompt "p: " :narrow-idx nil
+                      :timestamp 1718411234.5
+                      :directory "/tmp/"
+                      :sources
+                      (vector (list :spec '(:name "x" :candidates ("a" "b"))
+                                    :command "" :display 'hidden
+                                    :initial-input "filt"
+                                    :snapshot nil)))))
+         (fzfa-replay--persisted-sessions nil))
+    (unwind-protect
+        (progn
+          (fzfa-replay-save-list)
+          (should (file-readable-p tmpfile))
+          (fzfa-replay-load-list)
+          (should (= (length fzfa-replay--persisted-sessions) 1))
+          (let* ((session (car fzfa-replay--persisted-sessions))
+                 (src (aref (plist-get session :sources) 0)))
+            (should (equal (plist-get session :prompt) "p: "))
+            (should (equal (plist-get src :initial-input) "filt"))
+            (should (equal (plist-get (plist-get src :spec) :candidates)
+                           '("a" "b")))))
+      (delete-file tmpfile))))
+
+(ert-deftest fzfa-replay-save-respects-max-saved-items ()
+  "Save truncates to `fzfa-replay-max-saved-items'."
+  (let* ((tmpfile (make-temp-file "fzfa-replay-test-"))
+         (fzfa-replay-file tmpfile)
+         (fzfa-replay-max-saved-items 2)
+         (fzfa--sessions
+          (cl-loop for i below 5
+                   collect (list :prompt (format "p%d: " i)
+                                 :narrow-idx nil
+                                 :timestamp (float-time)
+                                 :directory "/tmp/"
+                                 :sources (vector
+                                           (list :spec `(:name ,(format "n%d" i))
+                                                 :command ""
+                                                 :display 'hidden
+                                                 :initial-input nil
+                                                 :snapshot nil)))))
+         (fzfa-replay--persisted-sessions nil))
+    (unwind-protect
+        (progn
+          (fzfa-replay-save-list)
+          (fzfa-replay-load-list)
+          (should (= (length fzfa-replay--persisted-sessions) 2)))
+      (delete-file tmpfile))))
 
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here
