@@ -461,23 +461,34 @@ afterthought that vertico happens to render."
                                                cand))))
     (fzfa-replay--replay-session session)))
 
+(defvar fzfa-vertico-columns-truncate)
+
 (defun fzfa-replay--picker (sessions prompt)
   "Run a session picker over SESSIONS with PROMPT.
 
 SESSIONS is a list of session plists (most recent first); empty
 signals a `user-error'.  Each session renders as a summary
 candidate carrying the full plist via text property; selection
-calls `fzfa-replay--action'."
+calls `fzfa-replay--action'.
+
+Forces left-anchored truncation in `fzfa-vertico' — the
+identifying info (DATE / COMMAND / QUERY) lives at the START of
+the row, so `fzfa-vertico's default `auto' heuristic (which
+treats path-bearing candidates as suffix-anchored) is backwards
+here.  Localized via `let' rather than a new per-category
+defcustom — we only need this for the two replay pickers, no
+need to generalize yet."
   (unless sessions
     (user-error "No fzfa sessions to replay"))
-  (let ((cand (fzfa-completing-read
-               :candidates (fzfa-replay--sessions-to-candidates sessions)
-               :prompt prompt
-               :category 'fzfa-replay-session
-               :annotate #'fzfa-replay--annotate
-               :group #'fzfa-replay--group
-               :require-match t)))
-    (fzfa-replay--action cand)))
+  (let ((fzfa-vertico-columns-truncate 'left))
+    (let ((cand (fzfa-completing-read
+                 :candidates (fzfa-replay--sessions-to-candidates sessions)
+                 :prompt prompt
+                 :category 'fzfa-replay-session
+                 :annotate #'fzfa-replay--annotate
+                 :group #'fzfa-replay--group
+                 :require-match t)))
+      (fzfa-replay--action cand))))
 
 ;;;###autoload
 (defun fzfa-replay-from-memory ()
@@ -502,16 +513,20 @@ commands of varying length share the list."
 
 Loads `fzfa-replay-file' asynchronously — the picker spins up
 immediately and candidates stream in once the read completes.
-Subsequent invocations hit the mtime-keyed cache."
+Subsequent invocations hit the mtime-keyed cache.
+
+See `fzfa-replay--picker' for why `fzfa-vertico-columns-truncate'
+is forced to `left' here."
   (interactive)
-  (fzfa-replay--action
-   (fzfa-completing-read
-    :candidates #'fzfa-replay--file-producer
-    :prompt "Replay (file): "
-    :category 'fzfa-replay-session
-    :annotate #'fzfa-replay--annotate
-    :group    #'fzfa-replay--group
-    :require-match t)))
+  (let ((fzfa-vertico-columns-truncate 'left))
+    (fzfa-replay--action
+     (fzfa-completing-read
+      :candidates #'fzfa-replay--file-producer
+      :prompt "Replay (file): "
+      :category 'fzfa-replay-session
+      :annotate #'fzfa-replay--annotate
+      :group    #'fzfa-replay--group
+      :require-match t))))
 
 (defcustom fzfa-replay-any-commands
   '((fzfa-replay-from-memory :narrow m)
@@ -530,9 +545,15 @@ selected candidate via an action of its own (see
 
 ;;;###autoload
 (defun fzfa-replay-any ()
-  "Pick from in-memory + persisted sessions and replay."
+  "Pick from in-memory + persisted sessions and replay.
+
+See `fzfa-replay--picker' for why `fzfa-vertico-columns-truncate'
+is forced to `left' here.  The let-binding wraps `fzfa-multi-read'
+because the actual minibuffer session runs inside it, outside the
+inner from-* commands' let-scope."
   (interactive)
-  (fzfa-multi-read fzfa-replay-any-commands :prompt "Replay (any): "))
+  (let ((fzfa-vertico-columns-truncate 'left))
+    (fzfa-multi-read fzfa-replay-any-commands :prompt "Replay (any): ")))
 
 ;;;###autoload
 (defun fzfa-replay-setup ()
