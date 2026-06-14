@@ -1678,18 +1678,14 @@ Priority: `fzfa-directory' >
 
 ;;; Split-style + display infrastructure
 
-(defcustom fzfa-separator ?※
+(defcustom fzfa-separator ?#
   "Character delimiting the CMD region in async sessions.
 
 In `compact' and `full' display, the minibuffer text has the shape
 \"<sep>CMD<sep>FILTER\".  The two separators are pinned by self-
 healing overlays — deleting one re-inserts it — so this is a pure
 display choice.  Same character is used on both sides, so anything
-symmetric reads well.
-
-Suggested values:
-  ?※ U+203B REFERENCE MARK
-  ?#  ASCII hash (works in any terminal/font)"
+symmetric reads well."
   :type 'character
   :group 'fzfa)
 
