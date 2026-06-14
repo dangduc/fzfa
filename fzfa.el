@@ -2354,426 +2354,32 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
           :display display
           :skip-executable-check skip-executable-check)
          directory resolve-paths)))
-    ;; Non-helm path: normalize :candidates to the producer shape that
-    ;; the substrate body (table lambda, ivy-push closure) consumes.
-    (setq candidates (fzfa--normalize-candidates candidates))
-    (let* ((completion-styles '(fzfa))
-           (dir-abbrev (abbreviate-file-name directory))
-           (handler (fzfa--preview-handler preview category))
-           (fzfa--preview-session (and handler (list handler)))
-           (fzfa--session-apply
-            (or apply (plist-get (alist-get category fzfa-apply-functions) :apply)))
-           (fzfa--session-resolve-paths resolve-paths)
-           (initial-char fzfa-separator)
-           ;; Build initial input.  Hidden mode keeps the CMD region OUT
-           ;; of the minibuffer entirely — CMD lives on the source
-           ;; struct's `command' slot (mutated by the display-cycle when
-           ;; the user edits inside it), and the editable region is just
-           ;; FILTER.  Compact / full pre-seed "<sep>CMD<sep>" so the
-           ;; user can edit it.
-           (init-text
-            (cond
-             ((consp initial-input) (car initial-input))
-             ((stringp initial-input) initial-input)
-             ((and command initial-char (memq display '(compact full)))
-              (concat (char-to-string initial-char) command
-                      (char-to-string initial-char)))
-             ;; Producer with no preset CMD in compact/full: seed
-             ;; "<sep><sep>" so cursor lands inside the CMD slot.
-             ((and candidates (not command) initial-char
-                   (memq display '(compact full)))
-              (concat (char-to-string initial-char)
-                      (char-to-string initial-char)))
-             (t nil)))
-           ;; Place point at the end of the seeded text (start of the
-           ;; FILTER region in compact/full; same physical position as
-           ;; start of an empty editable region in hidden).  For
-           ;; candidates sessions with no preset CMD, drop the point
-           ;; between the two separators so typing fills CMD.
-           (init-point
-            (cond
-             ((consp initial-input) (cdr initial-input))
-             ((and candidates (not command) init-text
-                   (memq display '(compact full))) 1)
-             (init-text (length init-text))
-             (t nil)))
-           (limit (fzfa--candidate-limit))
-           (selection nil)
-           ;; All per-source runtime state — handle, current-cmd,
-           ;; display-state, separator/display overlays, snapshot,
-           ;; prod-token, restart/retry timers, last-restart-time,
-           ;; rank/total/filtered, last-result — lives on this struct.
-           ;; The shared helpers (`fzfa-source--restart',
-           ;; `fzfa-source--display-cycle', etc.) read/write its slots.
-           (source (fzfa-make-source :command command
-                                     :candidates candidates
-                                     :directory directory
-                                     :history history
-                                     :display display))
-           (last-exhibit-scheduled 0.0)
-           ;; Probe `fzfa-prompt-function' once with the initial empty-state
-           ;; data plist.  A non-nil return signals "I'm taking over the
-           ;; prompt area" — suppress vertico/icomplete/ivy's native count
-           ;; rendering so it doesn't double-render alongside ours.  Nil
-           ;; signals "let the frontend's native UI through unchanged",
-           ;; which is the default for sync `:candidates' (vertico shows
-           ;; \"N/M PROMPT\", ivy its configured count, etc.).
-           (wants-decoration
-            (and (funcall fzfa-prompt-function
-                          (list :source-kind (if command
-                                                 :command
-                                               :candidates)
-                                :prompt prompt
-                                :directory dir-abbrev
-                                :command command
-                                :index nil
-                                :filtered 0
-                                :total 0
-                                :narrow-name nil))
-                 t))
-           (stats-overlay nil)
-           (display-apply
-            (lambda () (fzfa-source--display-apply source initial-char)))
-           (display-cycle
-            (lambda ()
-              (interactive)
-              (fzfa-source--display-cycle source initial-char)))
-           poll-timer ivy-push
-           (refresh-overlay
-            (lambda ()
-              (when (and stats-overlay (active-minibuffer-window))
-                (with-selected-window (active-minibuffer-window)
-                  (overlay-put
-                   stats-overlay 'display
-                   (funcall fzfa-prompt-function
-                            (list :source-kind (if command
-                                                   :command
-                                                 :candidates)
-                                  :prompt prompt
-                                  :directory dir-abbrev
-                                  :command (fzfa-source-command source)
-                                  :index (fzfa--frontend-index)
-                                  :filtered (fzfa-source-filtered source)
-                                  :total (fzfa-source-total source)
-                                  :narrow-name nil)))))
-              (fzfa--insert-prompt-if-ivy)))
-           ;; Wrapper around the source helper.  Refresh-fn closes
-           ;; over `ivy-push' (set later) so do-restart re-fires the
-           ;; correct frontend push.
-           (refresh-fn (lambda () (fzfa--frontend-push ivy-push)))
-           (do-restart
-            (lambda (cmd)
-              (fzfa-source--restart source cmd refresh-fn)))
-           (table
-            (lambda (str _pred action)
-              (pcase action
-                ('metadata (fzfa--completion-metadata category
-                                                      :annotate annotate
-                                                      :affix affix
-                                                      :group group))
-                (`(boundaries . ,_) (cons 0 0))
-                ('t
-                 (let* ((input (fzfa--current-query str))
-                        (split (fzfa--split
-                                input
-                                (fzfa-source-display-state source)
-                                (fzfa-source-command source)))
-                        (cmd (car split))
-                        (query (cdr split)))
-                   (cond
-                    (candidates
-                     (unless (equal cmd (fzfa-source-current-cmd source))
-                       (funcall do-restart cmd))
-                     (cond
-                      ((null (fzfa-source-snapshot source)) nil)
-                      ((string-empty-p query)
-                       ;; Empty FILTER under ivy with :history set —
-                       ;; reorder by recency, matching former sync
-                       ;; behavior.  Also ensure the stats overlay is
-                       ;; installed so the prompt shows the count from
-                       ;; the first frame; otherwise vertico / icomplete
-                       ;; users see no count until the first keystroke
-                       ;; triggers the scoring branch below.
-                       (when-let* ((win (active-minibuffer-window)))
-                         (with-selected-window win
-                           (unless stats-overlay
-                             (setq stats-overlay
-                                   (make-overlay
-                                    (point-min)
-                                    (minibuffer-prompt-end))))
-                           (funcall refresh-overlay)))
-                       (if (and history (bound-and-true-p ivy-mode))
-                           (fzfa--history-rank
-                            (fzfa-source-snapshot source) history)
-                         (fzfa-source-snapshot source)))
-                      (t (let* ((fzfa-batch-highlight nil)
-                                (r (while-no-input
-                                     (fzfa--bridge-defcustoms
-                                      #'fzf-native-score-all
-                                      (fzfa-source-snapshot source) query))))
-                           (cond
-                            ((eq r t) (or (fzfa-source-last-result source)
-                                          (fzfa-source-snapshot source)))
-                            (t (setq r (fzfa--rank-and-highlight
-                                        r query history))
-                               (setf (fzfa-source-last-result source) r
-                                     (fzfa-source-filtered source) (length r))
-                               (when-let* ((win (active-minibuffer-window)))
-                                 (with-selected-window win
-                                   (unless stats-overlay
-                                     (setq stats-overlay
-                                           (make-overlay
-                                            (point-min)
-                                            (minibuffer-prompt-end))))
-                                   (funcall refresh-overlay)))
-                               r))))))
-                    ((not (equal cmd (fzfa-source-current-cmd source)))
-                     ;; Debounce the spawn so a keystroke burst ends with
-                     ;; one restart on the final cmd.
-                     (fzfa-source--debounce-restart source cmd refresh-fn)
-                     ;; Fetch from the *current* handle (previous cmd's
-                     ;; process) so the display reflects something while the
-                     ;; user is mid-typing in the cmd portion.
-                     (let* ((h (fzfa-source-handle source))
-                            (r (and h
-                                    (fzf-native-async-candidates
-                                     h query limit))))
-                       (when (and h (fzfa--final-p r h query))
-                         (setf (fzfa-source-last-result source) r))
-                       (fzfa-source-last-result source)))
-                    ((null (fzfa-source-handle source))
-                     (fzfa-source-last-result source))
-                    (t
-                     (let* ((h (fzfa-source-handle source))
-                            (r (while-no-input
-                                 (fzf-native-async-candidates
-                                  h query limit))))
-                       (cond
-                        ((eq r t)
-                         (when-let* ((tm (fzfa-source-retry-timer source)))
-                           (cancel-timer tm))
-                         (setf (fzfa-source-retry-timer source)
-                               (run-with-idle-timer
-                                fzfa-input-debounce nil
-                                (lambda ()
-                                  (setf (fzfa-source-retry-timer source) nil)
-                                  (fzfa--frontend-push ivy-push))))
-                         (fzfa-source-last-result source))
-                        (t
-                         (when-let* ((stats (fzf-native-async-stats h)))
-                           (setf (fzfa-source-filtered source) (car stats)
-                                 (fzfa-source-total source) (cdr stats)))
-                         (when-let* ((win (active-minibuffer-window)))
-                           (with-selected-window win
-                             (unless stats-overlay
-                               (setq stats-overlay
-                                     (make-overlay (point-min)
-                                                   (minibuffer-prompt-end))))
-                             (funcall refresh-overlay)))
-                         (when (fzfa--final-p r h query)
-                           (setf (fzfa-source-last-result source) r))
-                         (fzfa-source-last-result source))))))))
-                (_ t)))))
-      ;; Install `ivy-push' into the placeholder declared in the let*
-      ;; above.  Deferred so its lambda can close over `do-restart' (which
-      ;; references back into `ivy-push'), and so `setq' mutates the
-      ;; placeholder's cell rather than shadowing it.
-      (setq ivy-push
-            (lambda ()
-              (when-let* ((win   (active-minibuffer-window))
-                          ((or (not (bound-and-true-p ivy-last))
-                               (ivy-state-dynamic-collection ivy-last)))
-                          (query (and (boundp 'ivy-text) ivy-text)))
-                (with-selected-window win
-                  (let* ((split (fzfa--split
-                                 query
-                                 (fzfa-source-display-state source)
-                                 (fzfa-source-command source)))
-                         (cmd    (car split))
-                         (filter (cdr split)))
-                    (cond
-                     (candidates
-                      (unless (equal cmd (fzfa-source-current-cmd source))
-                        (funcall do-restart cmd))
-                      (let ((scored
-                             (cond
-                              ((null (fzfa-source-snapshot source)) nil)
-                              ((string-empty-p filter)
-                               (fzfa-source-snapshot source))
-                              (t (let* ((fzfa-batch-highlight nil)
-                                        (r (while-no-input
-                                             (fzfa--bridge-defcustoms
-                                              #'fzf-native-score-all
-                                              (fzfa-source-snapshot source)
-                                              filter))))
-                                   (if (eq r t) nil r))))))
-                        (when scored
-                          ;; Ivy bypasses `display-sort-function', so the
-                          ;; per-source rank + highlight refresh has to fire
-                          ;; here.  Vertico/icomplete are fine without this
-                          ;; — their table path at the top of this lambda
-                          ;; flows into `fzfa--sort-by-history' via
-                          ;; `display-sort-function'.
-                          (setq scored
-                                (fzfa--rank-and-highlight
-                                 scored filter
-                                 (fzfa-source-history source)))
-                          (setf (fzfa-source-last-result source) scored
-                                (fzfa-source-filtered source) (length scored)))))
-                     ((not (equal cmd (fzfa-source-current-cmd source)))
-                      (fzfa-source--debounce-restart source cmd refresh-fn)
-                      (let* ((h (fzfa-source-handle source))
-                             (r (and h
-                                     (fzf-native-async-candidates
-                                      h filter limit))))
-                        (when (and h (fzfa--final-p r h filter))
-                          (setf (fzfa-source-last-result source) r))))
-                     ((null (fzfa-source-handle source)) nil)
-                     (t
-                      (let* ((h (fzfa-source-handle source))
-                             (r (while-no-input
-                                  (fzf-native-async-candidates
-                                   h filter limit))))
-                        (cond
-                         ((eq r t) nil)
-                         (t
-                          (when-let* ((stats (fzf-native-async-stats h)))
-                            (setf (fzfa-source-filtered source) (car stats)
-                                  (fzfa-source-total source) (cdr stats)))
-                          (when (fzfa--final-p r h filter)
-                            (setf (fzfa-source-last-result source) r)))))))
-                    (when-let* ((res (fzfa-source-last-result source)))
-                      (ivy--set-candidates res)
-                      (ivy--exhibit)
-                      (ivy--insert-prompt)))))))
-      ;; Pre-arm the subprocess (or candidates) so candidates start
-      ;; populating before the minibuffer is even shown.  Prefer
-      ;; :COMMAND; fall back to parsing init-text (covers callers that
-      ;; pass :INITIAL-INPUT without :COMMAND).  For producers, fire
-      ;; with empty CMD so the snapshot is seeded.
-      (cond
-       (candidates
-        (let ((seed
-               (cond
-                ((and command (not (string-empty-p command))) command)
-                (init-text
-                 (car (fzfa--split-input init-text)))
-                (t ""))))
-          (funcall do-restart (or seed ""))))
-       ((and command (not (string-empty-p command)))
-        (funcall do-restart command))
-       (init-text
-        (let ((cmd (car (fzfa--split-input init-text))))
-          (when (and cmd (not (string-empty-p cmd)))
-            (funcall do-restart cmd)))))
-      (setq poll-timer
-            (run-with-timer
-             0 fzfa-refresh-delay
-             (lambda ()
-               (when-let* ((h (fzfa-source-handle source)))
-                 (let ((gen (fzf-native-async-generation h)))
-                   (when (and gen
-                              (not (= gen (fzfa-source-last-gen source)))
-                              (not (input-pending-p))
-                              (>= (- (float-time) last-exhibit-scheduled)
-                                  fzfa-input-throttle))
-                     (setf (fzfa-source-last-gen source) gen)
-                     (setq last-exhibit-scheduled (float-time))
-                     (run-with-idle-timer
-                      0 nil #'fzfa--frontend-push ivy-push)))))))
-      (add-hook 'post-command-hook refresh-overlay)
-      ;; The sit-for gives a freshly-spawned async producer (subprocess
-      ;; or 2-arg async-firing fn) time to deliver its first batch
-      ;; before the minibuffer paints, so the initial frame isn't
-      ;; empty.  Skip it when the source already produced candidates
-      ;; synchronously — a static list, a zero-arg fn, or a 2-arg fn
-      ;; whose callback fired inline during pre-seed.  In those cases
-      ;; `snapshot' is already populated and the delay is perceivable
-      ;; as a stutter.
-      (unless (and candidates (fzfa-source-snapshot source))
-        (sit-for fzfa-refresh-delay))
-      (fzfa--maybe-expand
-       (unwind-protect
-           (minibuffer-with-setup-hook
-               (lambda ()
-                 ;; Bind the minibuffer's default-directory so that callers
-                 ;; running outside fzfa (notably embark, which captures
-                 ;; default-directory and rebinds it around the action) resolve
-                 ;; relative candidates against the working directory the
-                 ;; command actually ran in.
-                 (setq-local default-directory directory)
-                 ;; Legacy auto-insert of a single opening separator when
-                 ;; the caller passed no init-text and no command but the
-                 ;; session started in compact/full so they intend to
-                 ;; type "<sep>CMD<sep>FILTER" freestyle.  Skip in hidden
-                 ;; mode (no separator-delimited region belongs in the
-                 ;; editable area).
-                 (when (and initial-char (null init-text)
-                            (not (eq (fzfa-source-display-state source)
-                                     'hidden)))
-                   (save-excursion
-                     (goto-char (minibuffer-prompt-end))
-                     (unless (equal initial-char (char-after))
-                       (insert (char-to-string initial-char)))))
-                 (fzfa--minibuffer-format-reset wants-decoration)
-                 (when handler (fzfa--preview-install))
-                 (cursor-intangible-mode 1)
-                 (when fzfa-display-key
-                   (let ((map (make-sparse-keymap)))
-                     (set-keymap-parent map (current-local-map))
-                     (define-key map (kbd fzfa-display-key)
-                                 display-cycle)
-                     (use-local-map map)))
-                 (funcall display-apply)
-                 ;; Install protective separator overlays only when the
-                 ;; session actually has `#…#' in the buffer (compact /
-                 ;; full).  Hidden mode keeps CMD on the source struct
-                 ;; and the editable region is plain FILTER, so there's
-                 ;; nothing to protect.
-                 (when (and command initial-char (null initial-input)
-                            (memq (fzfa-source-display-state source)
-                                  '(compact full)))
-                   (let* ((mbe (minibuffer-prompt-end))
-                          (close-pos
-                           (+ mbe 1 (length (fzfa-source-command source)))))
-                     (setf (fzfa-source-separator-overlays source)
-                           (list (fzfa--protect-separator
-                                  mbe initial-char)
-                                 (fzfa--protect-separator
-                                  close-pos initial-char)))))
-                 ;; Place point synchronously at the seeded text's end.
-                 (when init-point
-                   (goto-char (+ (minibuffer-prompt-end) init-point))))
-             (let ((ivy-completing-read-dynamic-collection t)
-                   (ivy-count-format
-                    (if (and (bound-and-true-p ivy-mode) wants-decoration)
-                        ""
-                      ivy-count-format))
-                   (ivy-pre-prompt-function
-                    (when (and (bound-and-true-p ivy-mode) wants-decoration)
-                      (lambda ()
-                        (or (funcall
-                             fzfa-prompt-function
-                             (list :source-kind (if command
-                                                    :command
-                                                  :candidates)
-                                   :prompt prompt
-                                   :directory dir-abbrev
-                                   :command (fzfa-source-command source)
-                                   :index (fzfa--frontend-index)
-                                   :filtered (fzfa-source-filtered source)
-                                   :total (fzfa-source-total source)
-                                   :narrow-name nil))
-                            "")))))
-               (setq selection
-                     (completing-read prompt table nil require-match
-                                      init-text history default))))
-         (when poll-timer (cancel-timer poll-timer))
-         (remove-hook 'post-command-hook refresh-overlay)
-         (when stats-overlay (delete-overlay stats-overlay))
-         (fzfa-source--stop source)
-         (when handler (fzfa--preview-return selection)))
-       directory resolve-paths))))
+    ;; Non-helm path: build a 1-source plist and dispatch through
+    ;; `fzfa--multi-read'.  N=1 fast paths inside `fzfa--multi-read'
+    ;; restore the legacy single-source UX (no narrow menu, no tofu
+    ;; suffix on candidates, source-direct metadata, post-action
+    ;; `fzfa--maybe-expand') while sharing the multi-source plumbing.
+    (let ((completion-styles '(fzfa)))
+      (fzfa--multi-read
+       (list (list :name "fzfa"
+                   :prompt prompt
+                   :command command
+                   :candidates candidates
+                   :directory directory
+                   :category category
+                   :annotate annotate
+                   :affix affix
+                   :group group
+                   :history history
+                   :require-match require-match
+                   :default default
+                   :initial-input initial-input
+                   :resolve-paths resolve-paths
+                   :display display
+                   :preview preview
+                   :apply apply
+                   :action #'identity))
+       :prompt prompt))))
 
 (defun fzfa--extract-args (cmd)
   "Run CMD in `:extract' mode and return its keyword args plist.
@@ -3292,6 +2898,54 @@ Per-source plist keys:
          (limit        (fzfa--candidate-limit))
          (cand->src    (make-hash-table :test 'equal :size 1024))
          (last-exhibit 0.0)
+         ;; Session-level plist keys live on source 0 — the original
+         ;; `fzfa-completing-read' contract is that these are
+         ;; session-wide settings, and the shim that wraps it builds a
+         ;; single source carrying them.  At N>1 (true multi) most
+         ;; default sensibly to nil/t and the user picks them up via
+         ;; `fzfa-multi-read''s own conventions.
+         (s0           (aref specs-v 0))
+         (require-match (if multi-p t
+                          (or (plist-get s0 :require-match)
+                              (and (plist-get s0 :candidates) t))))
+         (default-val   (and (not multi-p) (plist-get s0 :default)))
+         (initial-input (and (not multi-p) (plist-get s0 :initial-input)))
+         ;; `:apply' is consumed via `fzfa--apply-resolve' which
+         ;; reads it off the source plist through `cand->src'
+         ;; dispatch — no local binding needed.
+         ;; Compute `init-text' + `init-point' from the source plist
+         ;; (mirrors the legacy `fzfa-completing-read' setup).  At N=1
+         ;; with a shell `:command' source whose `:display' starts
+         ;; non-hidden, pre-seed `<sep>CMD<sep>' so the user can edit
+         ;; CMD immediately.  Static `:candidates' sources in
+         ;; compact/full get `<sep><sep>' (cursor lands inside an
+         ;; empty CMD slot).  At N>1 these stay nil — `fzfa-multi-read'
+         ;; starts widened with an empty buffer.
+         (initial-char  fzfa-separator)
+         (s0-command    (and (not multi-p) (plist-get s0 :command)))
+         (s0-candidates (and (not multi-p) (plist-get s0 :candidates)))
+         (s0-display    (and (not multi-p)
+                             (or (plist-get s0 :display) 'hidden)))
+         (init-text
+          (cond
+           ((consp initial-input) (car initial-input))
+           ((stringp initial-input) initial-input)
+           ((and s0-command (memq s0-display '(compact full)))
+            (concat (char-to-string initial-char) s0-command
+                    (char-to-string initial-char)))
+           ((and s0-candidates (not s0-command)
+                 (memq s0-display '(compact full)))
+            (concat (char-to-string initial-char)
+                    (char-to-string initial-char)))
+           (t nil)))
+         (init-point
+          (cond
+           ((consp initial-input) (cdr initial-input))
+           ((and s0-candidates (not s0-command) init-text
+                 (memq s0-display '(compact full)))
+            1)
+           (init-text (length init-text))
+           (t nil)))
          ;; Prompt-fn arg builder.  Single source of truth for the
          ;; `:source-kind' / `:directory' / `:command' triple so the
          ;; refresh-overlay tick, the ivy pre-prompt closure, and the
@@ -3789,7 +3443,13 @@ Per-source plist keys:
                           (when fzfa-display-key
                             (define-key map (kbd fzfa-display-key)
                                         narrow-display-cycle))
-                          (use-local-map map))))
+                          (use-local-map map)))
+                      ;; N=1 with `:initial-input' OR a compact / full
+                      ;; default seeded `<sep>CMD<sep>' (init-text /
+                      ;; init-point are nil at N>1; the legacy
+                      ;; single-source seeding lives here now).
+                      (when init-point
+                        (goto-char (+ (minibuffer-prompt-end) init-point))))
                   (let ((fzfa--multi-active-sources specs-v)
                         (fzfa--multi-cand->src cand->src)
                         (ivy-completing-read-dynamic-collection t)
@@ -4064,7 +3724,9 @@ Per-source plist keys:
                                              (fzfa-source-history src))))))
                                       sorted)))))
                          (_ t)))
-                     nil t)))))
+                     nil require-match init-text
+                     (and (not multi-p) (fzfa-source-history (aref sources 0)))
+                     default-val)))))
       (when timer (cancel-timer timer))
       (when retry-timer (cancel-timer retry-timer))
       (remove-hook 'post-command-hook refresh-overlay)
@@ -4077,14 +3739,22 @@ Per-source plist keys:
                           result specs-v cand->src)))
              (action (and src (plist-get src :action)))
              (clean  (fzfa--tofu-hide result))
-             (hist   (and src (plist-get src :history))))
+             (hist   (and src (plist-get src :history)))
+             ;; Per-source path resolution — at N=1 this restores the
+             ;; legacy `fzfa-completing-read' behavior of
+             ;; `fzfa--maybe-expand'-ing the selection before handing
+             ;; off; at N>1 each source contributes its own setting.
+             (expanded (fzfa--maybe-expand
+                        clean
+                        (and src (plist-get src :directory))
+                        (and src (plist-get src :resolve-paths)))))
         ;; Multi bypasses each source's inner `completing-read', so the
         ;; source's natural HIST push never fires.  Mirror it here so
         ;; recency-aware sources (e.g. `extended-command-history') stay
         ;; consistent whether picked directly or via a multi.
         (when (and hist (symbolp hist) (not (eq hist t)))
-          (add-to-history hist clean))
-        (if action (funcall action clean) clean)))))
+          (add-to-history hist expanded))
+        (if action (funcall action expanded) expanded)))))
 
 ;;;###autoload
 (defun fzfa-multi-read (commands &rest options)
