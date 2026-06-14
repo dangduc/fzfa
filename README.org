@@ -291,6 +291,7 @@ See *Extensions* below.)
 | ~fzfa-flymake~                | —                                               | ~consult-flymake~                   | ~helm-flymake~                     |
 | ~fzfa-flymake-project~        | —                                               | ~consult-flymake~ (with prefix arg) | —                                  |
 | ~fzfa-compile-error~          | ~counsel-compilation-errors~                    | ~consult-compile-error~             | —                                  |
+| ~fzfa-ffap-menu~              | —                                               | —                                   | —                                  |
 | ~fzfa-shell-history~          | ~counsel-shell-history~ / ~counsel-esh-history~ | ~consult-history~                   | ~helm-eshell-history~              |
 | ~fzfa-project-find-file~      | ~counsel-projectile-find-file~                  | —                                   | ~helm-projectile-find-file~        |
 | ~fzfa-project-find-dir~       | ~counsel-projectile-find-dir~                   | —                                   | ~helm-projectile-find-dir~         |

@@ -35,6 +35,7 @@
 ;;   `fzfa-register'                 Use a register (jump-to or insert)
 ;;   `fzfa-outline'                  Jump to an outline heading in this buffer
 ;;   `fzfa-compile-error'            Jump to an error from a compilation buffer
+;;   `fzfa-ffap-menu'                Pick a file or URL mentioned in this buffer
 ;;   `fzfa-frames'                   Switch focus to another live frame
 ;;   `fzfa-tabs'                     Switch to a tab on the current frame
 
@@ -48,6 +49,11 @@
 (declare-function outline-next-heading "outline")
 (declare-function compilation-next-error "compile" (n &optional types start))
 (declare-function compile-goto-error "compile" (&optional event))
+(declare-function ffap-menu-rescan "ffap")
+(declare-function ffap-guesser "ffap")
+(declare-function ffap-url-p "ffap" (string))
+(declare-function find-file-at-point "ffap" (&optional filename))
+(defvar ffap-menu-alist)
 (defvar recentf-list)
 
 ;;;###autoload
@@ -632,6 +638,61 @@ as `compile' itself can navigate them."
           (pop-to-buffer buffer)
           (goto-char pos)
           (compile-goto-error))))))
+
+;;;###autoload
+(defun fzfa-ffap-menu (&optional rescan)
+  "Pick a file or URL mentioned in this buffer using fzf, then visit it.
+
+Scans the buffer with `ffap-menu-rescan' (cached buffer-locally in
+`ffap-menu-alist'), then prompts via `fzfa-completing-read'.  Selection
+pushes point onto the mark ring, jumps to the candidate's position, and
+visits the guess: URLs go through `find-file-at-point' (i.e. the user's
+`ffap-url-fetcher'), and file paths go through `fzfa-visit-file' so the
+user's `fzfa-find-file-function' is honored.
+
+Candidates display as LINE:GUESS so fzf can score against either the
+file/URL or the line number.  Previews scroll the originating buffer to
+the candidate's position.
+
+With prefix RESCAN, force a rebuild of the menu cache."
+  (interactive "P")
+  (require 'ffap)
+  (when (or (not ffap-menu-alist) rescan
+            (let ((first (car ffap-menu-alist)))
+              (save-excursion
+                (goto-char (cdr first))
+                (not (equal (car first) (ffap-guesser))))))
+    (ffap-menu-rescan))
+  (unless ffap-menu-alist
+    (user-error "No files or URLs in this buffer"))
+  (let* ((buf (current-buffer))
+         (lookup (make-hash-table :test 'equal))
+         (used   (make-hash-table :test 'equal))
+         (candidates
+          (cl-loop
+           for (item . pos) in ffap-menu-alist
+           for line = (line-number-at-pos pos t)
+           for display = (format "%d:%s" line item)
+           do (while (gethash display used)
+                (setq display (concat display " ")))
+           do (puthash display t used)
+           do (puthash display (cons item pos) lookup)
+           collect display)))
+    (when-let* ((result (fzfa-completing-read
+                         :candidates candidates
+                         :prompt "ffap-menu: "
+                         :category 'fzfa-misc
+                         :preview
+                         (lambda (cand)
+                           (when-let* ((hit (gethash cand lookup)))
+                             (fzfa-preview-show buf (cdr hit))))))
+                (hit (gethash result lookup)))
+      (push-mark nil t)
+      (goto-char (cdr hit))
+      (let ((target (car hit)))
+        (if (ffap-url-p target)
+            (fzfa-with-visit (find-file-at-point target))
+          (fzfa-visit-file target))))))
 
 ;;;###autoload
 (defun fzfa-frames ()
