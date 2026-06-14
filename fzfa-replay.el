@@ -245,10 +245,15 @@ Three paths:
 
 ;;; Pickers
 
-(defun fzfa-replay--session-to-candidate (session)
-  "Build a picker candidate string for SESSION.
+(defun fzfa-replay--session-to-candidate (session idx)
+  "Build a picker candidate string for SESSION at position IDX.
 
-The displayed text is a short summary (date + directory).  The
+The displayed text is a short summary (date + directory); an
+invisible per-IDX tofu suffix is appended to guarantee
+`string='-uniqueness so two sessions captured in the same minute
+under the same directory don't get collapsed by vertico's
+`delete-consecutive-dups' (the suffix is the same trick the
+multi-source path uses for cross-source disambiguation).  The
 full session plist rides on the string as a `fzfa-replay-session'
 text property at index 0 — the snapshot-lookup recovery in
 `fzfa--read''s post-result block restores it on selection so
@@ -256,9 +261,10 @@ text property at index 0 — the snapshot-lookup recovery in
   (let* ((ts (or (plist-get session :timestamp) 0))
          (time-str (format-time-string "%a %H:%M" ts))
          (dir (abbreviate-file-name
-               (or (plist-get session :directory) ""))))
-    (propertize (format "%s  %s" time-str dir)
-                'fzfa-replay-session session)))
+               (or (plist-get session :directory) "")))
+         (display (concat (format "%s  %s" time-str dir)
+                          (fzfa--tofu-suffix idx))))
+    (propertize display 'fzfa-replay-session session)))
 
 (defun fzfa-replay--annotate (cand)
   "Annotation function: append filter + source count to CAND."
@@ -309,8 +315,9 @@ calls `fzfa-replay--action'."
   (unless sessions
     (user-error "No fzfa sessions to replay"))
   (let ((cand (fzfa-completing-read
-               :candidates (mapcar #'fzfa-replay--session-to-candidate
-                                   sessions)
+               :candidates (cl-loop for s in sessions for i from 0
+                                    collect (fzfa-replay--session-to-candidate
+                                             s i))
                :prompt prompt
                :category 'fzfa-replay-session
                :annotate #'fzfa-replay--annotate
@@ -330,9 +337,11 @@ INPUT is ignored; CB is invoked with the session-candidate list
 once the file read finishes (or immediately on cache hit)."
   (fzfa-replay--load-async
    (lambda (sessions)
-     (funcall cb (and sessions
-                      (mapcar #'fzfa-replay--session-to-candidate
-                              sessions))))))
+     (funcall cb
+              (and sessions
+                   (cl-loop for s in sessions for i from 0
+                            collect (fzfa-replay--session-to-candidate
+                                     s i)))))))
 
 ;;;###autoload
 (defun fzfa-replay-from-file ()
@@ -365,7 +374,8 @@ via `fzfa-replay--file-producer'."
   (fzfa--read
    (list (list :name "memory" :narrow "m"
                :candidates
-               (mapcar #'fzfa-replay--session-to-candidate fzfa--sessions)
+               (cl-loop for s in fzfa--sessions for i from 0
+                        collect (fzfa-replay--session-to-candidate s i))
                :category 'fzfa-replay-session
                :annotate #'fzfa-replay--annotate
                :group    #'fzfa-replay--group

@@ -1858,10 +1858,24 @@ in-band metadata."
   "The summary candidate carries the full session as a text property."
   (let* ((session (list :prompt "p: " :timestamp 1718411234.5
                         :directory "/tmp/" :sources []))
-         (cand (fzfa-replay--session-to-candidate session)))
+         (cand (fzfa-replay--session-to-candidate session 0)))
     (should (stringp cand))
     (should (eq (get-text-property 0 'fzfa-replay-session cand)
                 session))))
+
+(ert-deftest fzfa-replay-session-to-candidate-is-string-unique-per-idx ()
+  "Two candidates built from sessions with identical summaries differ by tofu.
+
+Guarantees `delete-consecutive-dups' in the picker doesn't
+collapse same-minute / same-directory sessions."
+  (let* ((session (list :prompt "p: " :timestamp 1718411234.5
+                        :directory "/tmp/" :sources []))
+         (a (fzfa-replay--session-to-candidate session 0))
+         (b (fzfa-replay--session-to-candidate session 1)))
+    (should-not (equal a b))
+    ;; Visible portion (everything before the tofu suffix) is identical.
+    (should (equal (substring a 0 (1- (length a)))
+                   (substring b 0 (1- (length b)))))))
 
 (ert-deftest fzfa-replay-annotate-includes-filter-and-count ()
   "Annotation shows the narrow target's filter + source count."
