@@ -1736,5 +1736,39 @@ into firing a shell handle on an empty cmd — kills the sync path."
   (let ((fzfa--sessions nil))
     (should-error (fzfa-resume) :type 'user-error)))
 
+;;; Property recovery via snapshot lookup
+
+(ert-deftest fzfa-snapshot-lookup-recovers-stripped-properties ()
+  "Content-equal `member' lookup recovers the propertized original.
+
+Mirrors the post-result recovery in `fzfa--read' and helm's action
+lambda: when a frontend hands back a bare string (e.g.
+`read-from-minibuffer' stripping under
+`minibuffer-allow-text-properties' nil), `member' against the
+source's snapshot returns the original propertized cell so
+downstream consumers (`fzfa--location-jump' etc.) still see the
+in-band metadata."
+  (let* ((orig (propertize "1:hello world"
+                           'fzfa-location '("test.el" . 1)))
+         (snapshot (list orig
+                         (propertize "2:foo"
+                                     'fzfa-location '("test.el" . 2))))
+         ;; Simulate a frontend strip: bare string with same content,
+         ;; no properties.
+         (returned (substring-no-properties orig))
+         ;; The actual recovery expression used in both frontends.
+         (recovered (or (car (member returned snapshot)) returned)))
+    (should-not (get-text-property 0 'fzfa-location returned))
+    (should (equal (get-text-property 0 'fzfa-location recovered)
+                   '("test.el" . 1)))
+    (should (eq recovered orig))))
+
+(ert-deftest fzfa-snapshot-lookup-falls-back-when-absent ()
+  "When the candidate isn't in the snapshot, return it unchanged."
+  (let* ((snapshot '("a" "b"))
+         (returned "c")
+         (recovered (or (car (member returned snapshot)) returned)))
+    (should (equal recovered "c"))))
+
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here

@@ -1026,6 +1026,19 @@ for fuzzy-multi-source UX."
                                      (list preview-handler)))
                   (action
                    (lambda (cand)
+                     ;; Property recovery: the canonical candidate
+                     ;; lives on the source's snapshot with all
+                     ;; in-band metadata the caller attached.  Helm
+                     ;; usually preserves text properties through its
+                     ;; buffer-based selection, but recovering via
+                     ;; `member' (content equality) keeps the helm
+                     ;; and vertico/ivy paths frontend-agnostic and
+                     ;; resilient to any frontend that strips props.
+                     ;; No-op for shell sources (snapshot is nil).
+                     (let* ((snap (fzfa-source-snapshot
+                                   (aref sources-v i)))
+                            (orig (and snap (car (member cand snap)))))
+                       (when orig (setq cand orig)))
                      (when (and history (symbolp history)
                                 (not (eq history t)))
                        (add-to-history history cand))
