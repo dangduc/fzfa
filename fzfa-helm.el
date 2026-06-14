@@ -978,6 +978,12 @@ for fuzzy-multi-source UX."
          ;; signals `Wrong type argument: stringp, #<buffer>'.
          (result-src-idx nil)
          (result-cand nil)
+         ;; Flipped to t the first time any source's `:candidates' closure
+         ;; returns a non-empty result.  The poll-timer gate skips
+         ;; `fzfa-input-throttle' while this is nil, so the empty
+         ;; helm-buffer doesn't sit through two throttle windows waiting
+         ;; for the producer + scoring round-trip on the cold session.
+         (first-cands-shown nil)
          ;; Per-source state collected during source construction.
          (handles nil)   ; reversed: list of fzf-native handles (async only)
          (stops nil)     ; reversed: list of 0-arg stop closures (async only)
@@ -1136,6 +1142,8 @@ for fuzzy-multi-source UX."
                                   ;; `last-result' is for an earlier query.
                                   (fzfa-source-last-result source))
                                  (t
+                                  (when (and r (not first-cands-shown))
+                                    (setq first-cands-shown t))
                                   (when-let* ((tm (fzfa-source-retry-timer
                                                    source)))
                                     (cancel-timer tm)
@@ -1296,6 +1304,8 @@ for fuzzy-multi-source UX."
                                 (setf (fzfa-source-retry-timer source) nil))
                               (setq r (fzfa--rank-and-highlight
                                        r filter history))
+                              (when (and r (not first-cands-shown))
+                                (setq first-cands-shown t))
                               (setf (fzfa-source-total source) (length all)
                                     (fzfa-source-filtered source) (length r)
                                     (fzfa-source-last-result source) r
@@ -1359,8 +1369,9 @@ for fuzzy-multi-source UX."
                  (when (and helm-alive-p
                             (fzfa--multi-poll-bumped-p sources-v)
                             (not (input-pending-p))
-                            (>= (- (float-time) last-exhibit)
-                                fzfa-input-throttle))
+                            (or (not first-cands-shown)
+                                (>= (- (float-time) last-exhibit)
+                                    fzfa-input-throttle)))
                    (fzfa--multi-poll-commit sources-v)
                    (setq last-exhibit (float-time))
                    (helm-force-update)))))))
