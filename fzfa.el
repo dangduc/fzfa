@@ -4176,10 +4176,18 @@ Errors when no session is available.  Sessions live in memory
     (user-error "No fzfa session to replay"))
   (let* ((session (car fzfa--sessions))
          (specs (cl-map 'list #'fzfa--session-restore-spec
-                        (plist-get session :sources))))
-    (fzfa--read specs
-                :prompt (plist-get session :prompt)
-                :narrow-idx (plist-get session :narrow-idx))))
+                        (plist-get session :sources)))
+         (entry-cmd (plist-get session :command))
+         (result (fzfa--read specs
+                             :prompt (plist-get session :prompt)
+                             :narrow-idx (plist-get session :narrow-idx))))
+    ;; `fzfa--read' returns the picked candidate but the original
+    ;; command's body (e.g. `(fzfa-visit-file result)' for `fzfa-fd')
+    ;; ran outside it.  Re-invoke the entry command in :inject mode
+    ;; so its body fires on replay too.
+    (when (and result entry-cmd (fboundp entry-cmd))
+      (let ((fzfa--multi-mode (cons :inject result)))
+        (funcall entry-cmd)))))
 
 ;;;###autoload
 (defun fzfa-multi-read (commands &rest options)
