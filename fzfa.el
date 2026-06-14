@@ -3460,23 +3460,28 @@ Per-source plist keys:
                       ;; per-source entries in `ivy--actions-list');
                       ;; under other frontends, run the in-house
                       ;; `narrow-handler' that does its own read-char
-                      ;; menu.
-                      (when (or (and multi-p fzfa-multi-narrow-key)
-                                fzfa-display-key)
-                        (let ((map (make-sparse-keymap)))
-                          (set-keymap-parent map (current-local-map))
-                          ;; `<' (narrow-switch) only meaningful when
-                          ;; there are multiple sources to switch
-                          ;; between.
-                          (when (and multi-p fzfa-multi-narrow-key)
-                            (define-key map (kbd fzfa-multi-narrow-key)
-                                        (if (bound-and-true-p ivy-mode)
-                                            #'ivy-dispatching-call
-                                          narrow-handler)))
-                          (when fzfa-display-key
-                            (define-key map (kbd fzfa-display-key)
-                                        narrow-display-cycle))
-                          (use-local-map map)))
+                      ;; menu.  Also override SPC / `?' from
+                      ;; `minibuffer-local-completion-map' — those are
+                      ;; `minibuffer-complete-word' / `minibuffer-
+                      ;; completion-help' by default, which silently
+                      ;; eat the keypress when editing the `#cmd#'
+                      ;; shell command region.
+                      (let ((map (make-sparse-keymap)))
+                        (set-keymap-parent map (current-local-map))
+                        (define-key map " " #'self-insert-command)
+                        (define-key map "?" #'self-insert-command)
+                        ;; `<' (narrow-switch) only meaningful when
+                        ;; there are multiple sources to switch
+                        ;; between.
+                        (when (and multi-p fzfa-multi-narrow-key)
+                          (define-key map (kbd fzfa-multi-narrow-key)
+                                      (if (bound-and-true-p ivy-mode)
+                                          #'ivy-dispatching-call
+                                        narrow-handler)))
+                        (when fzfa-display-key
+                          (define-key map (kbd fzfa-display-key)
+                                      narrow-display-cycle))
+                        (use-local-map map))
                       ;; N=1 with `:initial-input' OR a compact / full
                       ;; default seeded `<sep>CMD<sep>' (init-text /
                       ;; init-point are nil at N>1; the legacy
