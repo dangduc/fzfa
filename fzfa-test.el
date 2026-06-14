@@ -16,6 +16,7 @@
 (require 'fzfa-emacs)
 (require 'fzfa-hungry)
 (require 'fzfa-replay)
+(require 'fzfa-locate)
 
 ;;; fzfa-hungry--deduplicate-dirs
 
@@ -2042,6 +2043,26 @@ collapse same-minute / same-directory sessions."
           (fzfa-replay-load-list)
           (should (= (length fzfa-replay--persisted-sessions) 2)))
       (delete-file tmpfile))))
+
+;;; fzfa-locate external dispatch
+
+(ert-deftest fzfa-locate-external-p-recognizes-common-video ()
+  "Common video extensions match the external-open predicate."
+  (should (fzfa-locate--external-p "/tmp/foo.mp4"))
+  (should (fzfa-locate--external-p "/tmp/foo.MKV"))   ; case-insensitive
+  (should (fzfa-locate--external-p "/tmp/foo.webm")))
+
+(ert-deftest fzfa-locate-external-p-recognizes-audio ()
+  "Common audio extensions match the external-open predicate."
+  (should (fzfa-locate--external-p "/tmp/foo.flac"))
+  (should (fzfa-locate--external-p "/tmp/foo.mp3"))
+  (should (fzfa-locate--external-p "/tmp/foo.opus")))
+
+(ert-deftest fzfa-locate-external-p-skips-text-files ()
+  "Text / source files do not match — they should `find-file'."
+  (should-not (fzfa-locate--external-p "/tmp/foo.el"))
+  (should-not (fzfa-locate--external-p "/tmp/foo.txt"))
+  (should-not (fzfa-locate--external-p "/tmp/foo"))) ; no extension
 
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here
