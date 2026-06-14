@@ -3337,8 +3337,21 @@ Per-source plist keys:
               (setq menu-active t)
               (unwind-protect
                   (progn
-                    (when (and stats-overlay (active-minibuffer-window))
-                      (with-selected-window (active-minibuffer-window)
+                    (when-let* ((win (active-minibuffer-window)))
+                      (with-selected-window win
+                        ;; Lazily create the stats overlay if the table
+                        ;; arm hasn't ticked through yet (`fzfa-resume'
+                        ;; on a seeded filter only fires `(t …)' once
+                        ;; before the user presses `<', and depending on
+                        ;; timing the overlay may not have been
+                        ;; installed when the menu opens).  Without
+                        ;; this, the `when (and stats-overlay …)' guard
+                        ;; silently dropped the hint and the menu came
+                        ;; up blank.
+                        (unless stats-overlay
+                          (setq stats-overlay
+                                (make-overlay (point-min)
+                                              (minibuffer-prompt-end))))
                         (overlay-put stats-overlay 'display
                                      (concat (fzfa--format-narrow-hint
                                               specs-v narrow-idx nil
