@@ -869,98 +869,33 @@ vertico / icomplete rely on.  Side effect: bypassing
     (when-let* ((prog (and command (car (split-string command nil t)))))
       (unless (executable-find prog)
         (user-error "%s not found in exec-path" prog))))
-  (let* ((prompt (or prompt
-                     (when command
-                       (concat (car (split-string command nil t)) ": "))
-                     (when candidates "fzf > ")))
-         (dir (expand-file-name (or directory default-directory)))
-         (result nil)
-         (helm-completion-style 'emacs)
-         (handler (fzfa--preview-handler preview category))
-         (fzfa--preview-session (and handler (list handler)))
-         (apply-fn (or apply (plist-get
-                              (alist-get category fzfa-apply-functions)
-                              :apply)))
-         (origin-window (selected-window))
-         (origin-buffer (window-buffer (selected-window)))
-         ;; Wrap apply with baseline restoration — see
-         ;; `fzfa-helm--wrap-apply'.  Baseline `default-directory'
-         ;; is :DIRECTORY when supplied (typical for :command), else
-         ;; the user's invoking buffer dir (typical for :candidates).
-         (apply-fn (and apply-fn
-                        (fzfa-helm--wrap-apply
-                         apply-fn dir origin-window origin-buffer)))
-         ;; History-push action wrapper.  When HISTORY is a real symbol,
-         ;; mirror `completing-read''s HIST push that helm bypasses.
-         (action
-          (lambda (cand)
-            (when (and history (symbolp history) (not (eq history t)))
-              (add-to-history history cand))
-            (setq result cand)))
-         (source
-          (cond
-           (command
-            (fzfa-helm-make-async-source
-             :name (or prompt "fzfa")
-             :command command
-             :directory dir
-             :action action
-             :persistent-action
-             (and handler (fzfa-helm--make-debounced-preview-fn))
-             :apply apply-fn))
-           (candidates
-            (fzfa-helm-make-sync-source
-             :name (or prompt "fzfa")
-             :items candidates
-             :history history
-             :action action
-             :display display
-             :persistent-action
-             (and handler (fzfa-helm--make-debounced-preview-fn))
-             :apply apply-fn)))))
-    (when handler
-      (fzfa-preview-put :origin-window origin-window)
-      (fzfa-preview-put :origin-buffer origin-buffer)
-      (fzfa-preview-put :default-directory default-directory)
-      (fzfa--preview-call :setup))
-    ;; Producer-kind `:display' compact/full needs the leading separator(s)
-    ;; pre-seeded into the minibuffer — empty preset CMD: `<sep><sep>' with
-    ;; point between them.  Helm doesn't honor `:input' for cursor-mid
-    ;; placement, so we install a one-shot `helm-minibuffer-set-up-hook'
-    ;; that does both.
-    (let* ((producer-kind-p
-            (and candidates (functionp candidates)
-                 (>= (car (func-arity candidates)) 1)))
-           (init-text
-            (and producer-kind-p
-                 (memq display '(compact full))
-                 (concat (char-to-string fzfa-separator)
-                         (char-to-string fzfa-separator))))
-           (init-point (and init-text 1))
-           (setup-fn
-            (when init-text
-              (lambda ()
-                (when (active-minibuffer-window)
-                  (with-selected-window (active-minibuffer-window)
-                    (goto-char (minibuffer-prompt-end))
-                    (delete-region (point) (point-max))
-                    (insert init-text)
-                    (goto-char (+ (minibuffer-prompt-end) init-point))))))))
-      (unwind-protect
-          (let ((default-directory dir))
-            (when setup-fn
-              (add-hook 'helm-minibuffer-set-up-hook setup-fn))
-            (helm :sources source
-                  :prompt prompt
-                  :default default
-                  :buffer "*helm fzfa*"))
-        (when setup-fn
-          (remove-hook 'helm-minibuffer-set-up-hook setup-fn))
-        (when handler
-          (fzfa--preview-call :exit)
-          (fzfa--preview-return result))
-        (fzfa-helm--cancel-stranded-follow-timer)))
-    result))
+  ;; Build a 1-source plist and dispatch through
+  ;; `fzfa-helm--multi-read'.  N=1 fast paths inside the multi
+  ;; entry point (pre-set `narrowed-name', skip the `<' menu,
+  ;; single-source buffer name/prompt/default) restore the legacy
+  ;; UX while sharing the multi-source plumbing.
+  (let ((prompt (or prompt
+                    (when command
+                      (concat (car (split-string command nil t)) ": "))
+                    (when candidates "fzf > "))))
+    (fzfa-helm--multi-read
+     (list (list :name "fzfa"
+                 :prompt prompt
+                 :command command
+                 :candidates candidates
+                 :directory directory
+                 :category category
+                 :annotate annotate
+                 :affix affix
+                 :group group
+                 :history history
+                 :require-match require-match
+                 :default default
+                 :display display
+                 :preview preview
+                 :apply apply
+                 :action #'identity))
+     :prompt prompt)))
 
 ;;; Multi handler — dispatched from `fzfa--multi-read'
 
