@@ -389,8 +389,6 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
          (timer nil)
          (refresh-fn
           (lambda () (when helm-alive-p (helm-force-update))))
-         (do-restart
-          (lambda (cmd) (fzfa-source--restart source cmd refresh-fn)))
          (display-cycle
           (lambda ()
             (interactive)
@@ -455,24 +453,7 @@ and `fzfa-helm--multi-read' (batch with bulk-stop)."
                                (fzfa-source-display-state source)
                                (fzfa-source-command source))))
                   (when (not (equal cmd (fzfa-source-current-cmd source)))
-                    ;; Debounce-then-restart, mirroring the completing-
-                    ;; read path's `do-restart' scheduling.  Floor on the
-                    ;; restart gap is `fzfa-shell-command-throttle' so
-                    ;; rapid edits don't fork a process per keystroke.
-                    (when-let* ((tm (fzfa-source-restart-timer source)))
-                      (cancel-timer tm)
-                      (setf (fzfa-source-restart-timer source) nil))
-                    (let* ((elapsed (- (float-time)
-                                       (fzfa-source-last-restart-time source)))
-                           (delay (max fzfa-shell-command-debounce
-                                       (- fzfa-shell-command-throttle
-                                          elapsed))))
-                      (setf (fzfa-source-restart-timer source)
-                            (run-with-timer
-                             (max 0.01 delay) nil
-                             (lambda ()
-                               (setf (fzfa-source-restart-timer source) nil)
-                               (funcall do-restart cmd))))))
+                    (fzfa-source--debounce-restart source cmd refresh-fn))
                   (when-let* ((h (fzfa-source-handle source)))
                     (fzf-native-async-candidates h filter limit)))))
             :match-dynamic t
@@ -1147,31 +1128,11 @@ for fuzzy-multi-source UX."
                                            (fzfa-source-command source))))
                               ;; CMD edited in compact / full →
                               ;; debounce-restart the shell handle.
-                              ;; Same throttle pattern as
-                              ;; `fzfa-helm--async-source-and-stop' so
-                              ;; rapid edits don't fork per keystroke.
                               (when (not (equal split-cmd
                                                 (fzfa-source-current-cmd
                                                  source)))
-                                (when-let* ((tm (fzfa-source-restart-timer
-                                                 source)))
-                                  (cancel-timer tm)
-                                  (setf (fzfa-source-restart-timer source) nil))
-                                (let* ((elapsed (- (float-time)
-                                                   (fzfa-source-last-restart-time
-                                                    source)))
-                                       (delay
-                                        (max fzfa-shell-command-debounce
-                                             (- fzfa-shell-command-throttle
-                                                elapsed))))
-                                  (setf (fzfa-source-restart-timer source)
-                                        (run-with-timer
-                                         (max 0.01 delay) nil
-                                         (lambda ()
-                                           (setf (fzfa-source-restart-timer
-                                                  source) nil)
-                                           (fzfa-source--restart
-                                            source split-cmd refresh-fn))))))
+                                (fzfa-source--debounce-restart
+                                 source split-cmd refresh-fn))
                               (let ((r (while-no-input
                                          (fzf-native-async-candidates
                                           (fzfa-source-handle source)
@@ -1406,41 +1367,14 @@ for fuzzy-multi-source UX."
               (run-with-timer
                0 fzfa-refresh-delay
                (lambda ()
-                 (when helm-alive-p
-                   (let (bumped)
-                     ;; First pass: DETECT bumps without committing
-                     ;; `last-gen'.  Committing eagerly here would lose
-                     ;; the bump signal whenever the throttle window
-                     ;; below blocks the push — and once the producer
-                     ;; stops streaming (final gen reached) the next
-                     ;; tick sees `gen == last-gen' and the pending
-                     ;; results never get displayed.
-                     ;;
-                     ;; Iterate via `sources-v' so we read each source's
-                     ;; CURRENT handle (which `fzfa-source--restart'
-                     ;; replaces on cmd edits).  A frozen handles vector
-                     ;; would poll the original eager-started handles —
-                     ;; defunct after the first restart — and never see
-                     ;; gen bumps from the live ones.
-                     (dotimes (i n-sources)
-                       (when-let* ((src (aref sources-v i))
-                                   (h   (fzfa-source-handle src))
-                                   (g   (fzf-native-async-generation h)))
-                         (when (/= g (fzfa-source-last-gen src))
-                           (setq bumped t))))
-                     (when (and bumped (not (input-pending-p))
-                                (>= (- (float-time) last-exhibit)
-                                    fzfa-input-throttle))
-                       ;; Push window open — commit `last-gen' for
-                       ;; every source so the next tick starts from
-                       ;; the published baseline.
-                       (dotimes (i n-sources)
-                         (when-let* ((src (aref sources-v i))
-                                     (h   (fzfa-source-handle src))
-                                     (g   (fzf-native-async-generation h)))
-                           (setf (fzfa-source-last-gen src) g)))
-                       (setq last-exhibit (float-time))
-                       (helm-force-update)))))))))
+                 (when (and helm-alive-p
+                            (fzfa--multi-poll-bumped-p sources-v)
+                            (not (input-pending-p))
+                            (>= (- (float-time) last-exhibit)
+                                fzfa-input-throttle))
+                   (fzfa--multi-poll-commit sources-v)
+                   (setq last-exhibit (float-time))
+                   (helm-force-update)))))))
     ;; Per-source preview `:setup' broadcast.  Each cell captures the
     ;; ORIGIN window/buffer/`default-directory' (the user's selected
     ;; window before helm activated), then dispatches `:setup' under its

@@ -2133,6 +2133,29 @@ Updates CURRENT-CMD, LAST-GEN, and LAST-RESTART-TIME unconditionally."
              new-cmd (fzfa-source-directory source))))
     (funcall refresh-fn))))
 
+(defun fzfa-source--debounce-restart (source new-cmd refresh-fn)
+  "Schedule a debounced restart of SOURCE's shell handle with NEW-CMD.
+
+Cancels any pending `restart-timer' on SOURCE and queues a fresh
+one.  Delay floors at `fzfa-shell-command-debounce' and respects
+`fzfa-shell-command-throttle' since the source's last restart, so
+a burst of keystrokes ends with exactly one spawn on the final
+cmd.  When the timer fires it clears the slot and calls
+`fzfa-source--restart' with REFRESH-FN."
+  (when-let* ((tm (fzfa-source-restart-timer source)))
+    (cancel-timer tm)
+    (setf (fzfa-source-restart-timer source) nil))
+  (let* ((elapsed (- (float-time)
+                     (fzfa-source-last-restart-time source)))
+         (delay (max fzfa-shell-command-debounce
+                     (- fzfa-shell-command-throttle elapsed))))
+    (setf (fzfa-source-restart-timer source)
+          (run-with-timer
+           (max 0.01 delay) nil
+           (lambda ()
+             (setf (fzfa-source-restart-timer source) nil)
+             (fzfa-source--restart source new-cmd refresh-fn))))))
+
 (defun fzfa-source--stop (source)
   "Tear down SOURCE: cancel timers, delete overlays, stop handle.
 
@@ -2509,23 +2532,9 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                                    (funcall refresh-overlay)))
                                r))))))
                     ((not (equal cmd (fzfa-source-current-cmd source)))
-                     ;; Cancel any pending restart and reschedule.  Each
-                     ;; keystroke debounces; the throttle term is the
-                     ;; floor on the gap between actual spawns when the
-                     ;; user keeps typing past one debounce window.
-                     (when-let* ((tm (fzfa-source-restart-timer source)))
-                       (cancel-timer tm)
-                       (setf (fzfa-source-restart-timer source) nil))
-                     (let* ((elapsed (- (float-time)
-                                        (fzfa-source-last-restart-time source)))
-                            (delay (max fzfa-shell-command-debounce
-                                        (- fzfa-shell-command-throttle elapsed))))
-                       (setf (fzfa-source-restart-timer source)
-                             (run-with-timer
-                              (max 0.01 delay) nil
-                              (lambda ()
-                                (setf (fzfa-source-restart-timer source) nil)
-                                (funcall do-restart cmd)))))
+                     ;; Debounce the spawn so a keystroke burst ends with
+                     ;; one restart on the final cmd.
+                     (fzfa-source--debounce-restart source cmd refresh-fn)
                      ;; Fetch from the *current* handle (previous cmd's
                      ;; process) so the display reflects something while the
                      ;; user is mid-typing in the cmd portion.
@@ -2616,20 +2625,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                           (setf (fzfa-source-last-result source) scored
                                 (fzfa-source-filtered source) (length scored)))))
                      ((not (equal cmd (fzfa-source-current-cmd source)))
-                      (when-let* ((tm (fzfa-source-restart-timer source)))
-                        (cancel-timer tm)
-                        (setf (fzfa-source-restart-timer source) nil))
-                      (let* ((elapsed (- (float-time)
-                                         (fzfa-source-last-restart-time source)))
-                             (delay (max fzfa-shell-command-debounce
-                                         (- fzfa-shell-command-throttle
-                                            elapsed))))
-                        (setf (fzfa-source-restart-timer source)
-                              (run-with-timer
-                               (max 0.01 delay) nil
-                               (lambda ()
-                                 (setf (fzfa-source-restart-timer source) nil)
-                                 (funcall do-restart cmd)))))
+                      (fzfa-source--debounce-restart source cmd refresh-fn)
                       (let* ((h (fzfa-source-handle source))
                              (r (and h
                                      (fzf-native-async-candidates
@@ -3076,6 +3072,31 @@ Returns non-nil iff a fetch was actually issued."
                      (setf (fzfa-source-snapshot source) tagged
                            (fzfa-source-total source) (length tagged)))))))
     t))
+
+(defun fzfa--multi-poll-bumped-p (sources-v)
+  "Non-nil iff any source in SOURCES-V has a fresh generation.
+
+Walks each source's CURRENT handle (not a frozen snapshot — so
+post-restart handles get polled) and compares the live generation
+to the source's `last-gen' slot.  Does not commit; pair with
+`fzfa--multi-poll-commit' inside the same poll tick to keep the
+detect/push throttle correct (commit only when actually pushing,
+otherwise the bump signal is silently dropped)."
+  (cl-loop for src across sources-v
+           thereis (when-let* ((h (fzfa-source-handle src))
+                               (g (fzf-native-async-generation h)))
+                     (/= g (fzfa-source-last-gen src)))))
+
+(defun fzfa--multi-poll-commit (sources-v)
+  "Commit each SOURCES-V source's current generation to its `last-gen' slot.
+
+Call after `fzfa--multi-poll-bumped-p' returned non-nil and you've
+decided to fire the frontend push, so the next tick starts from
+the published baseline."
+  (cl-loop for src across sources-v do
+           (when-let* ((h (fzfa-source-handle src))
+                       (g (fzf-native-async-generation h)))
+             (setf (fzfa-source-last-gen src) g))))
 
 (defun fzfa--multi-narrow->string (k)
   "Coerce narrow key value K (symbol, character, or string) to length-1 string."
@@ -3633,28 +3654,11 @@ Per-source plist keys:
           (lambda () (fzfa--frontend-push ivy-push-multi)))
     (setq narrow-do-restart
           (lambda (src cmd)
-            (cond
-             ;; Cands-fn producer: re-fire immediately on cmd change.
-             ((fzfa-source-cands-fn src)
-              (fzfa-source--restart src cmd multi-refresh-fn))
-             ;; Shell handle: debounce to coalesce fast keystrokes,
-             ;; mirroring the single-source `do-restart' throttle so a
-             ;; burst of edits ends with one spawn on the final cmd.
-             (t
-              (when-let* ((tm (fzfa-source-restart-timer src)))
-                (cancel-timer tm)
-                (setf (fzfa-source-restart-timer src) nil))
-              (let* ((elapsed (- (float-time)
-                                 (fzfa-source-last-restart-time src)))
-                     (delay (max fzfa-shell-command-debounce
-                                 (- fzfa-shell-command-throttle elapsed))))
-                (setf (fzfa-source-restart-timer src)
-                      (run-with-timer
-                       (max 0.01 delay) nil
-                       (lambda ()
-                         (setf (fzfa-source-restart-timer src) nil)
-                         (fzfa-source--restart
-                          src cmd multi-refresh-fn)))))))))
+            (if (fzfa-source-cands-fn src)
+                ;; Cands-fn producer: re-fire immediately on cmd change.
+                (fzfa-source--restart src cmd multi-refresh-fn)
+              ;; Shell handle: debounce to coalesce fast keystrokes.
+              (fzfa-source--debounce-restart src cmd multi-refresh-fn))))
     (setq narrow-display-cycle
           (lambda ()
             (interactive)
@@ -3692,35 +3696,15 @@ Per-source plist keys:
                 (run-with-timer
                  0 fzfa-refresh-delay
                  (lambda ()
-                   (when (active-minibuffer-window)
-                     (let (bumped)
-                       ;; First pass: DETECT bumps without committing
-                       ;; `last-gen'.  Committing eagerly here would
-                       ;; lose the bump signal whenever the throttle
-                       ;; window below blocks the push — and once the
-                       ;; producer stops streaming (final gen reached)
-                       ;; the next tick sees `gen == last-gen' and the
-                       ;; pending results never get pushed.
-                       (dotimes (i n)
-                         (let ((src (aref sources i)))
-                           (when-let* ((h (fzfa-source-handle src))
-                                       (g (fzf-native-async-generation h)))
-                             (when (/= g (fzfa-source-last-gen src))
-                               (setq bumped t)))))
-                       (when (and bumped (not (input-pending-p))
-                                  (>= (- (float-time) last-exhibit)
-                                      fzfa-input-throttle))
-                         ;; Push window open — commit `last-gen' for
-                         ;; every source so the next tick starts from
-                         ;; the published baseline.
-                         (dotimes (i n)
-                           (let ((src (aref sources i)))
-                             (when-let* ((h (fzfa-source-handle src))
-                                         (g (fzf-native-async-generation h)))
-                               (setf (fzfa-source-last-gen src) g))))
-                         (setq last-exhibit (float-time))
-                         (run-with-idle-timer
-                          0 nil #'fzfa--frontend-push ivy-push-multi)))))))
+                   (when (and (active-minibuffer-window)
+                              (fzfa--multi-poll-bumped-p sources)
+                              (not (input-pending-p))
+                              (>= (- (float-time) last-exhibit)
+                                  fzfa-input-throttle))
+                     (fzfa--multi-poll-commit sources)
+                     (setq last-exhibit (float-time))
+                     (run-with-idle-timer
+                      0 nil #'fzfa--frontend-push ivy-push-multi)))))
           (add-hook 'post-command-hook refresh-overlay)
           (sit-for fzfa-refresh-delay)
           (setq result
