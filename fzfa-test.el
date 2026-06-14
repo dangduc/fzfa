@@ -2025,6 +2025,41 @@ the columns rectangular."
          (cand (fzfa-replay--session-to-candidate session 0)))
     (should (string-match-p "—" cand))))
 
+(ert-deftest fzfa-replay-sessions-to-candidates-aligns-columns ()
+  "Batch helper pads the COMMAND column to the widest entry's width.
+
+Without batch-level alignment, a session whose `:command' is
+`fzfa-fd' (7 chars) shares a list with `fzfa-replay-from-memory'
+\(23 chars) and the per-row fixed-width column-seam shifts off-
+grid for the short row.  Two-pass alignment fixes it by using
+the widest cmd's width for every row.  Distinct query markers
+\(`q1', `q2') so `string-match' isn't fooled by stray chars in
+the time / command columns."
+  (let* ((mk (lambda (cmd query)
+               (list :timestamp 0
+                     :command cmd
+                     :directory "/d/"
+                     :narrow-idx 0
+                     :sources (vector (list :initial-input query
+                                            :snapshot nil)))))
+         (cands (fzfa-replay--sessions-to-candidates
+                 (list (funcall mk 'fzfa-fd "q1")
+                       (funcall mk 'fzfa-replay-from-memory "q2")))))
+    (should (= (length cands) 2))
+    (let ((p1 (string-match "q1" (nth 0 cands)))
+          (p2 (string-match "q2" (nth 1 cands))))
+      (should p1)
+      (should p2)
+      ;; Both candidates start their QUERY column at the same offset
+      ;; because the COMMAND column was padded to the wider entry's
+      ;; width.
+      (should (= p1 p2)))))
+
+(ert-deftest fzfa-replay-sessions-to-candidates-empty-sessions ()
+  "Empty / nil SESSIONS returns nil (callers feed straight to picker)."
+  (should-not (fzfa-replay--sessions-to-candidates nil))
+  (should-not (fzfa-replay--sessions-to-candidates '())))
+
 (ert-deftest fzfa-replay-session-to-candidate-underlines-query ()
   "Non-empty query string gets the `fzfa-replay-query' face for visibility."
   (let* ((session

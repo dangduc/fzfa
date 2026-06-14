@@ -355,6 +355,73 @@ the lowest-common-denominator that works everywhere."
                           (fzfa--tofu-suffix idx))))
     (propertize display 'fzfa-replay-session session)))
 
+(defun fzfa-replay--sessions-to-candidates (sessions)
+  "Convert SESSIONS to picker candidates with aligned columns.
+
+Two-pass column-width computation across the whole batch so the
+QUERY and DIRECTORY columns line up vertically even when COMMAND
+varies in length across rows (`fzfa-fd' next to
+`fzfa-replay-from-memory' otherwise pushes the per-row format's
+fixed-width seam off-grid).  Single-shot
+`fzfa-replay--session-to-candidate' callers stay on the original
+fixed-width format; this helper is for the picker-fills-with-a-
+list shape used by `fzfa-replay-from-memory' and
+`fzfa-replay-from-file'.
+
+Returns nil for an empty or nil SESSIONS, matching what callers
+expect to feed `fzfa-completing-read'."
+  (when sessions
+    (let* ((rows
+            (cl-loop
+             for s in sessions for i from 0 collect
+             (let* ((ts (or (plist-get s :timestamp) 0))
+                    (time-str (format-time-string "%a %H:%M" ts))
+                    (cmd (or (plist-get s :command) "?"))
+                    (cmd-str (format "%s" cmd))
+                    (dir (abbreviate-file-name
+                          (or (plist-get s :directory) "")))
+                    (sources (plist-get s :sources))
+                    (target (or (plist-get s :narrow-idx) 0))
+                    (filter (or (and sources
+                                     (< target (length sources))
+                                     (plist-get (aref sources target)
+                                                :initial-input))
+                                "")))
+               (list s i time-str cmd-str filter dir))))
+           (time-w (apply #'max 1
+                          (mapcar (lambda (r) (length (nth 2 r))) rows)))
+           (cmd-w  (apply #'max 1
+                          (mapcar (lambda (r) (length (nth 3 r))) rows)))
+           (filter-w
+            (apply #'max 1
+                   (mapcar
+                    (lambda (r)
+                      (let ((f (nth 4 r)))
+                        (if (string-empty-p f) 1 (length f))))
+                    rows)))
+           ;; Build the per-row format string once.  Inner format
+           ;; produces e.g. "%-7s  %-25s  %-10s  %s" — outer format
+           ;; applies that with the row's values.
+           (fmt (format "%%-%ds  %%-%ds  %%-%ds  %%s"
+                        time-w cmd-w filter-w)))
+      (mapcar
+       (lambda (r)
+         (let* ((session   (nth 0 r))
+                (idx       (nth 1 r))
+                (time-str  (nth 2 r))
+                (cmd-str   (nth 3 r))
+                (filter    (nth 4 r))
+                (dir       (nth 5 r))
+                (filter-col
+                 (if (string-empty-p filter)
+                     (propertize "—" 'face 'shadow)
+                   (propertize filter 'face 'fzfa-replay-query)))
+                (display (concat (format fmt time-str cmd-str
+                                         filter-col dir)
+                                 (fzfa--tofu-suffix idx))))
+           (propertize display 'fzfa-replay-session session)))
+       rows))))
+
 (defun fzfa-replay--annotate (cand)
   "Annotation function: source count only.
 
@@ -404,9 +471,7 @@ calls `fzfa-replay--action'."
   (unless sessions
     (user-error "No fzfa sessions to replay"))
   (let ((cand (fzfa-completing-read
-               :candidates (cl-loop for s in sessions for i from 0
-                                    collect (fzfa-replay--session-to-candidate
-                                             s i))
+               :candidates (fzfa-replay--sessions-to-candidates sessions)
                :prompt prompt
                :category 'fzfa-replay-session
                :annotate #'fzfa-replay--annotate
@@ -423,14 +488,13 @@ calls `fzfa-replay--action'."
 (defun fzfa-replay--file-producer (_input cb)
   "2-arg `:candidates' producer that loads `fzfa-replay-file' async.
 INPUT is ignored; CB is invoked with the session-candidate list
-once the file read finishes (or immediately on cache hit)."
+once the file read finishes (or immediately on cache hit).  Uses
+`fzfa-replay--sessions-to-candidates' so column widths are
+computed across the loaded batch — no eyeball-misalignment when
+commands of varying length share the list."
   (fzfa-replay--load-async
    (lambda (sessions)
-     (funcall cb
-              (and sessions
-                   (cl-loop for s in sessions for i from 0
-                            collect (fzfa-replay--session-to-candidate
-                                     s i)))))))
+     (funcall cb (fzfa-replay--sessions-to-candidates sessions)))))
 
 ;;;###autoload
 (defun fzfa-replay-from-file ()
