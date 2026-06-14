@@ -2045,6 +2045,23 @@ shows it verbatim — both are pure no-ops after clear."
             (fzfa--display-make-overlays
              (car bounds) (cdr bounds))))))
 
+(defun fzfa-source--display-force-hidden (source initial-char)
+  "Force SOURCE's display-state back to `hidden'.
+
+Extracts CMD from the buffer's `<sep>CMD<sep>' shape into SOURCE's
+`command' slot, removes separator overlays, and clears the
+compact-mode display overlays.  No-op when SOURCE is already
+hidden.  Used by `fzfa-multi-read' on widen / source-switch so the
+buffer's `#cmd#filter' shape doesn't linger past the narrow that
+established it."
+  (unless (eq (fzfa-source-display-state source) 'hidden)
+    (setf (fzfa-source-command source)
+          (fzfa--display-extract
+           (fzfa-source-separator-overlays source)))
+    (setf (fzfa-source-separator-overlays source) nil
+          (fzfa-source-display-state source) 'hidden)
+    (fzfa-source--display-apply source initial-char)))
+
 (defun fzfa-source--display-cycle (source initial-char)
   "Advance SOURCE's display-state through hidden → compact → full → hidden.
 
@@ -3297,6 +3314,14 @@ Per-source plist keys:
                                   :name)
                                  "?")))))))
             (fzfa--insert-prompt-if-ivy)))
+         ;; Forward placeholders — these closures reference each other
+         ;; in a cycle (`ivy-push-multi' → `narrow-do-restart' →
+         ;; `multi-refresh-fn' → `ivy-push-multi'), so they can't be
+         ;; created left-to-right.  Bound via `setq' in the body once
+         ;; all four cells exist.
+         multi-refresh-fn
+         narrow-do-restart
+         narrow-display-cycle
          ;; Ivy push closure: ivy doesn't re-call the collection on
          ;; timer ticks (push model), so async sources would stay
          ;; stuck on the initial pattern.  Mirrors the per-source
@@ -3311,16 +3336,44 @@ Per-source plist keys:
             (when-let* ((win   (active-minibuffer-window))
                         ((or (not (bound-and-true-p ivy-last))
                              (ivy-state-dynamic-collection ivy-last)))
-                        (query (and (boundp 'ivy-text) ivy-text)))
+                        (input (and (boundp 'ivy-text) ivy-text)))
               ;; Run the ivy ops with the minibuffer buffer current —
               ;; the closure can fire from `run-with-idle-timer'
               ;; whose buffer context is whatever was current at idle
               ;; time, and `ivy--insert-prompt' / `ivy--exhibit'
               ;; silently write to the wrong buffer otherwise.
               (with-selected-window win
-                (let ((interrupted nil))
+                (let* ((interrupted nil)
+                       ;; When narrowed to a source whose display is
+                       ;; `compact' / `full', split the buffer at
+                       ;; `fzfa-separator' so CMD drives the producer /
+                       ;; shell handle and FILTER drives the fzf score.
+                       ;; Otherwise the whole input flows through
+                       ;; unchanged.
+                       (narrow-src (and narrow-idx (aref sources narrow-idx)))
+                       (narrow-active
+                        (and narrow-src
+                             (not (eq (fzfa-source-display-state narrow-src)
+                                      'hidden))))
+                       (narrow-split
+                        (and narrow-active
+                             (fzfa--split
+                              input
+                              (fzfa-source-display-state narrow-src)
+                              (fzfa-source-command narrow-src))))
+                       (narrow-cmd    (car narrow-split))
+                       (narrow-filter (cdr narrow-split))
+                       (query (if narrow-active narrow-filter input)))
+                  (when (and narrow-active
+                             (not (equal narrow-cmd
+                                         (fzfa-source-current-cmd
+                                          narrow-src))))
+                    (funcall narrow-do-restart narrow-src narrow-cmd))
                   (dotimes (i n)
-                    (let ((src (aref sources i)))
+                    (let* ((src (aref sources i))
+                           (this-narrow (and narrow-active
+                                             (eql i narrow-idx)))
+                           (prod-input (if this-narrow narrow-cmd input)))
                       (if (and narrow-idx (/= narrow-idx i))
                           (progn
                             (setf (fzfa-source-last-result src) nil
@@ -3335,7 +3388,7 @@ Per-source plist keys:
                                        h query limit)))
                                  (prod
                                   (fzfa--multi-candidates-fetch
-                                   src i query cand->src)
+                                   src i prod-input cand->src)
                                   (let ((snap (fzfa-source-snapshot src)))
                                     (cond
                                      ((null snap) '())
@@ -3450,15 +3503,44 @@ Per-source plist keys:
                         (name (or (plist-get spec :name) "?")))
                     (push (list narrow
                                 (lambda (_cand)
-                                  (setq narrow-idx idx)
-                                  (funcall ivy-push-multi))
+                                  (let ((before narrow-idx))
+                                    (setq narrow-idx idx)
+                                    ;; `ivy-call' restores the
+                                    ;; pre-minibuffer buffer before
+                                    ;; dispatching the action, so any
+                                    ;; mutation done here lands in
+                                    ;; the wrong buffer.  Switch back
+                                    ;; to the minibuffer so
+                                    ;; `force-hidden' → `extract'
+                                    ;; touches the right text.
+                                    (when-let* ((win (active-minibuffer-window)))
+                                      (with-current-buffer (window-buffer win)
+                                        (when (and before (/= before idx))
+                                          (fzfa-source--display-force-hidden
+                                           (aref sources before)
+                                           fzfa-separator))))
+                                    ;; Defer so `ivy-text' is fresh
+                                    ;; after `force-hidden' mutates the
+                                    ;; buffer.  See narrow-handler.
+                                    (run-with-idle-timer
+                                     0 nil #'fzfa--frontend-push
+                                     ivy-push-multi)))
                                 (format "narrow → %s" name))
                           acts))))
               (when fzfa-multi-narrow-key
                 (push (list fzfa-multi-narrow-key
                             (lambda (_cand)
-                              (setq narrow-idx nil)
-                              (funcall ivy-push-multi))
+                              (let ((before narrow-idx))
+                                (setq narrow-idx nil)
+                                (when-let* ((win (active-minibuffer-window)))
+                                  (with-current-buffer (window-buffer win)
+                                    (when before
+                                      (fzfa-source--display-force-hidden
+                                       (aref sources before)
+                                       fzfa-separator))))
+                                (run-with-idle-timer
+                                 0 nil #'fzfa--frontend-push
+                                 ivy-push-multi)))
                             "widen")
                       acts))
               (nreverse acts))))
@@ -3509,7 +3591,20 @@ Per-source plist keys:
                        (t nil))
                       (setq menu-active nil)
                       (unless (eql before narrow-idx)
-                        (fzfa--frontend-push ivy-push-multi))
+                        ;; Leaving a non-hidden source — extract its
+                        ;; `#cmd#' shape back onto the source struct so
+                        ;; widened / next-narrowed mode doesn't inherit
+                        ;; a stale `#cmd#filter' buffer.
+                        (when before
+                          (fzfa-source--display-force-hidden
+                           (aref sources before) fzfa-separator))
+                        ;; Defer the push: when `force-hidden' mutates
+                        ;; the minibuffer, ivy's `ivy-text' doesn't sync
+                        ;; until `post-command-hook' fires, so an inline
+                        ;; push reads stale input.  An idle-0 timer
+                        ;; lands after the hook and reads fresh text.
+                        (run-with-idle-timer
+                         0 nil #'fzfa--frontend-push ivy-push-multi))
                       ;; Restore the normal overlay now that the menu
                       ;; is dismissed (the 't action's own refresh path
                       ;; only fires on candidate computations).
@@ -3530,14 +3625,65 @@ Per-source plist keys:
                ;; `:multi-cells' on ROUTER itself.
                (list router :multi-cand->src cand->src)))
          retry-timer timer result)
+    ;; Bind the forward-declared closures.  Order: `multi-refresh-fn'
+    ;; references `ivy-push-multi' (which was bound in let*);
+    ;; `narrow-do-restart' references `multi-refresh-fn';
+    ;; `narrow-display-cycle' references `ivy-push-multi'.
+    (setq multi-refresh-fn
+          (lambda () (fzfa--frontend-push ivy-push-multi)))
+    (setq narrow-do-restart
+          (lambda (src cmd)
+            (cond
+             ;; Cands-fn producer: re-fire immediately on cmd change.
+             ((fzfa-source-cands-fn src)
+              (fzfa-source--restart src cmd multi-refresh-fn))
+             ;; Shell handle: debounce to coalesce fast keystrokes,
+             ;; mirroring the single-source `do-restart' throttle so a
+             ;; burst of edits ends with one spawn on the final cmd.
+             (t
+              (when-let* ((tm (fzfa-source-restart-timer src)))
+                (cancel-timer tm)
+                (setf (fzfa-source-restart-timer src) nil))
+              (let* ((elapsed (- (float-time)
+                                 (fzfa-source-last-restart-time src)))
+                     (delay (max fzfa-shell-command-debounce
+                                 (- fzfa-shell-command-throttle elapsed))))
+                (setf (fzfa-source-restart-timer src)
+                      (run-with-timer
+                       (max 0.01 delay) nil
+                       (lambda ()
+                         (setf (fzfa-source-restart-timer src) nil)
+                         (fzfa-source--restart
+                          src cmd multi-refresh-fn)))))))))
+    (setq narrow-display-cycle
+          (lambda ()
+            (interactive)
+            (cond
+             ;; Widened → let `>' self-insert; in multi-source mode
+             ;; there's no single source to cycle.
+             ((null narrow-idx) (call-interactively #'self-insert-command))
+             ;; Mutate the buffer (hidden↔compact materializes /
+             ;; extracts `#CMD#') and let the frontend's
+             ;; post-command-hook pick it up.  A manual
+             ;; `fzfa--frontend-push' here runs *before* ivy syncs
+             ;; `ivy-text' from the minibuffer, so it would parse the
+             ;; stale pre-insert input and restart the source with
+             ;; garbage CMD.
+             (t (fzfa-source--display-cycle
+                 (aref sources narrow-idx) fzfa-separator)))))
     ;; Eager-start fzf-native handles for command sources.  Producer-fn
     ;; sources (`cands-fn' slot) need no eager work — first dispatch
     ;; tick fires the initial fetch via `fzfa--multi-candidates-fetch'.
+    ;; Seed `current-cmd' so the narrow-source restart-check (later in
+    ;; the candidate loop) sees the source as "already running its
+    ;; initial cmd" — otherwise the first split-driven tick would fire
+    ;; a redundant restart of a freshly-started handle.
     (dotimes (i n)
       (let* ((src (aref sources i))
              (cmd (plist-get (fzfa-source-spec src) :command)))
         (when cmd
-          (setf (fzfa-source-handle src)
+          (setf (fzfa-source-current-cmd src) cmd
+                (fzfa-source-handle src)
                 (fzf-native-async-start
                  cmd (fzfa-source-directory src))))))
     (unwind-protect
@@ -3548,16 +3694,30 @@ Per-source plist keys:
                  (lambda ()
                    (when (active-minibuffer-window)
                      (let (bumped)
+                       ;; First pass: DETECT bumps without committing
+                       ;; `last-gen'.  Committing eagerly here would
+                       ;; lose the bump signal whenever the throttle
+                       ;; window below blocks the push — and once the
+                       ;; producer stops streaming (final gen reached)
+                       ;; the next tick sees `gen == last-gen' and the
+                       ;; pending results never get pushed.
                        (dotimes (i n)
                          (let ((src (aref sources i)))
                            (when-let* ((h (fzfa-source-handle src))
                                        (g (fzf-native-async-generation h)))
                              (when (/= g (fzfa-source-last-gen src))
-                               (setf (fzfa-source-last-gen src) g)
                                (setq bumped t)))))
                        (when (and bumped (not (input-pending-p))
                                   (>= (- (float-time) last-exhibit)
                                       fzfa-input-throttle))
+                         ;; Push window open — commit `last-gen' for
+                         ;; every source so the next tick starts from
+                         ;; the published baseline.
+                         (dotimes (i n)
+                           (let ((src (aref sources i)))
+                             (when-let* ((h (fzfa-source-handle src))
+                                         (g (fzf-native-async-generation h)))
+                               (setf (fzfa-source-last-gen src) g))))
                          (setq last-exhibit (float-time))
                          (run-with-idle-timer
                           0 nil #'fzfa--frontend-push ivy-push-multi)))))))
@@ -3591,13 +3751,17 @@ Per-source plist keys:
                       ;; under other frontends, run the in-house
                       ;; `narrow-handler' that does its own read-char
                       ;; menu.
-                      (when fzfa-multi-narrow-key
+                      (when (or fzfa-multi-narrow-key fzfa-display-key)
                         (let ((map (make-sparse-keymap)))
                           (set-keymap-parent map (current-local-map))
-                          (define-key map (kbd fzfa-multi-narrow-key)
-                                      (if (bound-and-true-p ivy-mode)
-                                          #'ivy-dispatching-call
-                                        narrow-handler))
+                          (when fzfa-multi-narrow-key
+                            (define-key map (kbd fzfa-multi-narrow-key)
+                                        (if (bound-and-true-p ivy-mode)
+                                            #'ivy-dispatching-call
+                                          narrow-handler)))
+                          (when fzfa-display-key
+                            (define-key map (kbd fzfa-display-key)
+                                        narrow-display-cycle))
                           (use-local-map map))))
                   (let ((fzfa--multi-active-sources specs-v)
                         (fzfa--multi-cand->src cand->src)
@@ -3718,10 +3882,36 @@ Per-source plist keys:
                          (`(boundaries . ,_) (cons 0 0))
                          ('lambda t)
                          ('t
-                          (let ((query (fzfa--current-query str))
-                                (interrupted nil))
+                          (let* ((input (fzfa--current-query str))
+                                 (interrupted nil)
+                                 (narrow-src
+                                  (and narrow-idx (aref sources narrow-idx)))
+                                 (narrow-active
+                                  (and narrow-src
+                                       (not (eq (fzfa-source-display-state
+                                                 narrow-src)
+                                                'hidden))))
+                                 (narrow-split
+                                  (and narrow-active
+                                       (fzfa--split
+                                        input
+                                        (fzfa-source-display-state narrow-src)
+                                        (fzfa-source-command narrow-src))))
+                                 (narrow-cmd    (car narrow-split))
+                                 (narrow-filter (cdr narrow-split))
+                                 (query (if narrow-active narrow-filter input)))
+                            (when (and narrow-active
+                                       (not (equal narrow-cmd
+                                                   (fzfa-source-current-cmd
+                                                    narrow-src))))
+                              (funcall narrow-do-restart
+                                       narrow-src narrow-cmd))
                             (dotimes (i n)
-                              (let ((src (aref sources i)))
+                              (let* ((src (aref sources i))
+                                     (this-narrow
+                                      (and narrow-active (eql i narrow-idx)))
+                                     (prod-input
+                                      (if this-narrow narrow-cmd input)))
                                 (if (and narrow-idx (/= narrow-idx i))
                                     ;; Source filtered out by narrow — drop
                                     ;; its prior results and zero its filtered
@@ -3740,7 +3930,7 @@ Per-source plist keys:
                                                  h query limit)))
                                            (prod
                                             (fzfa--multi-candidates-fetch
-                                             src i query cand->src)
+                                             src i prod-input cand->src)
                                             (let ((snap (fzfa-source-snapshot src)))
                                               (cond
                                                ((null snap) '())
