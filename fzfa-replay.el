@@ -384,33 +384,26 @@ Subsequent invocations hit the mtime-keyed cache."
     :group    #'fzfa-replay--group
     :require-match t)))
 
+(defcustom fzfa-replay-any-commands
+  '((fzfa-replay-from-memory :narrow m)
+    (fzfa-replay-from-file   :narrow f))
+  "Commands shown by `fzfa-replay-any'.
+
+Each entry is either a bare command symbol or a list
+\(COMMAND :narrow KEY) overriding the auto-derived narrow key.
+Users can append their own replay-shaped commands here — anything
+that flows through `fzfa-completing-read' and dispatches a
+selected candidate via an action of its own (see
+`fzfa-replay-from-file' for the producer shape, or
+`fzfa-replay-from-memory' for the static-candidates shape)."
+  :type '(repeat (choice function (cons function plist)))
+  :group 'fzfa)
+
 ;;;###autoload
 (defun fzfa-replay-any ()
-  "Pick from in-memory + persisted sessions and replay.
-
-Multi-source over both rings as separate sources with narrow keys
-`m' (memory) and `f' (file).  The file source loads asynchronously
-via `fzfa-replay--file-producer'."
+  "Pick from in-memory + persisted sessions and replay."
   (interactive)
-  (unless (or fzfa--sessions (file-readable-p
-                              (expand-file-name fzfa-replay-file)))
-    (user-error "No fzfa sessions to replay"))
-  (fzfa--read
-   (list (list :name "memory" :narrow "m"
-               :candidates
-               (cl-loop for s in fzfa--sessions for i from 0
-                        collect (fzfa-replay--session-to-candidate s i))
-               :category 'fzfa-replay-session
-               :annotate #'fzfa-replay--annotate
-               :group    #'fzfa-replay--group
-               :action   #'fzfa-replay--action)
-         (list :name "file" :narrow "f"
-               :candidates #'fzfa-replay--file-producer
-               :category 'fzfa-replay-session
-               :annotate #'fzfa-replay--annotate
-               :group    #'fzfa-replay--group
-               :action   #'fzfa-replay--action))
-   :prompt "Replay (any): "))
+  (fzfa-multi-read fzfa-replay-any-commands :prompt "Replay (any): "))
 
 ;;;###autoload
 (defun fzfa-replay-setup ()
