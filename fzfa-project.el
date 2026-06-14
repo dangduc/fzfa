@@ -35,7 +35,6 @@
 ;;; Code:
 
 (require 'fzfa)
-(require 'project)
 (require 'cl-lib)
 
 (declare-function project-current "project")
@@ -62,6 +61,7 @@
 Candidate set comes from `project-files', so membership respects
 `project-vc-*' and `project-find-functions'."
   (interactive)
+  (require 'project)
   (let* ((pr (fzfa-project--current))
          (root (expand-file-name (project-root pr)))
          (files (project-files pr)))
@@ -104,6 +104,7 @@ the project root itself."
 (defun fzfa-project-buffer ()
   "Switch to a buffer of the current project."
   (interactive)
+  (require 'project)
   (let* ((pr (fzfa-project--current))
          (root (expand-file-name (project-root pr)))
          (names (cl-loop for b in (project-buffers pr)
@@ -127,6 +128,7 @@ the project root itself."
 Filters `recentf-list' to entries whose expanded path is under the
 current project's root."
   (interactive)
+  (require 'project)
   (require 'recentf)
   (recentf-mode 1)
   (let* ((pr (fzfa-project--current))
@@ -151,6 +153,7 @@ current project's root."
 After selection, dispatches through `project-switch-project' so the
 user's `project-switch-commands' menu kicks in."
   (interactive)
+  (require 'project)
   (let ((roots (project-known-project-roots)))
     (unless roots
       (user-error "No known projects"))
