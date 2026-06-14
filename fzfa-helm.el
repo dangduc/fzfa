@@ -173,6 +173,7 @@ before the idle delay elapses -> timer fires post-cleanup ->
 (defvar helm-source-filter)
 (defvar fzfa-multi-narrow-key)
 (declare-function fzfa--multi-rank "fzfa")
+(declare-function fzfa--make-poll-fn "fzfa")
 (declare-function fzf-native-async-start "fzf-native")
 (declare-function fzf-native-async-stop "fzf-native")
 (declare-function fzf-native-async-generation "fzf-native")
@@ -1361,20 +1362,14 @@ for fuzzy-multi-source UX."
     ;; when input is pending — typing always trumps streamed-candidate
     ;; refreshes.
     (when handles
-      (let ((last-exhibit 0.0))
-        (setq poll-timer
-              (run-with-timer
-               0 fzfa-refresh-delay
-               (lambda ()
-                 (when (and helm-alive-p
-                            (fzfa--multi-poll-bumped-p sources-v)
-                            (not (input-pending-p))
-                            (or (not first-cands-shown)
-                                (>= (- (float-time) last-exhibit)
-                                    fzfa-input-throttle)))
-                   (fzfa--multi-poll-commit sources-v)
-                   (setq last-exhibit (float-time))
-                   (helm-force-update)))))))
+      (setq poll-timer
+            (run-with-timer
+             0 fzfa-refresh-delay
+             (fzfa--make-poll-fn
+              sources-v
+              (lambda () helm-alive-p)
+              #'helm-force-update
+              (lambda () first-cands-shown)))))
     ;; Per-source preview `:setup' broadcast.  Each cell captures the
     ;; ORIGIN window/buffer/`default-directory' (the user's selected
     ;; window before helm activated), then dispatches `:setup' under its

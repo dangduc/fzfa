@@ -2898,6 +2898,28 @@ the published baseline."
                        (g (fzf-native-async-generation h)))
              (setf (fzfa-source-last-gen src) g))))
 
+(defun fzfa--make-poll-fn (sources-v alive-p refresh-fn first-shown-p)
+  "Return a 0-arg poll closure for SOURCES-V.
+
+ALIVE-P / REFRESH-FN / FIRST-SHOWN-P are 0-arg functions.  Each tick
+the closure checks ALIVE-P, `fzfa--multi-poll-bumped-p', and
+`input-pending-p', then a `fzfa-input-throttle' gate that is
+bypassed while FIRST-SHOWN-P returns nil — so cold sessions paint
+as soon as the producer + scoring delivers, without sitting through
+a throttle window on the empty buffer.  When all checks pass, commit
+the generations and call REFRESH-FN."
+  (let ((last-exhibit 0.0))
+    (lambda ()
+      (when (and (funcall alive-p)
+                 (fzfa--multi-poll-bumped-p sources-v)
+                 (not (input-pending-p))
+                 (or (not (funcall first-shown-p))
+                     (>= (- (float-time) last-exhibit)
+                         fzfa-input-throttle)))
+        (fzfa--multi-poll-commit sources-v)
+        (setq last-exhibit (float-time))
+        (funcall refresh-fn)))))
+
 (defun fzfa--multi-narrow->string (k)
   "Coerce narrow key value K (symbol, character, or string) to length-1 string."
   (let ((s (cond
@@ -3105,7 +3127,12 @@ Per-source plist keys:
                                 specs)))
          (limit        (fzfa--candidate-limit))
          (candidate->source    (make-hash-table :test 'equal :size 1024))
-         (last-exhibit 0.0)
+         ;; Flipped to t the first time any source's per-tick computation
+         ;; produces a non-empty result.  The poll-timer gate skips
+         ;; `fzfa-input-throttle' while this is nil so the empty
+         ;; minibuffer doesn't sit through two throttle windows waiting
+         ;; for the producer + scoring round-trip on the cold session.
+         (first-cands-shown nil)
          ;; Session-level plist keys live on source 0 — the original
          ;; `fzfa-completing-read' contract is that these are
          ;; session-wide settings, and the shim that wraps it builds a
@@ -3352,6 +3379,8 @@ Per-source plist keys:
                                      (lambda (c)
                                        (fzfa--tag c i candidate->source multi-p))
                                      out)))
+                            (when (and out (not first-cands-shown))
+                              (setq first-cands-shown t))
                             (setf (fzfa-source-last-result src) out
                                   (fzfa-source-rank src)
                                   (fzfa--multi-rank out query h))
@@ -3621,16 +3650,13 @@ Per-source plist keys:
           (setq timer
                 (run-with-timer
                  0 fzfa-refresh-delay
-                 (lambda ()
-                   (when (and (active-minibuffer-window)
-                              (fzfa--multi-poll-bumped-p sources)
-                              (not (input-pending-p))
-                              (>= (- (float-time) last-exhibit)
-                                  fzfa-input-throttle))
-                     (fzfa--multi-poll-commit sources)
-                     (setq last-exhibit (float-time))
-                     (run-with-idle-timer
-                      0 nil #'fzfa--frontend-push ivy-push-multi)))))
+                 (fzfa--make-poll-fn
+                  sources
+                  (lambda () (active-minibuffer-window))
+                  (lambda ()
+                    (run-with-idle-timer
+                     0 nil #'fzfa--frontend-push ivy-push-multi))
+                  (lambda () first-cands-shown))))
           (add-hook 'post-command-hook refresh-overlay)
           (sit-for fzfa-refresh-delay)
           (setq result
@@ -3909,6 +3935,8 @@ Per-source plist keys:
                                                (lambda (c)
                                                  (fzfa--tag c i candidate->source multi-p))
                                                out)))
+                                      (when (and out (not first-cands-shown))
+                                        (setq first-cands-shown t))
                                       (setf (fzfa-source-last-result src) out
                                             (fzfa-source-rank src)
                                             (fzfa--multi-rank out query h))
