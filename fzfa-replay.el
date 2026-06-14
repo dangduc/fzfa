@@ -79,8 +79,17 @@ Kept separate from `fzfa--sessions' so:
 - The pickers can present them as distinct sources without
   invented merging rules.
 
-`fzfa-replay-from-file' (Phase B-3) picks over this variable;
-`fzfa-replay-any' (Phase B-3) unions both rings.")
+`fzfa-replay-from-file' picks over this variable;
+`fzfa-replay-any' unions both rings.")
+
+(defvar fzfa-replay--cache-mtime nil
+  "Mtime of the last-loaded `fzfa-replay-file'.
+Cache key for `fzfa-replay--load-async' — unchanged mtime returns
+the cached session list immediately, no re-read.  Invalidated by
+`fzfa-replay-save-list'.")
+
+(defvar fzfa-replay--cache-sessions nil
+  "Cached value of `fzfa-replay--persisted-sessions' keyed by mtime.")
 
 ;;; Serialization helpers
 
@@ -163,7 +172,11 @@ non-readable function slots and substitute function-shaped
                         (expand-file-name fzfa-replay-file))
           (when fzfa-replay-save-file-modes
             (set-file-modes (expand-file-name fzfa-replay-file)
-                            fzfa-replay-save-file-modes))))
+                            fzfa-replay-save-file-modes))
+          ;; Invalidate the mtime-keyed async cache so the next
+          ;; `fzfa-replay--load-async' reads the fresh write.
+          (setq fzfa-replay--cache-mtime nil
+                fzfa-replay--cache-sessions nil)))
     (error
      (message "fzfa-replay-save-list: %s" (error-message-string err)))))
 
@@ -199,6 +212,36 @@ not break the in-memory replay path."
   (when fzfa-replay-auto-save-timer
     (cancel-timer fzfa-replay-auto-save-timer)
     (setq fzfa-replay-auto-save-timer nil)))
+
+;;; Async file load
+
+(defun fzfa-replay--load-async (callback)
+  "Load persisted sessions asynchronously; CALLBACK receives the list.
+
+Three paths:
+- File missing → CALLBACK invoked with nil immediately.
+- Cache hit (mtime unchanged) → CALLBACK invoked with cached list
+  immediately.
+- Cache miss → file read scheduled on `run-with-idle-timer' so the
+  caller (typically a `:candidates' producer) returns first; the
+  CALLBACK fires from the idle handler with the loaded sessions
+  and the cache updates."
+  (let* ((file (expand-file-name fzfa-replay-file))
+         (mtime (and (file-readable-p file)
+                     (file-attribute-modification-time
+                      (file-attributes file)))))
+    (cond
+     ((null mtime) (funcall callback nil))
+     ((equal mtime fzfa-replay--cache-mtime)
+      (funcall callback fzfa-replay--cache-sessions))
+     (t
+      (run-with-idle-timer
+       0 nil
+       (lambda ()
+         (fzfa-replay-load-list)
+         (setq fzfa-replay--cache-mtime mtime
+               fzfa-replay--cache-sessions fzfa-replay--persisted-sessions)
+         (funcall callback fzfa-replay--persisted-sessions)))))))
 
 ;;; Pickers
 
@@ -281,47 +324,59 @@ calls `fzfa-replay--action'."
   (interactive)
   (fzfa-replay--picker fzfa--sessions "Replay (memory): "))
 
+(defun fzfa-replay--file-producer (_input cb)
+  "2-arg `:candidates' producer that loads `fzfa-replay-file' async.
+INPUT is ignored; CB is invoked with the session-candidate list
+once the file read finishes (or immediately on cache hit)."
+  (fzfa-replay--load-async
+   (lambda (sessions)
+     (funcall cb (and sessions
+                      (mapcar #'fzfa-replay--session-to-candidate
+                              sessions))))))
+
 ;;;###autoload
 (defun fzfa-replay-from-file ()
   "Pick from the persisted session list and replay.
 
-Reads `fzfa-replay--persisted-sessions' synchronously; the async
-load path lands in Phase B-4."
+Loads `fzfa-replay-file' asynchronously — the picker spins up
+immediately and candidates stream in once the read completes.
+Subsequent invocations hit the mtime-keyed cache."
   (interactive)
-  (fzfa-replay--picker fzfa-replay--persisted-sessions
-                       "Replay (file): "))
+  (fzfa-replay--action
+   (fzfa-completing-read
+    :candidates #'fzfa-replay--file-producer
+    :prompt "Replay (file): "
+    :category 'fzfa-replay-session
+    :annotate #'fzfa-replay--annotate
+    :group    #'fzfa-replay--group
+    :require-match t)))
 
 ;;;###autoload
 (defun fzfa-replay-any ()
   "Pick from in-memory + persisted sessions and replay.
 
 Multi-source over both rings as separate sources with narrow keys
-`m' (memory) and `f' (file).  Empty rings are skipped; both empty
-signals a `user-error'."
+`m' (memory) and `f' (file).  The file source loads asynchronously
+via `fzfa-replay--file-producer'."
   (interactive)
-  (let ((mem fzfa--sessions)
-        (file fzfa-replay--persisted-sessions))
-    (when (and (null mem) (null file))
-      (user-error "No fzfa sessions to replay"))
-    (fzfa--read
-     (delq nil
-           (list (when mem
-                   (list :name "memory" :narrow "m"
-                         :candidates
-                         (mapcar #'fzfa-replay--session-to-candidate mem)
-                         :category 'fzfa-replay-session
-                         :annotate #'fzfa-replay--annotate
-                         :group    #'fzfa-replay--group
-                         :action   #'fzfa-replay--action))
-                 (when file
-                   (list :name "file" :narrow "f"
-                         :candidates
-                         (mapcar #'fzfa-replay--session-to-candidate file)
-                         :category 'fzfa-replay-session
-                         :annotate #'fzfa-replay--annotate
-                         :group    #'fzfa-replay--group
-                         :action   #'fzfa-replay--action))))
-     :prompt "Replay (any): ")))
+  (unless (or fzfa--sessions (file-readable-p
+                              (expand-file-name fzfa-replay-file)))
+    (user-error "No fzfa sessions to replay"))
+  (fzfa--read
+   (list (list :name "memory" :narrow "m"
+               :candidates
+               (mapcar #'fzfa-replay--session-to-candidate fzfa--sessions)
+               :category 'fzfa-replay-session
+               :annotate #'fzfa-replay--annotate
+               :group    #'fzfa-replay--group
+               :action   #'fzfa-replay--action)
+         (list :name "file" :narrow "f"
+               :candidates #'fzfa-replay--file-producer
+               :category 'fzfa-replay-session
+               :annotate #'fzfa-replay--annotate
+               :group    #'fzfa-replay--group
+               :action   #'fzfa-replay--action))
+   :prompt "Replay (any): "))
 
 ;;;###autoload
 (define-minor-mode fzfa-replay-mode

@@ -1885,6 +1885,46 @@ in-band metadata."
   (let ((cand "any-string"))
     (should (eq (fzfa-replay--group cand t) cand))))
 
+(ert-deftest fzfa-replay-load-async-missing-file-yields-nil ()
+  "No file → callback invoked with nil immediately."
+  (let* ((fzfa-replay-file "/tmp/fzfa-replay-test-nonexistent-XYZ.el")
+         (called nil)
+         (got 'unset))
+    (fzfa-replay--load-async (lambda (s) (setq called t got s)))
+    (should called)
+    (should-not got)))
+
+(ert-deftest fzfa-replay-load-async-cache-hit-fires-callback-sync ()
+  "Pre-populated cache → callback runs synchronously with cached data."
+  (let* ((tmpfile (make-temp-file "fzfa-replay-cache-"))
+         (mtime (file-attribute-modification-time
+                 (file-attributes tmpfile)))
+         (fzfa-replay-file tmpfile)
+         (fzfa-replay--cache-mtime mtime)
+         (fzfa-replay--cache-sessions '(cached-marker))
+         (called nil)
+         (got 'unset))
+    (unwind-protect
+        (progn
+          (fzfa-replay--load-async (lambda (s) (setq called t got s)))
+          (should called)
+          (should (equal got '(cached-marker))))
+      (delete-file tmpfile))))
+
+(ert-deftest fzfa-replay-save-invalidates-load-cache ()
+  "`save-list' clears the mtime cache so the next load re-reads."
+  (let* ((tmpfile (make-temp-file "fzfa-replay-cache-"))
+         (fzfa-replay-file tmpfile)
+         (fzfa--sessions nil)
+         (fzfa-replay--cache-mtime '(123 456))
+         (fzfa-replay--cache-sessions '(stale)))
+    (unwind-protect
+        (progn
+          (fzfa-replay-save-list)
+          (should-not fzfa-replay--cache-mtime)
+          (should-not fzfa-replay--cache-sessions))
+      (delete-file tmpfile))))
+
 (ert-deftest fzfa-replay-save-respects-max-saved-items ()
   "Save truncates to `fzfa-replay-max-saved-items'."
   (let* ((tmpfile (make-temp-file "fzfa-replay-test-"))
