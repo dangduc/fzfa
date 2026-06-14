@@ -160,20 +160,56 @@ unreadable candidate doesn't corrupt the whole save file."
 
 ;;; Save / load
 
-(defun fzfa-replay-save-list ()
-  "Save `fzfa--sessions' to `fzfa-replay-file'.
+(defun fzfa-replay--merge-sessions (in-memory persisted)
+  "Merge IN-MEMORY + PERSISTED session lists, dedup'd by session key.
 
-Truncates to `fzfa-replay-max-saved-items' before writing.  Each
-session is passed through `fzfa-replay--scrub-session' to strip
-non-readable function slots and substitute function-shaped
-`:candidates' with their captured snapshot.  Writes via
-`prin1' with `print-circle' on so propertized strings (e.g.
-`fzfa-location' on swiper-class candidates) round-trip."
+IN-MEMORY entries win on dedup — re-running a command from the
+same directory with the same query inside the current Emacs
+session supersedes the stale on-disk entry from a previous run.
+Result is sorted by `:timestamp' descending so the most recent
+session sits at the head, ready for `cl-subseq' trimming to the
+disk cap.
+
+This is the recentf-style accumulation pattern: each save merges
+the current ring on top of what's already on disk, so the file
+accrues sessions across Emacs lifetimes instead of being
+overwritten by whichever ring happened to live longest."
+  (let ((seen (make-hash-table :test 'equal))
+        merged)
+    (dolist (s (append in-memory persisted))
+      (let ((key (fzfa--session-dedup-key s)))
+        (unless (gethash key seen)
+          (puthash key t seen)
+          (push s merged))))
+    (sort (nreverse merged)
+          (lambda (a b)
+            (> (or (plist-get a :timestamp) 0)
+               (or (plist-get b :timestamp) 0))))))
+
+(defun fzfa-replay-save-list ()
+  "Merge `fzfa--sessions' with the on-disk list and write to `fzfa-replay-file'.
+
+Loads the current on-disk sessions (via the mtime-keyed cache
+when fresh), merges them with the in-memory ring via
+`fzfa-replay--merge-sessions' — newer in-memory entries win on
+dedup — sorts by timestamp, trims to
+`fzfa-replay-max-saved-items', scrubs each session via
+`fzfa-replay--scrub-session' to strip non-readable function
+slots, and writes the result.  This is the recentf-style pattern:
+the on-disk file accumulates sessions across Emacs lifetimes,
+so closing and reopening Emacs preserves replay history.
+
+The in-memory mirror `fzfa-replay--persisted-sessions' is
+updated to the just-written list so subsequent
+`fzfa-replay-from-file' calls see the fresh state without a
+disk reload round-trip."
   (interactive)
   (condition-case err
-      (let* ((trimmed (cl-subseq fzfa--sessions
+      (let* ((merged (fzfa-replay--merge-sessions
+                      fzfa--sessions fzfa-replay--persisted-sessions))
+             (trimmed (cl-subseq merged
                                  0 (min fzfa-replay-max-saved-items
-                                        (length fzfa--sessions))))
+                                        (length merged))))
              (scrubbed (mapcar #'fzfa-replay--scrub-session trimmed))
              (dropped 0)
              (safe (cl-loop for s in scrubbed
@@ -196,9 +232,12 @@ non-readable function slots and substitute function-shaped
           (when fzfa-replay-save-file-modes
             (set-file-modes (expand-file-name fzfa-replay-file)
                             fzfa-replay-save-file-modes))
-          ;; Invalidate the mtime-keyed async cache so the next
-          ;; `fzfa-replay--load-async' reads the fresh write.
-          (setq fzfa-replay--cache-mtime nil
+          ;; Sync the in-memory mirror to what we just wrote so the
+          ;; next merge / picker sees the accumulated list without a
+          ;; disk reload, and invalidate the async cache so any other
+          ;; consumer (e.g. a concurrent picker) re-reads fresh.
+          (setq fzfa-replay--persisted-sessions safe
+                fzfa-replay--cache-mtime nil
                 fzfa-replay--cache-sessions nil)))
     (error
      (message "fzfa-replay-save-list: %s" (error-message-string err)))))

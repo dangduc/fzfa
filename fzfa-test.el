@@ -2090,6 +2090,7 @@ collapse same-minute / same-directory sessions."
                                  :narrow-idx nil
                                  :timestamp (float-time)
                                  :directory "/tmp/"
+                                 :command (intern (format "cmd-%d" i))
                                  :sources (vector
                                            (list :spec `(:name ,(format "n%d" i))
                                                  :command ""
@@ -2102,6 +2103,77 @@ collapse same-minute / same-directory sessions."
           (fzfa-replay-save-list)
           (fzfa-replay-load-list)
           (should (= (length fzfa-replay--persisted-sessions) 2)))
+      (delete-file tmpfile))))
+
+(ert-deftest fzfa-replay-merge-prefers-in-memory ()
+  "On dedup, IN-MEMORY entries supersede PERSISTED — newer wins.
+
+The dedup key is (command, directory, narrow-idx, narrow target's
+filter); two sessions with the same key collapse, with the
+in-memory entry's timestamp preserved."
+  (let* ((mk (lambda (cmd ts in-mem-p)
+               (list :command cmd
+                     :directory "/d/"
+                     :narrow-idx nil
+                     :timestamp ts
+                     :prompt (if in-mem-p "in: " "on: ")
+                     :sources (vector (list :spec '(:name "x")
+                                            :initial-input nil)))))
+         (in-mem (list (funcall mk 'foo 100 t)
+                       (funcall mk 'bar 200 t)))
+         (persisted (list (funcall mk 'foo 50 nil)    ; same key as in-mem[0]
+                          (funcall mk 'baz 75 nil)))  ; unique
+         (merged (fzfa-replay--merge-sessions in-mem persisted)))
+    ;; Three distinct entries (foo/bar/baz), not four
+    (should (= (length merged) 3))
+    ;; Sorted by timestamp desc
+    (should (equal (mapcar (lambda (s) (plist-get s :command)) merged)
+                   '(bar foo baz)))
+    ;; In-memory `foo' (ts=100) won over persisted `foo' (ts=50)
+    (let ((foo (cl-find 'foo merged
+                        :key (lambda (s) (plist-get s :command)))))
+      (should (equal (plist-get foo :prompt) "in: "))
+      (should (= (plist-get foo :timestamp) 100)))))
+
+(ert-deftest fzfa-replay-save-accumulates-across-runs ()
+  "Save preserves on-disk sessions whose keys aren't superseded.
+
+Simulates two Emacs lifetimes: first run saves sessions A and B,
+second run captures C and saves.  After the second save, the
+file should hold A, B, AND C — not just C (the previous bug was
+that fzfa--sessions overwrote persisted-sessions on save)."
+  (let* ((tmpfile (make-temp-file "fzfa-replay-accum-"))
+         (fzfa-replay-file tmpfile)
+         (fzfa-replay-max-saved-items 16)
+         (mk (lambda (cmd ts)
+               (list :command cmd
+                     :directory "/d/"
+                     :narrow-idx nil
+                     :timestamp ts
+                     :prompt (format "%s: " cmd)
+                     :sources (vector (list :spec `(:name ,(symbol-name cmd))
+                                            :command ""
+                                            :display 'hidden
+                                            :initial-input nil
+                                            :snapshot nil))))))
+    (unwind-protect
+        (progn
+          ;; Run 1: capture A and B, save.
+          (let ((fzfa--sessions (list (funcall mk 'a 100)
+                                      (funcall mk 'b 200)))
+                (fzfa-replay--persisted-sessions nil))
+            (fzfa-replay-save-list))
+          ;; Run 2: fresh in-memory ring (just C), load from disk into
+          ;; persisted-sessions (gets A+B), save.
+          (let ((fzfa-replay--persisted-sessions nil)
+                (fzfa--sessions (list (funcall mk 'c 300))))
+            (fzfa-replay-load-list)
+            (should (= (length fzfa-replay--persisted-sessions) 2))
+            (fzfa-replay-save-list)
+            (should (= (length fzfa-replay--persisted-sessions) 3))
+            (should (equal (mapcar (lambda (s) (plist-get s :command))
+                                   fzfa-replay--persisted-sessions)
+                           '(c b a)))))
       (delete-file tmpfile))))
 
 ;;; fzfa-locate external dispatch
