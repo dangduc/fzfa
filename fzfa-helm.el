@@ -995,6 +995,10 @@ for fuzzy-multi-source UX."
          update-last-query
          restore-narrow
          narrowed-name
+         ;; User-facing entry command — captured at fzfa-helm--read
+         ;; entry, stable across the helm session, read by
+         ;; `fzfa--sessions-push' for the picker display + dedup key.
+         (entry-command this-command)
          (helm-sources
           (cl-loop
            for src in sources
@@ -1548,7 +1552,7 @@ for fuzzy-multi-source UX."
            "fzf-multi: ")
        (and narrowed-name
             (cl-position narrowed-name source-names :test #'equal))
-       last-query)
+       last-query entry-command)
       (when poll-timer (cancel-timer poll-timer))
       ;; Bulk-stop async producers; idempotent — :cleanup may have
       ;; already fired on normal helm exit.

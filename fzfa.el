@@ -2931,6 +2931,11 @@ Per-source plist keys:
          (multi-p      (> n 1))              ; gates tofu tagging, narrow
                                              ; menu, source-name headers
          (specs-v      (vconcat specs))      ; plist vector (helper callsites)
+         ;; Capture the user-facing entry command for session records.
+         ;; `this-command' is bound by the dispatcher and stays stable
+         ;; across `fzfa--read''s body — nested fzfa calls via
+         ;; `:inject' mode flip it only inside their own execution.
+         (entry-command this-command)
          ;; All per-source runtime state — handle, current-cmd, snapshot,
          ;; prod-token, prod-input, last-result, rank, total, filtered,
          ;; last-gen — lives on each struct.  Shared helpers
@@ -3815,7 +3820,8 @@ Per-source plist keys:
       ;; `current-cmd' / `display-state' (set by the table arm and
       ;; the display-cycle command) are still readable.  Fires on
       ;; both normal exit and C-g abort.
-      (fzfa--sessions-push specs sources prompt narrow-idx last-query)
+      (fzfa--sessions-push specs sources prompt narrow-idx
+                           last-query entry-command)
       (mapc #'fzfa-source--stop sources)
       (when router (fzfa--preview-return result)))
     (when result
@@ -3890,7 +3896,24 @@ Each source-record is a plist:
 is reserved for a future filesystem-backed resume picker that
 spans past Emacs sessions plus the in-memory ring.")
 
-(defun fzfa--sessions-push (specs sources prompt narrow-idx last-query)
+(defun fzfa--session-dedup-key (session)
+  "Identity key for SESSION used by `fzfa--sessions-push' to suppress dupes.
+
+Sessions that share (command, directory, narrow-idx, narrow
+target's filter) are considered the same interaction; running
+the same command from the same directory with the same query
+five times leaves one entry in the ring (the most recent)."
+  (let* ((sources (plist-get session :sources))
+         (target (or (plist-get session :narrow-idx) 0))
+         (filter (when (and sources (< target (length sources)))
+                   (plist-get (aref sources target) :initial-input))))
+    (list (plist-get session :command)
+          (plist-get session :directory)
+          (plist-get session :narrow-idx)
+          filter)))
+
+(defun fzfa--sessions-push (specs sources prompt narrow-idx last-query
+                                  entry-command)
   "Snapshot the just-completed `fzfa--read' call onto `fzfa--sessions'.
 
 SPECS is the input source plist list.  SOURCES is the runtime
@@ -3898,12 +3921,20 @@ SPECS is the input source plist list.  SOURCES is the runtime
 display-state.  PROMPT is the call's prompt.  NARROW-IDX is the
 active narrow at exit (nil = widened).  LAST-QUERY is the most
 recent filter the user typed, captured by the table arm / ivy
-push closure.
+push closure.  ENTRY-COMMAND is `this-command' at fzfa--read
+entry — the user-facing command name shown in the picker and used
+as part of the dedup key.
 
 Each per-source record carries its `:snapshot' — the captured
 producer output — so disk persistence (`fzfa-replay-save-list')
 can substitute function-shaped `:candidates' with their actual
-list at save time."
+list at save time.
+
+Dedup: before pushing, any existing session with the same
+\(command, directory, narrow-idx, filter) key is removed.  Five
+identical \\[fzfa-fd]'s from the same dir with the same query
+collapse into one — keeping the in-memory ring meaningful and
+preventing the on-disk file from accumulating duplicates."
   (let* ((n (length sources))
          (target (or narrow-idx 0))
          (records
@@ -3924,16 +3955,22 @@ list at save time."
                  ;; target — that's where it logically belongs.
                  ;; Sources outside the narrow weren't user-edited
                  ;; in this session, so their input stays nil.
-                 :initial-input (when (eql i target) last-query)))))
-    (push (list :prompt prompt
-                :narrow-idx narrow-idx
-                ;; Session-level stamps — feed the picker's
-                ;; annotation / group functions and the persistence
-                ;; layer's mtime-keyed sort.
-                :timestamp (float-time)
-                :directory default-directory
-                :sources (vconcat records))
-          fzfa--sessions)
+                 :initial-input (when (eql i target) last-query))))
+         (new (list :prompt prompt
+                    :narrow-idx narrow-idx
+                    ;; Session-level stamps — feed the picker's
+                    ;; annotation / group functions, the dedup key,
+                    ;; and the persistence layer's mtime-keyed sort.
+                    :timestamp (float-time)
+                    :directory default-directory
+                    :command entry-command
+                    :sources (vconcat records)))
+         (key (fzfa--session-dedup-key new)))
+    (setq fzfa--sessions
+          (cons new (cl-remove-if
+                     (lambda (s)
+                       (equal (fzfa--session-dedup-key s) key))
+                     fzfa--sessions)))
     (when (> (length fzfa--sessions) fzfa-sessions-max)
       (setq fzfa--sessions
             (cl-subseq fzfa--sessions 0 fzfa-sessions-max)))))

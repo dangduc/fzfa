@@ -1693,14 +1693,19 @@ into firing a shell handle on an empty cmd — kills the sync path."
     (should (equal (plist-get restored :initial-input) "m"))))
 
 (ert-deftest fzfa-sessions-push-trims-to-max ()
-  "Pushing past `fzfa-sessions-max' drops the oldest entries."
+  "Pushing past `fzfa-sessions-max' drops the oldest entries.
+
+Uses distinct ENTRY-COMMANDs so dedup doesn't collapse the pushes
+\(otherwise five identical (command, dir, narrow, filter) tuples
+would dedup to one — see `fzfa-sessions-push-dedups-by-key')."
   (let ((fzfa--sessions nil)
         (fzfa-sessions-max 3)
         (sources (vector (fzfa-make-source :spec '(:name "x" :command "fd")))))
     (dotimes (i 5)
       (fzfa--sessions-push '((:name "x" :command "fd"))
                            sources
-                           (format "p%d: " i) nil ""))
+                           (format "p%d: " i) nil ""
+                           (intern (format "cmd%d" i))))
     (should (= (length fzfa--sessions) 3))
     ;; Most-recent first — the latest push is at head.
     (should (equal (plist-get (car fzfa--sessions) :prompt) "p4: "))))
@@ -1713,11 +1718,42 @@ into firing a shell handle on an empty cmd — kills the sync path."
     (setf (fzfa-source-command src) "fd --no-ignore"
           (fzfa-source-display-state src) 'full)
     (fzfa--sessions-push '((:name "x" :command "fd"))
-                         (vector src) "p: " 0 "needle")
+                         (vector src) "p: " 0 "needle" 'fzfa-fd)
     (let* ((rec (aref (plist-get (car fzfa--sessions) :sources) 0)))
       (should (equal (plist-get rec :command) "fd --no-ignore"))
       (should (eq    (plist-get rec :display) 'full))
       (should (equal (plist-get rec :initial-input) "needle")))))
+
+(ert-deftest fzfa-sessions-push-stamps-entry-command ()
+  "ENTRY-COMMAND is stored on the session record's `:command' slot."
+  (let* ((fzfa--sessions nil)
+         (src (fzfa-make-source :spec '(:name "x" :command "fd"))))
+    (fzfa--sessions-push '((:name "x" :command "fd"))
+                         (vector src) "p: " 0 "" 'fzfa-fd)
+    (should (eq (plist-get (car fzfa--sessions) :command) 'fzfa-fd))))
+
+(ert-deftest fzfa-sessions-push-dedups-by-key ()
+  "Same (command, directory, narrow-idx, filter) collapses to one record."
+  (let* ((fzfa--sessions nil)
+         (fzfa-sessions-max 16)
+         (src (fzfa-make-source :spec '(:name "x" :command "fd")))
+         (default-directory "/tmp/"))
+    (dotimes (_ 5)
+      (fzfa--sessions-push '((:name "x" :command "fd"))
+                           (vector src) "p: " 0 "" 'fzfa-fd))
+    (should (= (length fzfa--sessions) 1))))
+
+(ert-deftest fzfa-sessions-push-distinct-filters-coexist ()
+  "Different filters in the same dir / command keep separate records."
+  (let* ((fzfa--sessions nil)
+         (fzfa-sessions-max 16)
+         (src (fzfa-make-source :spec '(:name "x" :command "fd")))
+         (default-directory "/tmp/"))
+    (fzfa--sessions-push '((:name "x" :command "fd"))
+                         (vector src) "p: " 0 "alpha" 'fzfa-fd)
+    (fzfa--sessions-push '((:name "x" :command "fd"))
+                         (vector src) "p: " 0 "beta" 'fzfa-fd)
+    (should (= (length fzfa--sessions) 2))))
 
 (ert-deftest fzfa-sessions-push-initial-input-only-on-narrow-target ()
   "`:initial-input' attaches only to the narrowed source; others get nil."
@@ -1727,7 +1763,7 @@ into firing a shell handle on an empty cmd — kills the sync path."
          (b (fzfa-make-source :spec '(:name "b" :command "rg"))))
     (fzfa--sessions-push '((:name "a" :command "fd")
                            (:name "b" :command "rg"))
-                         (vector a b) "p: " 1 "needle")
+                         (vector a b) "p: " 1 "needle" 'fzfa-find-any)
     (let* ((srcs (plist-get (car fzfa--sessions) :sources)))
       (should-not (plist-get (aref srcs 0) :initial-input))
       (should (equal (plist-get (aref srcs 1) :initial-input) "needle")))))

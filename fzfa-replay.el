@@ -270,10 +270,10 @@ Three paths:
 (defun fzfa-replay--session-to-candidate (session idx)
   "Build a picker candidate string for SESSION at position IDX.
 
-The displayed text is a short summary (date + directory); an
-invisible per-IDX tofu suffix is appended to guarantee
-`string='-uniqueness so two sessions captured in the same minute
-under the same directory don't get collapsed by vertico's
+The displayed text is a short summary (date + command name +
+directory); an invisible per-IDX tofu suffix is appended to
+guarantee `string='-uniqueness so two captures with the same
+visible columns don't get collapsed by vertico's
 `delete-consecutive-dups' (the suffix is the same trick the
 multi-source path uses for cross-source disambiguation).  The
 full session plist rides on the string as a `fzfa-replay-session'
@@ -282,9 +282,10 @@ text property at index 0 — the snapshot-lookup recovery in
 `fzfa-replay--action' can dispatch."
   (let* ((ts (or (plist-get session :timestamp) 0))
          (time-str (format-time-string "%a %H:%M" ts))
+         (cmd (or (plist-get session :command) "?"))
          (dir (abbreviate-file-name
                (or (plist-get session :directory) "")))
-         (display (concat (format "%s  %s" time-str dir)
+         (display (concat (format "%s  %-24s  %s" time-str cmd dir)
                           (fzfa--tofu-suffix idx))))
     (propertize display 'fzfa-replay-session session)))
 
