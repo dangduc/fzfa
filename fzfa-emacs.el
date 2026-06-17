@@ -324,16 +324,42 @@ LINE:CONTENT — buffer names never enter the search input."
         :category 'fzfa-location
         :group #'fzfa--location-group)))))
 
+(defun fzfa--command-not-obsolete-p (sym)
+  "Return non-nil if SYM should not be hidden as an obsolete command.
+Mirrors the obsolete-command filtering done by
+`read-extended-command-1': hide obsolete commands except those that
+name a replacement and were obsoleted in this Emacs major version
+or later."
+  (let ((obsolete (get sym 'byte-obsolete-info)))
+    (or (not obsolete)
+        (and (functionp (car obsolete))
+             (condition-case nil
+                 (>= (car (version-to-list (caddr obsolete)))
+                     emacs-major-version)
+               (error t))))))
+
 (defun fzfa--commands (&optional predicate)
   "Return a sorted list of command names as strings.
 
 When PREDICATE is non-nil, only include commands for which
-\(funcall PREDICATE SYMBOL) returns non-nil."
-  (let (commands)
+\(funcall PREDICATE SYMBOL CURRENT-BUFFER) returns non-nil.  This
+matches the signature used by `read-extended-command-predicate'.
+
+Obsolete commands are filtered the same way as
+`read-extended-command-1'."
+  (let ((buffer (current-buffer))
+        commands)
     (mapatoms
      (lambda (sym)
        (when (and (commandp sym)
-                  (or (not predicate) (funcall predicate sym)))
+                  (fzfa--command-not-obsolete-p sym)
+                  (or (not predicate)
+                      (condition-case-unless-debug err
+                          (funcall predicate sym buffer)
+                        (error
+                         (message "fzfa--commands predicate: %s: %s"
+                                  sym (error-message-string err))
+                         nil))))
          (push (symbol-name sym) commands))))
     (sort commands #'string<)))
 
@@ -348,10 +374,14 @@ Records it like \\[execute-extended-command]."
 
 ;;;###autoload
 (defun fzfa-M-x ()
-  "Run an extended command using fzf, like \\[execute-extended-command]."
+  "Run an extended command using fzf, like \\[execute-extended-command].
+
+Honors `read-extended-command-predicate' so the candidate set
+matches what plain \\[execute-extended-command] would show."
   (interactive)
   (when-let* ((result (fzfa-completing-read
-                       :candidates (fzfa--commands)
+                       :candidates (fzfa--commands
+                                    read-extended-command-predicate)
                        :prompt "M-x: "
                        :category 'command
                        :history 'extended-command-history)))
@@ -361,14 +391,16 @@ Records it like \\[execute-extended-command]."
 (defun fzfa-M-x-for-buffer ()
   "Run an extended command applicable to the current buffer's mode.
 
-Filters using `command-completion-default-include-p' when available,
-mirroring `execute-extended-command-for-buffer'."
+Uses the same predicate as `execute-extended-command-for-buffer':
+commands marked for the current major/minor modes, plus commands
+bound in the buffer's active keymaps."
   (interactive)
-  (let* ((buffer (current-buffer))
-         (predicate
-          (when (fboundp 'command-completion-default-include-p)
-            (lambda (sym)
-              (command-completion-default-include-p sym buffer)))))
+  (let ((predicate
+         (cond
+          ((fboundp 'command-completion--command-for-this-buffer-function)
+           (command-completion--command-for-this-buffer-function))
+          ((fboundp 'command-completion-default-include-p)
+           #'command-completion-default-include-p))))
     (when-let* ((result (fzfa-completing-read
                          :candidates (fzfa--commands predicate)
                          :prompt (format "M-x [%s]: " major-mode)
