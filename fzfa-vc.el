@@ -66,12 +66,33 @@ opens a candidate file."
                 :value-type (alist :key-type symbol :value-type function))
   :group 'fzfa)
 
+(defvar fzfa-vc--backend-cache (make-hash-table :test 'equal)
+  "Hash table mapping expanded `default-directory' → backend symbol or `none'.
+
+`vc-responsible-backend' walks parent directories and tries every
+registered backend's detection; in a multi-source context like
+`fzfa-vc-any' the same call fires once per sub-source, adding up
+fast.  This session cache lets each unique directory pay the cost
+once.
+
+The sentinel `none' caches \"no backend responsible\" so non-VC
+directories also short-circuit.  No invalidation — restart Emacs
+if a directory's backend changes (`git init', repo move).")
+
 (defun fzfa-vc--backend ()
   "Return the VC backend symbol for `default-directory'.
 
-Signal a `user-error' when no backend is responsible."
-  (or (vc-responsible-backend default-directory t)
-      (user-error "No VC backend responsible for %s" default-directory)))
+Memoised via `fzfa-vc--backend-cache'.  Signals a `user-error'
+when no backend is responsible."
+  (let* ((dir (file-name-as-directory (expand-file-name default-directory)))
+         (cached (gethash dir fzfa-vc--backend-cache))
+         (backend (or cached
+                      (puthash dir
+                               (or (vc-responsible-backend dir t) 'none)
+                               fzfa-vc--backend-cache))))
+    (if (eq backend 'none)
+        (user-error "No VC backend responsible for %s" dir)
+      backend)))
 
 ;;;###autoload
 (defun fzfa-vc-modified-files ()
