@@ -372,15 +372,100 @@ Records it like \\[execute-extended-command]."
           real-this-command cmd)
     (command-execute cmd 'record)))
 
+(defcustom fzfa-commands-chunk-size 5000
+  "Number of symbols processed per `obarray' chunk in `fzfa-M-x' producers.
+
+Smaller values reduce per-tick blocking time at the cost of more
+timer scheduling overhead.  At 5000 each chunk takes roughly
+0.5-1ms on a typical commandp+predicate filter, well under one
+frame."
+  :type 'integer
+  :group 'fzfa)
+
+(defun fzfa--commands-producer (buffer predicate)
+  "Return a 2-arg `:candidates' producer that walks `obarray' non-blockingly.
+
+BUFFER is the originating buffer; PREDICATE (or nil) is called as
+\(funcall PREDICATE SYM BUFFER) like `read-extended-command-predicate'.
+
+The candidate set is query-independent — fzf does the filtering —
+so the obarray walk runs exactly once per producer (i.e. once per
+`fzfa-completing-read' session), chunked across timer ticks of
+`fzfa-commands-chunk-size' symbols each.  Subsequent producer
+calls (which `fzfa--source-fetch' fires on every keystroke) reuse
+the cached result via the producer's closure state:
+
+  - Before build completes: call is a no-op; fzf keeps filtering
+    against the partial snapshot delivered by the last chunk.
+  - After build completes: callback fires synchronously with the
+    cached sorted list.
+
+The latest pending callback wins — earlier callbacks are replaced
+inside the closure when fzf re-invokes the producer, and the
+consumer's `prod-token' check makes the replaced ones harmless."
+  (let ((symbols nil)
+        (results nil)
+        (final nil)
+        (latest-cb nil)
+        (started nil)
+        (chunk fzfa-commands-chunk-size))
+    (cl-labels
+        ((process ()
+           (let ((n 0))
+             (while (and symbols (< n chunk))
+               (let ((sym (pop symbols)))
+                 (when (and (commandp sym)
+                            (fzfa--command-not-obsolete-p sym)
+                            (or (not predicate)
+                                (condition-case-unless-debug err
+                                    (funcall predicate sym buffer)
+                                  (error
+                                   (message
+                                    "fzfa M-x predicate: %s: %s"
+                                    sym (error-message-string err))
+                                   nil))))
+                   (push (symbol-name sym) results)))
+               (cl-incf n)))
+           (cond
+            (symbols
+             (when latest-cb (funcall latest-cb results))
+             (run-with-timer 0 nil #'process))
+            (t
+             (setq final (sort (copy-sequence results) #'string<)
+                   ;; Drop the working list so it can be GC'd.
+                   results nil)
+             (when latest-cb (funcall latest-cb final))))))
+      (lambda (_input callback)
+        (setq latest-cb callback)
+        (cond
+         (final
+          (funcall callback final))
+         (started
+          ;; Build in progress.  Don't deliver here; the next chunk
+          ;; completion will call `latest-cb' (now CALLBACK).
+          nil)
+         (t
+          (setq started t
+                symbols (let (acc)
+                          (mapatoms (lambda (s) (push s acc)))
+                          acc))
+          (run-with-timer 0 nil #'process)))))))
+
 ;;;###autoload
 (defun fzfa-M-x ()
   "Run an extended command using fzf, like \\[execute-extended-command].
 
 Honors `read-extended-command-predicate' so the candidate set
-matches what plain \\[execute-extended-command] would show."
+matches what plain \\[execute-extended-command] would show.
+
+Candidates are computed off the main thread via cooperative
+timer-chunking — extract returns immediately, and the obarray
+walk happens in slices that yield to the input loop between
+chunks (see `fzfa--commands-producer')."
   (interactive)
   (when-let* ((result (fzfa-completing-read
-                       :candidates (fzfa--commands
+                       :candidates (fzfa--commands-producer
+                                    (current-buffer)
                                     read-extended-command-predicate)
                        :prompt "M-x: "
                        :category 'command
@@ -393,16 +478,24 @@ matches what plain \\[execute-extended-command] would show."
 
 Uses the same predicate as `execute-extended-command-for-buffer':
 commands marked for the current major/minor modes, plus commands
-bound in the buffer's active keymaps."
+bound in the buffer's active keymaps.
+
+Candidates are computed off the main thread via cooperative
+timer-chunking — extract returns immediately, and the obarray
+walk happens in slices that yield to the input loop between
+chunks.  The predicate is constructed once at command entry and
+captures the originating buffer's keymaps, so each per-symbol
+filter call is cheap."
   (interactive)
-  (let ((predicate
-         (cond
-          ((fboundp 'command-completion--command-for-this-buffer-function)
-           (command-completion--command-for-this-buffer-function))
-          ((fboundp 'command-completion-default-include-p)
-           #'command-completion-default-include-p))))
+  (let* ((buf (current-buffer))
+         (predicate
+          (cond
+           ((fboundp 'command-completion--command-for-this-buffer-function)
+            (command-completion--command-for-this-buffer-function))
+           ((fboundp 'command-completion-default-include-p)
+            #'command-completion-default-include-p))))
     (when-let* ((result (fzfa-completing-read
-                         :candidates (fzfa--commands predicate)
+                         :candidates (fzfa--commands-producer buf predicate)
                          :prompt (format "M-x [%s]: " major-mode)
                          :category 'command
                          :history 'extended-command-history)))
