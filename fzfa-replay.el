@@ -230,8 +230,9 @@ disk reload round-trip."
              (print-quoted t)
              (print-circle t))
         (when (> dropped 0)
-          (message "fzfa-replay-save-list: dropped %d unreadable session(s)"
-                   dropped))
+          (let ((inhibit-message t))
+            (message "fzfa-replay-save-list: dropped %d unreadable session(s)"
+                     dropped)))
         (with-temp-buffer
           (insert fzfa-replay--save-file-header)
           (insert "\n(setq fzfa-replay--persisted-sessions\n      '")
@@ -250,7 +251,8 @@ disk reload round-trip."
                 fzfa-replay--cache-mtime nil
                 fzfa-replay--cache-sessions nil)))
     (error
-     (message "fzfa-replay-save-list: %s" (error-message-string err)))))
+     (let ((inhibit-message t))
+       (message "fzfa-replay-save-list: %s" (error-message-string err))))))
 
 (defun fzfa-replay-load-list ()
   "Load saved sessions from `fzfa-replay-file'.
@@ -266,8 +268,9 @@ not break the in-memory replay path."
       (condition-case err
           (load-file file)
         (error
-         (message "fzfa-replay-load-list: %s"
-                  (error-message-string err)))))))
+         (let ((inhibit-message t))
+           (message "fzfa-replay-load-list: %s"
+                    (error-message-string err))))))))
 
 ;;; Mode
 
