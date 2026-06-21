@@ -44,8 +44,8 @@
 (declare-function company-manual-begin "company")
 (declare-function company-finish       "company")
 (declare-function company-abort        "company")
-(declare-function company-call-backend "company" (command &rest args))
-(declare-function evil-insert-state    "evil-states")
+(declare-function company-call-backend "company" (&rest args))
+(declare-function evil-insert-state    "evil-states" t t)
 (declare-function evil-change-state    "evil-core")
 
 (defvar fzfa-company--source-buffer nil

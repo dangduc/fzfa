@@ -46,7 +46,6 @@
 (declare-function org-get-tags "org" (&optional pos local))
 (declare-function org-agenda-files "org" (&optional unrestricted archives))
 (declare-function org-fold-show-context "org-fold" (&optional key))
-(declare-function org-show-context "org" (&optional key))
 
 (defcustom fzfa-org-any-commands
   '(fzfa-org-heading
@@ -89,7 +88,7 @@ tags appended.  Called from inside `org-map-entries' on a heading line."
 Tolerates org-fold renames across Emacs versions."
   (cond
    ((fboundp 'org-fold-show-context) (org-fold-show-context))
-   ((fboundp 'org-show-context)      (org-show-context))))
+   ((fboundp 'org-show-context)      (funcall 'org-show-context))))
 
 (defun fzfa-org--org-buffers ()
   "Return all live buffers whose major mode derives from `org-mode'."

@@ -62,7 +62,7 @@
 (defvar embark-exporters-alist)
 (declare-function embark--unmark-target "embark")
 (declare-function embark--allow-edit "embark")
-(declare-function grep-mode "grep")
+(declare-function grep-mode "grep" t t)
 
 ;; The wrappers and keymaps reference commands defined in sibling
 ;; fzfa extension files.  Those files autoload their commands, so the
@@ -80,8 +80,8 @@
 (declare-function fzfa-spotlight "fzfa-spotlight")
 (declare-function fzfa-swiper "fzfa-emacs")
 (declare-function fzfa-swiper-all "fzfa-emacs")
-(declare-function fzfa-imenu "fzfa-emacs")
-(declare-function fzfa-imenu-all "fzfa-emacs")
+(declare-function fzfa-imenu "fzfa-imenu")
+(declare-function fzfa-imenu-all "fzfa-imenu")
 (declare-function fzfa-outline "fzfa-emacs")
 (declare-function fzfa-buffer "fzfa-emacs")
 (declare-function fzfa-bookmark "fzfa-emacs")
@@ -95,8 +95,8 @@
 (declare-function fzfa-notmuch-tree "fzfa-notmuch")
 (declare-function fzfa-find-any "fzfa")
 (declare-function fzfa-find-some "fzfa")
-(declare-function fzfa-smart-grep "fzfa")
-(declare-function fzfa-smart-find "fzfa")
+(declare-function fzfa-smart-grep "fzfa" t t)
+(declare-function fzfa-smart-find "fzfa" t t)
 
 ;;; Target-aware wrappers.
 ;; These are for targets where the embark target is NOT a filter query —

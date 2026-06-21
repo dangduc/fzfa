@@ -25,7 +25,7 @@
                   (connection method params &rest keys))
 (declare-function url-generic-parse-url "url-parse" (url))
 (declare-function url-unhex-string "url-util" (str &optional allow-newlines))
-(declare-function url-filename "url-parse" (cl-x))
+(declare-function url-filename "url-parse" (cl-x) t)
 
 (defun fzfa-eglot--require ()
   "Load dependencies."

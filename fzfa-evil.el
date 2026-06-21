@@ -33,15 +33,15 @@
 (declare-function evil-get-marker "evil-common"
                   (char &optional raw))
 (declare-function evil-goto-mark "evil-commands"
-                  (char &optional noerror))
+                  (char &optional noerror) t)
 (declare-function evil-register-list          "evil-common")
 (declare-function evil-paste-from-register    "evil-commands" (register))
-(declare-function evil-execute-macro          "evil-macros" (count macro))
+(declare-function evil-execute-macro          "evil-macros" (count macro) t)
 (declare-function ring-elements                    "ring" (ring))
 (declare-function evil--jumps-get-window-jump-list "evil-jumps")
 (declare-function evil-ex-execute             "evil-ex" (string))
 (declare-function evil-ex-make-search-pattern "evil-search" (regexp))
-(declare-function evil-ex-search-next         "evil-commands" (&optional count))
+(declare-function evil-ex-search-next         "evil-commands" (&optional count) t)
 (defvar evil-ex-history)
 (defvar evil-ex-search-history)
 (defvar evil-ex-search-pattern)

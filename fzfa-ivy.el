@@ -42,8 +42,8 @@
 (defvar ivy--all-candidates)
 (defvar ivy--old-cands)
 (defvar ivy-last)
-(declare-function ivy-state-action "ivy")
-(declare-function ivy-state-dynamic-collection "ivy")
+(declare-function ivy-state-action "ivy" t t)
+(declare-function ivy-state-dynamic-collection "ivy" t t)
 (declare-function ivy-configure "ivy")
 (declare-function ivy-call "ivy")
 
