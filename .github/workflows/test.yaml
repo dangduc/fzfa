@@ -33,7 +33,8 @@ jobs:
       # out only to give `make check-declare' an Elisp source to
       # verify the declarations against — `make compile' / `make test'
       # don't consult them.  Path names match the Makefile defaults
-      # (IVY_DIR=../swiper etc).
+      # (IVY_DIR=../swiper etc); magit / notmuch / password-store ship
+      # their Elisp in non-root subdirs (lisp / emacs / contrib/emacs).
       - uses: actions/checkout@v4
         with:
           repository: abo-abo/swiper
@@ -48,6 +49,41 @@ jobs:
         with:
           repository: minad/vertico
           path: vertico
+
+      - uses: actions/checkout@v4
+        with:
+          repository: company-mode/company-mode
+          path: company
+
+      - uses: actions/checkout@v4
+        with:
+          repository: oantolin/embark
+          path: embark
+
+      - uses: actions/checkout@v4
+        with:
+          repository: emacs-evil/evil
+          path: evil
+
+      - uses: actions/checkout@v4
+        with:
+          repository: emacs-helm/helm
+          path: helm
+
+      - uses: actions/checkout@v4
+        with:
+          repository: magit/magit
+          path: magit
+
+      - uses: actions/checkout@v4
+        with:
+          repository: notmuchmail/notmuch
+          path: notmuch
+
+      - uses: actions/checkout@v4
+        with:
+          repository: zx2c4/password-store
+          path: password-store
 
       - uses: jcs090218/setup-emacs@master
         with:
