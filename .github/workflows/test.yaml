@@ -29,6 +29,26 @@ jobs:
           repository: jojojames/fzf-native
           path: fzf-native
 
+      # Optional Elisp deps that fzfa forward-declares from.  Checked
+      # out only to give `make check-declare' an Elisp source to
+      # verify the declarations against — `make compile' / `make test'
+      # don't consult them.  Path names match the Makefile defaults
+      # (IVY_DIR=../swiper etc).
+      - uses: actions/checkout@v4
+        with:
+          repository: abo-abo/swiper
+          path: swiper
+
+      - uses: actions/checkout@v4
+        with:
+          repository: bbatsov/projectile
+          path: projectile
+
+      - uses: actions/checkout@v4
+        with:
+          repository: minad/vertico
+          path: vertico
+
       - uses: jcs090218/setup-emacs@master
         with:
           version: ${{ matrix.emacs-version }}
@@ -41,6 +61,11 @@ jobs:
         shell: bash
         working-directory: fzf-async
         run: make compile
+
+      - name: Check declarations
+        shell: bash
+        working-directory: fzf-async
+        run: make check-declare
 
       - name: Test
         shell: bash

@@ -6,6 +6,15 @@ EMACS ?= emacs
 #   make test FZF_NATIVE_DIR=/path/to/fzf-native
 FZF_NATIVE_DIR ?= ../fzf-native
 
+# Optional Elisp deps consulted by `check-declare' to verify the
+# forward declarations against upstream APIs.  Default to sibling
+# checkouts (the layout CI uses); override locally to point at your
+# elpa install or any other clone:
+#   make check-declare IVY_DIR=~/.emacs.d/elpa/ivy-NNN
+IVY_DIR ?= ../swiper
+PROJECTILE_DIR ?= ../projectile
+VERTICO_DIR ?= ../vertico
+
 PACKAGE := fzfa
 AUTOLOADS := $(PACKAGE)-autoloads.el
 
@@ -48,12 +57,14 @@ test: compile
 # Verify `declare-function' forward declarations against the source
 # files they name.  Catches upstream renames / arglist drift at test
 # time — the trade-off for using forward declarations instead of
-# hard `require's.  Functions defined in C (fzf-native) should use
-# the `ext:' prefix so the verifier skips the missing-Elisp-source
-# lookup cleanly.
+# hard `require's.  Functions defined in C (fzf-native) use the
+# `ext:fzf-native-module' marker so the verifier skips the missing-
+# Elisp-source lookup cleanly; optional Elisp deps must be reachable
+# via the *_DIR vars above for their APIs to be verified.
 check-declare:
 	$(EMACS) -Q --batch \
 	  -L . -L $(FZF_NATIVE_DIR) \
+	  -L $(IVY_DIR) -L $(PROJECTILE_DIR) -L $(VERTICO_DIR) \
 	  --eval "(require 'check-declare)" \
 	  --eval "(let ((errs (check-declare-file \"$(PACKAGE).el\"))) \
 	             (when errs (kill-emacs 1)))"
