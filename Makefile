@@ -83,7 +83,8 @@ test: compile
 check-declare:
 	$(EMACS) -Q --batch \
 	  -L . -L $(FZF_NATIVE_DIR) \
-	  -L $(IVY_DIR) -L $(PROJECTILE_DIR) -L $(VERTICO_DIR) \
+	  -L $(IVY_DIR) -L $(PROJECTILE_DIR) \
+	  -L $(VERTICO_DIR) -L $(VERTICO_DIR)/extensions \
 	  -L $(COMPANY_DIR) -L $(EMBARK_DIR) -L $(EVIL_DIR) -L $(HELM_DIR) \
 	  -L $(MAGIT_DIR) -L $(PASSWORD_STORE_DIR) \
 	  --eval "(require 'check-declare)" \
