@@ -66,8 +66,10 @@
 (declare-function ivy--insert-prompt "ivy")
 (declare-function ivy-dispatching-call "ivy")
 ;; FILEONLY: `cl-defstruct' slot accessor — check-declare can't see
-;; auto-generated bodies, only literal `defun's.
-(declare-function ivy-state-dynamic-collection "ivy" nil t)
+;; auto-generated bodies, only literal `defun's.  ARGLIST is `t'
+;; (unspecified), not `nil' (which would mean "takes 0 args" and
+;; trip byte-compile on the 1-arg call site).
+(declare-function ivy-state-dynamic-collection "ivy" t t)
 (defvar ivy-last)
 (defvar ivy--actions-list)
 (defvar ivy-pre-prompt-function)
