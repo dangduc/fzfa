@@ -1,4 +1,4 @@
-.PHONY: compile autoloads test check-declare clean
+.PHONY: compile autoloads test check-declare check-declare-local clean
 
 EMACS ?= emacs
 # fzf-native is not on MELPA; default to a sibling checkout.  Override
@@ -68,6 +68,32 @@ check-declare:
 	  --eval "(require 'check-declare)" \
 	  --eval "(let ((errs (check-declare-file \"$(PACKAGE).el\"))) \
 	             (when errs (kill-emacs 1)))"
+
+# Local variant of `check-declare' for developers running against
+# their own installed packages.  Auto-detects ELPA_DIR based on the
+# current `$(EMACS)' major version (matches the common per-Emacs-
+# version layout `~/.emacs.d/elpa/30/').  Override if you don't use
+# that layout:
+#   make check-declare-local ELPA_DIR=~/.emacs.d/elpa
+ELPA_DIR ?= $(HOME)/.emacs.d/elpa/$(shell $(EMACS) -Q --batch --eval "(princ emacs-major-version)" 2>/dev/null)
+
+check-declare-local:
+	@if [ ! -d "$(ELPA_DIR)" ]; then \
+	  echo "ELPA_DIR=$(ELPA_DIR) does not exist; override with"; \
+	  echo "  make check-declare-local ELPA_DIR=/path/to/elpa"; \
+	  exit 1; \
+	fi
+	$(EMACS) -Q --batch \
+	  -L . -L $(FZF_NATIVE_DIR) \
+	  --eval "(setq package-user-dir \"$(ELPA_DIR)\")" \
+	  --eval "(package-initialize)" \
+	  --eval "(require 'check-declare)" \
+	  --eval "(let ((errs (check-declare-file \"$(PACKAGE).el\")) real) \
+	             (dolist (group errs) \
+	               (dolist (e (cdr group)) \
+	                 (unless (equal (nth 2 e) \"file not found\") \
+	                   (push e real)))) \
+	             (when real (kill-emacs 1)))"
 
 clean:
 	rm -f *.elc $(AUTOLOADS)
