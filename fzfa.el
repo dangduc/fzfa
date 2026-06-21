@@ -2667,7 +2667,7 @@ Returns S unchanged when there is no tofu suffix."
       (substring s 0 (1- (length s)))
     s))
 
-(defun fzfa--tag (cand idx hash &optional multi-p)
+(defun fzfa--tag (cand idx hash &optional multi-p source-action)
   "Return CAND associated with source IDX in HASH.
 
 When MULTI-P is non-nil (the cross-source case), appends an
@@ -2678,6 +2678,16 @@ so calling on an already-tagged string yields the same content
 \(safe to re-tag producer-path output after `fzf-native-score-all'
 preserves the snapshot's tofu suffix).
 
+SOURCE-ACTION, when non-nil (multi-p case only), is stamped on
+the tofu char as an `fzfa-multi-action' text property.  Read by
+`fzfa--multi-default-action' so `embark-collect' (and any other
+post-session dispatcher) routes each candidate to its source's
+own action instead of falling back to the entry command — which
+would just re-open the picker.  Session-scoped dispatch state
+\(`fzfa--candidate->source', `fzfa--multi-build-router') dies with
+the minibuffer; the property survives anywhere the candidate
+string goes.
+
 When MULTI-P is nil (N=1 fast path), no suffix is appended — CAND
 is hashed and returned verbatim, skipping the per-candidate
 `propertize'+`concat' cost.  At N=1 there's no cross-source
@@ -2687,6 +2697,10 @@ ambiguity to disambiguate."
     (let* ((clean (fzfa--tofu-hide cand))
            (tagged (concat clean (fzfa--tofu-suffix idx))))
       (puthash tagged idx hash)
+      (when source-action
+        (add-text-properties (1- (length tagged)) (length tagged)
+                             `(fzfa-multi-action ,source-action)
+                             tagged))
       tagged))
    (t
     (puthash cand idx hash)
@@ -2870,12 +2884,13 @@ so they call `fzfa--source-fetch' directly with their own
 refresh closure (helm-force-update guarded by helm-alive-p).
 
 Returns non-nil iff a fetch was actually issued."
-  (fzfa--source-fetch
-   source query refresh-fn
-   (lambda (cands)
-     (mapcar (lambda (s)
-               (fzfa--tag s idx candidate->source multi-p))
-             cands))))
+  (let ((action (plist-get (fzfa-source-spec source) :action)))
+    (fzfa--source-fetch
+     source query refresh-fn
+     (lambda (cands)
+       (mapcar (lambda (s)
+                 (fzfa--tag s idx candidate->source multi-p action))
+               cands)))))
 
 (defun fzfa--multi-poll-bumped-p (sources-v)
   "Non-nil iff any source in SOURCES-V has a fresh generation.
@@ -3378,11 +3393,15 @@ Per-source plist keys:
                             ;; for the highlighted top-N — both dispatch
                             ;; through `candidate->source' via content-equality.
                             (when h
-                              (setq out
-                                    (mapcar
-                                     (lambda (c)
-                                       (fzfa--tag c i candidate->source multi-p))
-                                     out)))
+                              (let ((src-action
+                                     (plist-get (fzfa-source-spec src)
+                                                :action)))
+                                (setq out
+                                      (mapcar
+                                       (lambda (c)
+                                         (fzfa--tag c i candidate->source
+                                                    multi-p src-action))
+                                       out))))
                             (when (and out (not first-cands-shown))
                               (setq first-cands-shown t))
                             (setf (fzfa-source-last-result src) out
@@ -3934,11 +3953,16 @@ Per-source plist keys:
                                       ;; dispatch through `candidate->source'.
                                       ;; out may be nil (zero matches) — ok.
                                       (when h
-                                        (setq out
-                                              (mapcar
-                                               (lambda (c)
-                                                 (fzfa--tag c i candidate->source multi-p))
-                                               out)))
+                                        (let ((src-action
+                                               (plist-get
+                                                (fzfa-source-spec src)
+                                                :action)))
+                                          (setq out
+                                                (mapcar
+                                                 (lambda (c)
+                                                   (fzfa--tag c i candidate->source
+                                                              multi-p src-action))
+                                                 out))))
                                       (when (and out (not first-cands-shown))
                                         (setq first-cands-shown t))
                                       (setf (fzfa-source-last-result src) out
@@ -4302,18 +4326,31 @@ inner sources receive auto-derived keys from their own :name."
                                  (marginalia-annotate-file c)))))))
                      ;; Wrap a single source in a list so `append'
                      ;; below treats single and nested cases uniformly.
-                     (list
-                      (append
-                       (list :name (replace-regexp-in-string
-                                    "^fzfa-" "" (symbol-name cmd))
-                             :annotate (or (plist-get args :annotate)
-                                           default-annotate)
-                             :action (lambda (cand)
-                                       (let ((fzfa--multi-mode
-                                              (cons :inject cand)))
-                                         (funcall cmd)))
-                             :narrow (plist-get spec :narrow))
-                       args)))))))
+                     ;; The :action closure captures each source's own
+                     ;; :directory / :resolve-paths so post-session
+                     ;; callers (e.g. `embark-collect' acting from a
+                     ;; buffer whose `default-directory' differs from
+                     ;; the picker's) still resolve grep-style paths
+                     ;; against the original source's directory.  The
+                     ;; cleanup is idempotent on the live `fzfa--read'
+                     ;; path: it already passes a clean+expanded CAND.
+                     (let ((dir     (plist-get args :directory))
+                           (resolve (plist-get args :resolve-paths)))
+                       (list
+                        (append
+                         (list :name (replace-regexp-in-string
+                                      "^fzfa-" "" (symbol-name cmd))
+                               :annotate (or (plist-get args :annotate)
+                                             default-annotate)
+                               :action (lambda (cand)
+                                         (let ((fzfa--multi-mode
+                                                (cons :inject
+                                                      (fzfa--maybe-expand
+                                                       (fzfa--tofu-hide cand)
+                                                       dir resolve))))
+                                           (funcall cmd)))
+                               :narrow (plist-get spec :narrow))
+                         args))))))))
            normalized))
          (sources (apply #'append (delq nil source-lists))))
     ;; Allocation must happen at the OUTERMOST multi level — when we're
@@ -4478,6 +4515,25 @@ in-band for jump but never enter fzf's scoring."
   :doc "Embark keymap for `fzfa-location' candidates.
 Composed with `embark-general-map' via `embark-keymap-alist'.")
 
+;;; Multi-source default action (post-session dispatch)
+
+(defun fzfa--multi-default-action (cand)
+  "Dispatch CAND to its source's `:action' stamped at tag time.
+
+Each multi-source candidate's tofu char carries an `fzfa-multi-action'
+text property — the per-source action closure from `fzfa-multi-read'.
+This lets `embark-collect' route per-candidate even though the
+minibuffer (and its `fzfa--candidate->source' dispatch hash) has
+already exited.  Without it embark falls back to `embark--command'
+\(the entry command, e.g. `fzfa-find-any'), which would just reopen
+the picker."
+  (when (stringp cand)
+    (let* ((n (length cand))
+           (action (and (> n 0)
+                        (get-text-property (1- n) 'fzfa-multi-action cand))))
+      (when action
+        (funcall action cand)))))
+
 (defun fzfa--location-group (cand transform)
   "Group function for `fzfa-location' candidate CAND.
 
@@ -4532,7 +4588,9 @@ render."
       (setf (alist-get 'fzfa-grep     embark-default-action-overrides)
             (lambda (cand) (fzfa-with-visit (fzfa--grep-jump cand))))
       (setf (alist-get 'fzfa-location embark-default-action-overrides)
-            (lambda (cand) (fzfa-with-visit (fzfa--location-jump cand)))))
+            (lambda (cand) (fzfa-with-visit (fzfa--location-jump cand))))
+      (setf (alist-get 'fzfa-multi    embark-default-action-overrides)
+            #'fzfa--multi-default-action))
 
     (with-eval-after-load 'marginalia
       (dolist (entry '((fzfa-file     marginalia-annotate-file     none)
