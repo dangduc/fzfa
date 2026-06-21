@@ -1,4 +1,4 @@
-.PHONY: compile autoloads test clean
+.PHONY: compile autoloads test check-declare clean
 
 EMACS ?= emacs
 # fzf-native is not on MELPA; default to a sibling checkout.  Override
@@ -44,6 +44,19 @@ test: compile
 	  -l ert \
 	  -l ./fzfa-test.el \
 	  -f ert-run-tests-batch-and-exit
+
+# Verify `declare-function' forward declarations against the source
+# files they name.  Catches upstream renames / arglist drift at test
+# time — the trade-off for using forward declarations instead of
+# hard `require's.  Functions defined in C (fzf-native) should use
+# the `ext:' prefix so the verifier skips the missing-Elisp-source
+# lookup cleanly.
+check-declare:
+	$(EMACS) -Q --batch \
+	  -L . -L $(FZF_NATIVE_DIR) \
+	  --eval "(require 'check-declare)" \
+	  --eval "(let ((errs (check-declare-file \"$(PACKAGE).el\"))) \
+	             (when errs (kill-emacs 1)))"
 
 clean:
 	rm -f *.elc $(AUTOLOADS)
