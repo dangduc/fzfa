@@ -75,22 +75,22 @@
 (defvar vertico--index)
 (defvar vertico--input)
 (defvar marginalia-annotators)
-(declare-function fzf-native-score "fzf-native"
+(declare-function fzf-native-score "ext:fzf-native-module"
                   (str query &optional slab))
-(declare-function fzf-native-score-all "fzf-native"
+(declare-function fzf-native-score-all "ext:fzf-native-module"
                   (collection query &optional slab))
-(declare-function fzf-native-async-start "fzf-native"
+(declare-function fzf-native-async-start "ext:fzf-native-module"
                   (command &optional dir))
-(declare-function fzf-native-async-stop "fzf-native" (handle))
-(declare-function fzf-native-async-generation "fzf-native" (handle))
-(declare-function fzf-native-async-candidates "fzf-native"
+(declare-function fzf-native-async-stop "ext:fzf-native-module" (handle))
+(declare-function fzf-native-async-generation "ext:fzf-native-module" (handle))
+(declare-function fzf-native-async-candidates "ext:fzf-native-module"
                   (handle filter &optional limit))
-(declare-function fzf-native-async-stats "fzf-native" (handle))
-(declare-function fzf-native-async-result-fresh-p "fzf-native"
+(declare-function fzf-native-async-stats "ext:fzf-native-module" (handle))
+(declare-function fzf-native-async-result-fresh-p "ext:fzf-native-module"
                   (handle query))
-(declare-function fzf-native-highlight-all "fzf-native"
+(declare-function fzf-native-highlight-all "ext:fzf-native-module"
                   (collection query))
-(declare-function fzf-native-highlight-one "fzf-native" (cand query))
+(declare-function fzf-native-highlight-one "ext:fzf-native-module" (cand query))
 (declare-function fzfa-helm--completing-read "fzfa-helm")
 
 ;;; Debug logging
