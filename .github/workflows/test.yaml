@@ -75,10 +75,11 @@ jobs:
           repository: magit/magit
           path: magit
 
-      - uses: actions/checkout@v4
-        with:
-          repository: notmuchmail/notmuch
-          path: notmuch
+      # notmuch is deliberately not checked out: its upstream lives at
+      # git.notmuchmail.org, not GitHub, so `actions/checkout' can't
+      # fetch it.  `fzfa-notmuch.el' is skipped by `make check-declare'
+      # (see the exclusion list in Makefile); local devs with notmuch
+      # installed still get verification via `make check-declare-local'.
 
       - uses: actions/checkout@v4
         with:
