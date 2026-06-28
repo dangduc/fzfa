@@ -161,6 +161,8 @@ before the idle delay elapses -> timer fires post-cleanup ->
 (defvar helm-alive-p)
 (defvar helm-pattern)
 (defvar helm-completion-style)
+(defvar helm-map)
+(defvar helm-source-filter)
 (declare-function helm "helm-core")
 (declare-function helm-make-source "helm-source")
 (declare-function helm-force-update "helm-core")
@@ -168,28 +170,12 @@ before the idle delay elapses -> timer fires post-cleanup ->
 (declare-function helm-set-source-filter "helm-core")
 (declare-function helm-get-selection "helm-core")
 (declare-function helm-execute-persistent-action "helm-core")
-(declare-function fzfa--format-narrow-hint "fzfa")
-(defvar helm-map)
-(defvar helm-source-filter)
-(defvar fzfa-multi-narrow-key)
-(declare-function fzfa--multi-rank "fzfa")
-(declare-function fzfa--make-poll-fn "fzfa")
 (declare-function fzf-native-async-start "ext:fzf-native-module")
 (declare-function fzf-native-async-stop "ext:fzf-native-module")
 (declare-function fzf-native-async-generation "ext:fzf-native-module")
 (declare-function fzf-native-async-candidates "ext:fzf-native-module")
 (declare-function fzf-native-async-stats "ext:fzf-native-module")
 (declare-function fzf-native-score-all "ext:fzf-native-module")
-(declare-function fzfa--history-rank "fzfa")
-(declare-function fzfa--rank-and-highlight "fzfa")
-(declare-function fzfa--extract-args "fzfa")
-(declare-function fzfa--commas "fzfa")
-(declare-function fzfa--preview-handler "fzfa")
-(declare-function fzfa--preview-call "fzfa")
-(declare-function fzfa--preview-return "fzfa")
-(declare-function fzfa-preview-put "fzfa")
-(defvar fzfa--multi-mode)
-(defvar fzfa--preview-session)
 
 ;;; Stats display helpers
 
@@ -219,8 +205,6 @@ hasn't run yet).  Numbers comma-formatted via `fzfa--commas'."
     ""))
 
 ;;; Live preview wrapper
-
-(defvar fzfa-preview-delay)
 
 (defun fzfa-helm--make-debounced-preview-fn (&optional session-cell)
   "Return a fresh `:persistent-action' closure that debounces preview dispatch.

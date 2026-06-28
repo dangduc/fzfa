@@ -93,10 +93,6 @@
 (declare-function fzfa-flymake-project "fzfa-flymake")
 (declare-function fzfa-notmuch "fzfa-notmuch")
 (declare-function fzfa-notmuch-tree "fzfa-notmuch")
-(declare-function fzfa-find-any "fzfa")
-(declare-function fzfa-find-some "fzfa")
-(declare-function fzfa-smart-grep "fzfa" t t)
-(declare-function fzfa-smart-find "fzfa" t t)
 
 ;;; Target-aware wrappers.
 ;; These are for targets where the embark target is NOT a filter query —
