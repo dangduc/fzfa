@@ -2,6 +2,7 @@
 #+STARTUP: noindent
 
 [[https://github.com/jojojames/fzfa/actions/workflows/test.yaml][https://github.com/jojojames/fzfa/actions/workflows/test.yaml/badge.svg]]
+[[https://melpa.org/#/fzfa][file:https://melpa.org/packages/fzfa-badge.svg]]
 
 [[./screenshots/fzfa.png]]
 #+HTML: <video src="https://github.com/user-attachments/assets/383a2f07-6778-4e4e-89c8-68c540d8b404" controls style="max-width: 100%; height: auto;"></video>
@@ -188,35 +189,42 @@ the comparison.
 
 * Installation
 
-Required dependency: [[https://github.com/dangduc/fzf-native][fzf-native]] (provides the C scoring module).
-
-#+begin_src emacs-lisp :tangle yes
-  (use-package fzf-native
-    :vc (:url "https://github.com/dangduc/fzf-native" :rev :newest))
-#+end_src
+Required dependency (~fzfa~ installs this automatically.):
+[[https://github.com/dangduc/fzf-native][fzf-native]] (provides the C scoring module).
 
 Minimal setup:
 
 #+begin_src emacs-lisp :tangle yes
+  ; :vc
   (use-package fzfa
-    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest))
+    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest)
+    :defer t
+    :init
+    (fzfa-sync-autoloads))
+
+  ; Melpa
+  (use-package fzfa
+    :ensure t
+    :defer t ;; Lazy loaded.
+    :init
+    (fzfa-sync-autoloads))
 #+end_src
 
 Recommended:
 
 #+begin_src emacs-lisp :tangle yes
-  (use-package fzf-native
-    :vc (:url "https://github.com/dangduc/fzf-native" :rev :newest))
-
   (use-package fussy
-    :vc (:url "https://github.com/jojojames/fussy" :rev :newest)
+    :ensure t
     :config
     (fussy-setup-fzf)
     (fussy-eglot-setup)
     (fussy-company-setup))
 
   (use-package fzfa
-    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest))
+    :ensure t
+    :defer t ;; Lazy loaded.
+    :init
+    (fzfa-sync-autoloads))
 #+end_src
 
 This sets up a consistent ~completing-read~ and ~completion-in-region~
@@ -646,7 +654,7 @@ any ~fzfa~ command can be invoked:
 
 #+begin_src emacs-lisp :tangle yes
   (use-package fzfa
-    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest)
+    :ensure t
     :defer t
     :init
     (setq fzfa-extensions '(ag rg vertico embark))
@@ -660,7 +668,7 @@ Quick example — drop ~firefox~ from the default list:
 
 #+begin_src emacs-lisp :tangle yes
   (use-package fzfa
-    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest)
+    :ensure t
     :defer t
     :init
     (setq fzfa-extensions (delq 'firefox (default-value 'fzfa-extensions)))
@@ -843,12 +851,9 @@ frontends.  ~fzfa~ handles the case where candidates come from a shell
 command (e.g. ~find~ or ~ripgrep~) and must be streamed incrementally.
 
 #+begin_src emacs-lisp :tangle yes
-  (use-package fzf-native
-    :vc (:url "https://github.com/dangduc/fzf-native" :rev :newest))
-
   ;; Synchronous fuzzy completion for code, buffers, M-x, etc.
   (use-package fussy
-    :vc (:url "https://github.com/jojojames/fussy" :rev :newest)
+    :ensure t
     :config
     (fussy-setup-fzf)
     (fussy-eglot-setup)
@@ -856,7 +861,10 @@ command (e.g. ~find~ or ~ripgrep~) and must be streamed incrementally.
 
   ;; Async fuzzy completion for large file/grep searches.
   (use-package fzfa
-    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest))
+    :ensure t
+    :defer t
+    :init
+    (fzfa-sync-autoloads))
 #+end_src
 
 * Integrations
@@ -1016,7 +1024,7 @@ case and ~fzfa~ handles the async ~completing-read~ cases.
 
 #+begin_src emacs-lisp :tangle yes
   (use-package fussy
-    :vc (:url "https://github.com/jojojames/fussy" :rev :newest)
+    :ensure t
     :config
     (fussy-setup-fzf)
     (fussy-eglot-setup)
@@ -1024,7 +1032,10 @@ case and ~fzfa~ handles the async ~completing-read~ cases.
     (fussy-ivy-setup))
 
   (use-package fzfa
-    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest))
+    :ensure t
+    :defer t
+    :init
+    (fzfa-sync-autoloads))
 
   (use-package ivy
     :ensure t
@@ -1150,13 +1161,17 @@ use ~fussy~ for non-~fzfa~ sources and ~fzfa~ otherwise. Example below.
 
 #+begin_src emacs-lisp :tangle yes
   (use-package fussy
+    :ensure t
     :config
     (fussy-setup-fzf)
     (fussy-eglot-setup)
     (fussy-company-setup))
 
   (use-package fzfa
-    :vc (:url "https://github.com/jojojames/fzfa" :rev :newest))
+    :ensure t
+    :defer t
+    :init
+    (fzfa-sync-autoloads))
 
   (use-package helm
     :ensure t
