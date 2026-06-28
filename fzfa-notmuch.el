@@ -34,8 +34,13 @@
 (defvar embark-keymap-alist)
 (defvar embark-general-map)
 
-(declare-function notmuch-show "notmuch-show" (&optional thread-id))
-(declare-function notmuch-tree "notmuch-tree" (&optional query))
+(declare-function notmuch-show "notmuch-show"
+                  (thread-id &optional elide-toggle parent-buffer
+                             query-context buffer-name))
+(declare-function notmuch-tree "notmuch-tree"
+                  (&optional query query-context target buffer-name
+                             open-target unthreaded parent-buffer
+                             oldest-first hide-excluded))
 
 (defcustom fzfa-notmuch-default-query "tag:inbox"
   "Default notmuch query offered at the `fzfa-notmuch' prompt.
