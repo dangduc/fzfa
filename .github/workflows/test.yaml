@@ -80,7 +80,14 @@ jobs:
       # Emacs files under `emacs/' (hence NOTMUCH_DIR=../notmuch/emacs
       # passed to `make check-declare' below — the Makefile default is
       # the Homebrew site-lisp path, which CI doesn't have).
-      - uses: actions/checkout@v4
+      #
+      # Skipped on Windows: the notmuch test corpus contains filenames
+      # with colons (e.g. `test/corpora/default/01:2,'), invalid on
+      # NTFS, so `actions/checkout' aborts.  `check-declare' is skipped
+      # on Windows too — Linux + macOS coverage is sufficient for
+      # forward-declaration verification.
+      - if: runner.os != 'Windows'
+        uses: actions/checkout@v4
         with:
           repository: notmuch/notmuch
           path: notmuch
@@ -104,6 +111,7 @@ jobs:
         run: make compile
 
       - name: Check declarations
+        if: runner.os != 'Windows'
         shell: bash
         working-directory: fzf-async
         run: make check-declare NOTMUCH_DIR=../notmuch/emacs
