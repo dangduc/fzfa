@@ -23,10 +23,12 @@ EVIL_DIR ?= ../evil
 HELM_DIR ?= ../helm
 MAGIT_DIR ?= ../magit/lisp
 PASSWORD_STORE_DIR ?= ../password-store/contrib/emacs
-# notmuch deliberately omitted — its upstream lives at
-# git.notmuchmail.org, not GitHub, so `actions/checkout' can't fetch
-# it.  `fzfa-notmuch.el' is excluded from the strict `check-declare'
-# target below; the local target still verifies it when present.
+# notmuch's upstream lives at git.notmuchmail.org, not GitHub.  The
+# strict `check-declare' target uses its read-only GitHub mirror; the
+# local target defaults to Homebrew's site-lisp path (override
+# NOTMUCH_DIR for other layouts, e.g. /usr/share/emacs/site-lisp/notmuch
+# on Debian).
+NOTMUCH_DIR ?= /opt/homebrew/share/emacs/site-lisp/notmuch
 
 PACKAGE := fzfa
 AUTOLOADS := $(PACKAGE)-autoloads.el
@@ -76,24 +78,21 @@ test: compile
 # reachable via the *_DIR vars above (CI installs each as a sibling
 # checkout).  Any error — including file-not-found — fails the
 # build, so the strict target enforces "CI is configured correctly."
-# `fzfa-notmuch.el' is skipped: notmuch's upstream is at
-# git.notmuchmail.org, not GitHub, so `actions/checkout' can't fetch
-# it.  Local devs with notmuch installed still get verification via
-# `make check-declare-local' below.
+# notmuch is fetched from its read-only GitHub mirror (notmuch/notmuch);
+# CI overrides NOTMUCH_DIR to that sibling-checkout shape.
 check-declare:
 	$(EMACS) -Q --batch \
 	  -L . -L $(FZF_NATIVE_DIR) \
 	  -L $(IVY_DIR) -L $(PROJECTILE_DIR) \
 	  -L $(VERTICO_DIR) -L $(VERTICO_DIR)/extensions \
 	  -L $(COMPANY_DIR) -L $(EMBARK_DIR) -L $(EVIL_DIR) -L $(HELM_DIR) \
-	  -L $(MAGIT_DIR) -L $(PASSWORD_STORE_DIR) \
+	  -L $(MAGIT_DIR) -L $(PASSWORD_STORE_DIR) -L $(NOTMUCH_DIR) \
 	  --eval "(require 'check-declare)" \
 	  --eval "(let (failed) \
 	             (dolist (f (directory-files \".\" nil \"^fzfa.*\\\\.el$$\")) \
 	               (unless (member f '(\"fzfa-autoloads.el\" \
 	                                   \"fzfa-pkg.el\" \
-	                                   \"fzfa-test.el\" \
-	                                   \"fzfa-notmuch.el\")) \
+	                                   \"fzfa-test.el\")) \
 	                 (when (check-declare-file f) (setq failed t)))) \
 	             (when failed (kill-emacs 1)))"
 
@@ -112,7 +111,7 @@ check-declare-local:
 	  exit 1; \
 	fi
 	$(EMACS) -Q --batch \
-	  -L . -L $(FZF_NATIVE_DIR) \
+	  -L . -L $(FZF_NATIVE_DIR) -L $(NOTMUCH_DIR) \
 	  --eval "(setq package-user-dir \"$(ELPA_DIR)\")" \
 	  --eval "(package-initialize)" \
 	  --eval "(require 'check-declare)" \

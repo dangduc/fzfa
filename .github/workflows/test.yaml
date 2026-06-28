@@ -75,11 +75,15 @@ jobs:
           repository: magit/magit
           path: magit
 
-      # notmuch is deliberately not checked out: its upstream lives at
-      # git.notmuchmail.org, not GitHub, so `actions/checkout' can't
-      # fetch it.  `fzfa-notmuch.el' is skipped by `make check-declare'
-      # (see the exclusion list in Makefile); local devs with notmuch
-      # installed still get verification via `make check-declare-local'.
+      # notmuch's upstream is git.notmuchmail.org, but they maintain a
+      # read-only mirror at github.com/notmuch/notmuch.  Mirror has the
+      # Emacs files under `emacs/' (hence NOTMUCH_DIR=../notmuch/emacs
+      # passed to `make check-declare' below — the Makefile default is
+      # the Homebrew site-lisp path, which CI doesn't have).
+      - uses: actions/checkout@v4
+        with:
+          repository: notmuch/notmuch
+          path: notmuch
 
       - uses: actions/checkout@v4
         with:
@@ -102,7 +106,7 @@ jobs:
       - name: Check declarations
         shell: bash
         working-directory: fzf-async
-        run: make check-declare
+        run: make check-declare NOTMUCH_DIR=../notmuch/emacs
 
       - name: Test
         shell: bash
