@@ -390,6 +390,9 @@ Reset to nil to force a re-setup on the next entry-point call.")
 Bound by `fzfa-multi-read' to derive multi-source sources from
 existing single-source commands without modifying their definitions.")
 
+(defvar fzfa--multi-narrowed-p nil
+  "Non-nil when the active multi-source session is narrowed to one source.")
+
 (defvar fzfa-directory nil
   "Per-call directory override for fzfa commands.
 
@@ -3258,6 +3261,9 @@ Per-source plist keys:
          ;; from the first frame onward.  Caller-supplied NARROW-IDX
          ;; \(`fzfa-replay') wins so a saved narrow target is restored.
          (narrow-idx (or narrow-idx (unless multi-p 0)))
+         ;; Dynamic mirror of `narrow-idx' restricted to multi-source
+         ;; sessions.
+         (fzfa--multi-narrowed-p (and multi-p narrow-idx t))
          ;; Most recent user filter, updated on every table / ivy push.
          ;; Read by the replay-snapshot block to persist the filter as
          ;; the narrow target's `:initial-input' for the next replay.
@@ -3490,7 +3496,8 @@ Per-source plist keys:
                     (push (list narrow
                                 (lambda (_cand)
                                   (let ((before narrow-idx))
-                                    (setq narrow-idx idx)
+                                    (setq narrow-idx idx
+                                          fzfa--multi-narrowed-p t)
                                     ;; `ivy-call' restores the
                                     ;; pre-minibuffer buffer before
                                     ;; dispatching the action, so any
@@ -3517,7 +3524,8 @@ Per-source plist keys:
                 (push (list fzfa-multi-narrow-key
                             (lambda (_cand)
                               (let ((before narrow-idx))
-                                (setq narrow-idx nil)
+                                (setq narrow-idx nil
+                                      fzfa--multi-narrowed-p nil)
                                 (when-let* ((win (active-minibuffer-window)))
                                   (with-current-buffer (window-buffer win)
                                     (when before
@@ -3585,8 +3593,10 @@ Per-source plist keys:
                              specs-v)))
                       (cond
                        ((and prefix-event (eql c prefix-event))
-                        (setq narrow-idx nil))
-                       (target (setq narrow-idx target))
+                        (setq narrow-idx nil
+                              fzfa--multi-narrowed-p nil))
+                       (target (setq narrow-idx target
+                                     fzfa--multi-narrowed-p t))
                        (t nil))
                       (setq menu-active nil)
                       (unless (eql before narrow-idx)

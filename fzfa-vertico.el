@@ -693,7 +693,13 @@ Specializes on FZFA-VERTICO-COLUMNS-MODE = t via the &context method
 qualifier; falls through to the default implementation otherwise."
   (let* ((gf (fzfa-vertico--group-function))
          (parts (and gf (fzfa-vertico--partition gf))))
-    (if (or (null parts) (<= (length parts) 1))
+    (if (or (null parts) (<= (length parts) 1)
+            ;; Narrowed to one source: the group-function returns
+            ;; per-file / per-buffer headers from the source's own
+            ;; `:group' (so the narrowed view matches the source's
+            ;; standalone display), which would otherwise be misread
+            ;; as multiple source-columns here.
+            (bound-and-true-p fzfa--multi-narrowed-p))
         (cl-call-next-method)
       ;; One-shot: place the initial selection at column 0 row 0 of
       ;; the partition.  Goes through `vertico--goto' so the lock-
