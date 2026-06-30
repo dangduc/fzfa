@@ -35,7 +35,6 @@
 (defvar fzfa-directory)
 (declare-function transient-args "transient" (prefix))
 (declare-function transient-arg-value "transient" (arg args))
-(declare-function transient-define-prefix "transient" (name arglist &rest args))
 (declare-function project-current "project")
 (declare-function project-root "project")
 
