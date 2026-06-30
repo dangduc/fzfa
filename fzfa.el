@@ -294,6 +294,7 @@ Read at session start; changing it does not affect running sessions."
     (safari    . "Safari bookmarks + history (macOS)")
     (shell     . "Shell command + history")
     (spotlight . "macOS Spotlight (mdfind)")
+    (transient . "Transient menus")
     (ugrep     . "ugrep")
     (vc        . "vc.el")
     (vertico   . "Vertico"))
