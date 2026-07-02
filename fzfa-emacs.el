@@ -190,7 +190,7 @@ SYM nil means leave nothing enabled."
   (dolist (th custom-enabled-themes)
     (unless (eq th sym) (disable-theme th)))
   (when (and sym (not (memq sym custom-enabled-themes)))
-    (if (custom-theme-p sym)
+    (if (and (custom-theme-p sym) (get sym 'theme-settings))
         (enable-theme sym)
       (load-theme sym :no-confirm))))
 
