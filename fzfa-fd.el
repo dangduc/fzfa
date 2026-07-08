@@ -24,7 +24,7 @@
 
 (require 'fzfa)
 
-(defcustom fzfa-fd-command "fd --no-ignore"
+(defcustom fzfa-fd-command "fd --no-ignore --hidden"
   "Shell command used by `fzfa-fd'.
 
 Run from `default-directory'; stdout lines become file candidates."
