@@ -3758,13 +3758,13 @@ Per-source plist keys:
                         (ivy-count-format
                          (if (and (bound-and-true-p ivy-mode) wants-decoration)
                              ""
-                           ivy-count-format))
+                           (bound-and-true-p ivy-count-format)))
                         (ivy--actions-list
                          (if (bound-and-true-p ivy-mode)
                              (plist-put (cl-copy-list
                                          (or ivy--actions-list '()))
                                         t ivy-multi-actions)
-                           ivy--actions-list))
+                           (bound-and-true-p ivy--actions-list)))
                         (ivy-pre-prompt-function
                          (when (and (bound-and-true-p ivy-mode) wants-decoration)
                            (lambda ()
