@@ -719,7 +719,13 @@ anything else uses `bookmark-jump'."
     (fzfa-buffer
      (nil :action fzfa-smart-switch-to-buffer))
     (fzfa-bookmark
-     (nil :action fzfa-smart-bookmark-jump)))
+     (nil :action fzfa-smart-bookmark-jump))
+    (fzfa-grep
+     (nil  :action fzfa-grep-jump)
+     ((16) :directory (lambda () default-directory))
+     ((64) :directory (lambda () (read-directory-name "In dir: "))))
+    (fzfa-location
+     (nil :action fzfa-location-jump)))
   "Category-keyed prefix-arg dispatch for fzfa commands.
 
 Each entry is `(CATEGORY (SLOT-KEY :action FN :directory FN) ...)'.
@@ -781,6 +787,27 @@ The action is resolved from `fzfa-action-config' against
                  (fzfa--resolve-action-slot 'fzfa-bookmark current-prefix-arg)
                  :action)))
     (fzfa-with-visit (funcall action bookmark))))
+
+(defun fzfa-visit-grep (cand)
+  "Jump to grep candidate CAND via the `fzfa-grep' category action.
+
+CAND is a FILE:LINE:CONTENT string.  The action is resolved from
+`fzfa-action-config' against `current-prefix-arg'."
+  (let ((action (plist-get
+                 (fzfa--resolve-action-slot 'fzfa-grep current-prefix-arg)
+                 :action)))
+    (fzfa-with-visit (funcall action cand))))
+
+(defun fzfa-visit-location (cand)
+  "Jump to location candidate CAND via the `fzfa-location' category action.
+
+CAND carries an `fzfa-location' text property `(SOURCE . LINE)'.  The
+action is resolved from `fzfa-action-config' against
+`current-prefix-arg'."
+  (let ((action (plist-get
+                 (fzfa--resolve-action-slot 'fzfa-location current-prefix-arg)
+                 :action)))
+    (fzfa-with-visit (funcall action cand))))
 
 ;;; Apply (persistent-action)
 
@@ -4566,13 +4593,11 @@ else uses `find-file' / `switch-to-buffer'."
   "Open the SOURCE and jump to the LINE referenced by grep candidate CAND.
 
 CAND is a FILE:LINE:CONTENT string as produced by `grep', `rg', `ag',
-etc.  Wraps `fzfa-with-visit' so `fzfa-after-visit-hook' fires;
-`fzfa--goto-source' honors `current-prefix-arg' for other-window opening."
+etc."
   (when (string-match fzfa--grep-line-regexp cand)
-    (fzfa-with-visit
-      (fzfa--goto-source
-       (match-string 1 cand)
-       (string-to-number (match-string 2 cand))))))
+    (fzfa--goto-source
+     (match-string 1 cand)
+     (string-to-number (match-string 2 cand)))))
 
 (defvar-keymap fzfa-grep-map
   :doc "Embark keymap for `fzfa-grep' candidates.
@@ -4606,14 +4631,10 @@ in-band for jump but never enter fzf's scoring."
   cand)
 
 (defun fzfa-location-jump (cand)
-  "Open SOURCE and jump to LINE recorded on CAND's `fzfa-location' property.
-
-Wraps `fzfa-with-visit' so `fzfa-after-visit-hook' fires;
-`fzfa--goto-source' honors `current-prefix-arg' for other-window opening."
+  "Open SOURCE and jump to LINE recorded on CAND's `fzfa-location' property."
   (when-let* ((loc (and (stringp cand) (> (length cand) 0)
                         (get-text-property 0 'fzfa-location cand))))
-    (fzfa-with-visit
-      (fzfa--goto-source (car loc) (cdr loc)))))
+    (fzfa--goto-source (car loc) (cdr loc))))
 
 (defvar-keymap fzfa-location-map
   :doc "Embark keymap for `fzfa-location' candidates.
@@ -4690,9 +4711,9 @@ render."
                        (fzfa-location fzfa-location-map embark-general-map)))
         (add-to-list 'embark-keymap-alist entry))
       (setf (alist-get 'fzfa-grep     embark-default-action-overrides)
-            (lambda (cand) (fzfa-grep-jump cand)))
+            (lambda (cand) (fzfa-visit-grep cand)))
       (setf (alist-get 'fzfa-location embark-default-action-overrides)
-            (lambda (cand) (fzfa-location-jump cand)))
+            (lambda (cand) (fzfa-visit-location cand)))
       (setf (alist-get 'fzfa-multi    embark-default-action-overrides)
             #'fzfa--multi-default-action))
 

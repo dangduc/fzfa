@@ -271,7 +271,7 @@ when the command was invoked.  Selecting \"default\" disables all themes."
                   (forward-line 1)
                   (cl-incf i))))
             (nreverse lines))))
-    (fzfa-location-jump
+    (fzfa-visit-location
      (fzfa-completing-read :candidates candidates
                                 :prompt "swiper: "
                                 :category 'fzfa-location))))
@@ -315,7 +315,7 @@ LINE:CONTENT — buffer names never enter the search input."
                             (forward-line 1)
                             (cl-incf j))))
                       (nreverse lines))))))
-    (fzfa-location-jump
+    (fzfa-visit-location
      (fzfa-completing-read
       :candidates candidates
       :prompt "swiper-all: "
@@ -592,7 +592,7 @@ position is recoverable with \\[set-mark-command] \\[set-mark-command]."
                     :category 'fzfa-location
                     :group #'fzfa--location-group)))
       (push-mark nil t)
-      (fzfa-location-jump r))))
+      (fzfa-visit-location r))))
 
 ;;;###autoload
 (defun fzfa-global-mark ()
@@ -615,7 +615,7 @@ silently skipped."
                     :category 'fzfa-location
                     :group #'fzfa--location-group)))
       (push-mark nil t)
-      (fzfa-location-jump r))))
+      (fzfa-visit-location r))))
 
 ;;;###autoload
 (defun fzfa-register ()
@@ -703,7 +703,7 @@ and line number."
                     :prompt "outline: "
                     :category 'fzfa-location)))
       (push-mark nil t)
-      (fzfa-location-jump r))))
+      (fzfa-visit-location r))))
 
 ;;;###autoload
 (defun fzfa-compile-error ()
