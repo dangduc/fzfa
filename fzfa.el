@@ -2562,9 +2562,18 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
     (setq require-match (and candidates t)))
   (when-let* ((slot-dir (plist-get
                          (fzfa--resolve-action-slot category current-prefix-arg)
-                         :directory))
-              (d (funcall slot-dir)))
-    (setq directory d))
+                         :directory)))
+    ;; Restore `this-command' / `real-this-command' after the funcall
+    ;; — an interactive `:directory' like `read-directory-name' enters
+    ;; a recursive minibuffer that leaves both set to `exit-minibuffer',
+    ;; which would then be captured as `fzfa--read''s `entry-command'
+    ;; (polluting the replay ring) and mislead `M-x repeat'.
+    (let ((entry-cmd  this-command)
+          (real-entry real-this-command)
+          (d (funcall slot-dir)))
+      (setq this-command      entry-cmd
+            real-this-command real-entry)
+      (when d (setq directory d))))
   (unless (or skip-executable-check candidates)
     (when-let* ((prog (and command (car (split-string command nil t)))))
       (unless (executable-find prog)
