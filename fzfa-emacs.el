@@ -523,6 +523,28 @@ consumer's `prod-token' check makes the replaced ones harmless."
           (run-with-timer 0 nil #'process)))))))
 
 ;;;###autoload
+(defun fzfa-complex-command ()
+  "Pick from `command-history' and re-eval the selected sexp.
+
+`repeat-complex-command' picker: entries in `command-history' are
+Lisp forms already scheduled by the command loop as executable.
+Selection `eval's the form (lexical), re-running the command with
+its exact arguments."
+  (interactive)
+  (unless command-history
+    (user-error "command-history is empty"))
+  (let ((entries
+         (cl-loop for sexp in command-history
+                  collect (propertize (prin1-to-string sexp)
+                                      'fzfa-command-sexp sexp))))
+    (when-let* ((r (fzfa-completing-read
+                    :candidates entries
+                    :prompt "complex-command: "
+                    :category 'fzfa-complex-command
+                    :history 'command-history)))
+      (eval (get-text-property 0 'fzfa-command-sexp r) t))))
+
+;;;###autoload
 (defun fzfa-M-x ()
   "Run an extended command using fzf, like \\[execute-extended-command].
 
