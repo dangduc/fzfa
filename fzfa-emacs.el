@@ -24,11 +24,18 @@
 ;;   `fzfa-yank-pop'                 Yank from `kill-ring' with fzf
 ;;   `fzfa-bookmark'                 Jump to a bookmark
 ;;   `fzfa-theme'                    Enable a theme with live preview
+;;   `fzfa-font'                     Pick a font family with live preview
 ;;   `fzfa-tramp'                    Connect to a host from ~/.ssh/config
+;;   `fzfa-man'                      Pick a man page and open it
 ;;   `fzfa-swiper'                   Search lines of the current buffer
 ;;   `fzfa-swiper-all'               Search lines across all open buffers
 ;;   `fzfa-M-x'                      Run an extended command
 ;;   `fzfa-M-x-for-buffer'           Run an extended command for current mode
+;;   `fzfa-apropos'                  Pick a symbol and describe it
+;;   `fzfa-descbinds'                Pick a keybinding and describe / execute
+;;   `fzfa-complex-command'          Pick from `command-history' and eval
+;;   `fzfa-history'                  Pick from comint / eshell input ring
+;;   `fzfa-unicode-char'             Pick a Unicode character by name
 ;;   `fzfa-minor-mode-menu'          Toggle a minor mode (on/off annotated)
 ;;   `fzfa-mark'                     Jump to a position in this buffer's marks
 ;;   `fzfa-global-mark'              Jump to a position in `global-mark-ring'
