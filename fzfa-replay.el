@@ -583,7 +583,10 @@ round-trip."
   :group 'fzfa-replay
   (cond
    (fzfa-replay-mode
-    (fzfa-replay-load-list)
+    ;; Load asynchronously so mode-enable doesn't block init on
+    ;; multi-MB files; picker callers already go through
+    ;; `fzfa-replay--load-async' and hit the cache once ready.
+    (fzfa-replay--load-async #'ignore)
     (fzfa-replay--start-auto-save-timer)
     (add-hook 'kill-emacs-hook #'fzfa-replay-save-list))
    (t
