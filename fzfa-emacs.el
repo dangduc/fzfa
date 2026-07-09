@@ -62,7 +62,10 @@
 (declare-function find-file-at-point "ffap" (&optional filename))
 (defvar ffap-menu-alist)
 (defvar recentf-list)
-(declare-function x-family-fonts "xfaces.c" (&optional family frame))
+;; `ext:' prefix — check-declare skips file existence when the source
+;; lives in a C file that may not ship with the installed Emacs (nix
+;; builds, some Windows distributions).
+(declare-function x-family-fonts "ext:xfaces.c" (&optional family frame))
 
 ;;;###autoload
 (defun fzfa-recent-file ()
@@ -561,7 +564,6 @@ copies it to the kill ring."
 (defvar eshell-history-ring)
 (declare-function ring-elements "ring" (ring))
 (declare-function comint-line-beginning-position "comint" ())
-(declare-function eshell-bol "esh-mode" ())
 
 ;;;###autoload
 (defun fzfa-history ()
@@ -590,7 +592,7 @@ replaces the current input line."
                       :category 'fzfa-history)))
         (cond
          ((derived-mode-p 'eshell-mode)
-          (eshell-bol)
+          (beginning-of-line)
           (delete-region (point) (point-max))
           (insert r))
          ((derived-mode-p 'comint-mode)
