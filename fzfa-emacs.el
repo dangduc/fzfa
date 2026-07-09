@@ -80,7 +80,7 @@
     (when-let* ((result (fzfa-completing-read
                          :candidates names :prompt "buffer: "
                          :category 'fzfa-buffer)))
-      (fzfa-with-visit (switch-to-buffer result)))))
+      (fzfa-visit-buffer result))))
 
 ;;;###autoload
 (defun fzfa-yank-pop ()
@@ -181,7 +181,7 @@ yanked text with the selection (mirroring `yank-pop' / `consult-yank-pop')."
                                              (expand-file-name file))))
                              (funcall opener buf)))
                          (funcall opener)))))))
-      (fzfa-with-visit (bookmark-jump result)))))
+      (fzfa-visit-bookmark result))))
 
 (defun fzfa--theme-switch (sym)
   "Disable currently enabled themes (except SYM) and enable SYM, if any.
@@ -773,7 +773,7 @@ Scans the buffer with `ffap-menu-rescan' (cached buffer-locally in
 pushes point onto the mark ring, jumps to the candidate's position, and
 visits the guess: URLs go through `find-file-at-point' (i.e. the user's
 `ffap-url-fetcher'), and file paths go through `fzfa-visit-file' so the
-user's `fzfa-find-file-function' is honored.
+`fzfa-file' category action in `fzfa-action-config' is honored.
 
 Candidates display as LINE:GUESS so fzf can score against either the
 file/URL or the line number.  Previews scroll the originating buffer to

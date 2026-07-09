@@ -775,6 +775,50 @@ directly.  Inline shell editing via ~>~ works the same — the smart
 command transparently inherits the display cycling of the underlying
 backend.
 
+* Prefix arguments
+
+How to handle prefix args on ~fzfa-*~ commands is set up with ~fzfa-action-config~.
+
+Defaults for the ~fzfa-file~ category (every file picker:
+~fzfa-fd~, ~fzfa-find~, ~fzfa-rg-files~, ~fzfa-locate~, …):
+
+| Prefix        | Directory                        | Action                   |
+|---------------+----------------------------------+--------------------------|
+| (none)        | ~fzfa--default-dir~              | ~fzfa-smart-find-file~   |
+| ~C-u~         | ~fzfa--default-dir~              | ~find-file-other-window~ |
+| ~C-u C-u~     | buffer ~default-directory~       | ~fzfa-smart-find-file~   |
+| ~C-u C-u C-u~ | prompt via ~read-directory-name~ | ~fzfa-smart-find-file~   |
+|               |                                  |                          |
+
+For example:
+~C-u~ ~fzfa-fd~ will use ~find-file-other-window~.
+~C-u~ ~C-u~ will default to the current directory.
+~C-u~ ~C-u~ ~C-u~ will prompt for a directory.
+
+This is customizable, change ~fzfa-action-config~ to set up which actions/directories
+are used for empty prefixes (default case) or ~C-u~ case.
+
+Prefix handling is looked up by ~fzfa~ category.
+
+Other categories:
+
+- ~fzfa-buffer~ — ~fzfa-smart-switch-to-buffer~; ~C-u~ →
+  ~switch-to-buffer-other-window~.
+- ~fzfa-bookmark~ — ~fzfa-smart-bookmark-jump~; ~C-u~ →
+  ~bookmark-jump-other-window~.
+
+To customize a single entry without setting the entire alist:
+
+#+begin_src emacs-lisp :tangle yes
+  ;; Make C-u C-u C-u open at project root instead of prompting.
+  (setf (alist-get '(64)
+                   (alist-get 'fzfa-file fzfa-action-config)
+                   nil nil #'equal)
+        `(:directory ,(lambda ()
+                        (when-let* ((pr (project-current)))
+                          (project-root pr)))))
+#+end_src
+
 * Completion style compatibility
 
 ~fzfa~ registers and uses its own ~completion-style~ named ~fzfa~.

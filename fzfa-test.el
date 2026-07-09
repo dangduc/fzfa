@@ -2401,6 +2401,97 @@ that fzfa--sessions overwrote persisted-sessions on save)."
       (fzfa-smart-find-file "/tmp/movie.mp4")
       (should (equal find-file-arg "/tmp/movie.mp4")))))
 
+(ert-deftest fzfa-smart-find-file-other-window-under-prefix ()
+  "`C-u' prefix routes non-external files through `find-file-other-window'."
+  (let ((other-arg nil)
+        (find-arg nil))
+    (cl-letf (((symbol-function 'find-file-other-window)
+               (lambda (f) (setq other-arg f)))
+              ((symbol-function 'find-file)
+               (lambda (f) (setq find-arg f)))
+              (current-prefix-arg '(4))
+              (fzfa-external-open-command nil))
+      (fzfa-smart-find-file "/tmp/notes.txt")
+      (should (equal other-arg "/tmp/notes.txt"))
+      (should-not find-arg))))
+
+(ert-deftest fzfa-smart-find-file-external-wins-over-prefix ()
+  "External dispatch fires even under `C-u'; prefix does not interpose."
+  (let ((external-arg nil))
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (program _infile _dest _display &rest args)
+                 (setq external-arg (cons program args)) 0))
+              (current-prefix-arg '(4))
+              (fzfa-external-open-command "open"))
+      (fzfa-smart-find-file "/tmp/movie.mp4")
+      (should (equal (car external-arg) "open")))))
+
+;;; Action alist — slot resolution
+
+(ert-deftest fzfa-resolve-action-slot-nil-fallback ()
+  "Missing slot falls through to the `nil' slot's plist."
+  (let ((fzfa-action-config
+         '((fzfa-file
+            (nil  :action fzfa-smart-find-file)
+            ((16) :directory ignore)))))
+    (let ((p (fzfa--resolve-action-slot 'fzfa-file '(4))))
+      (should (eq (plist-get p :action) 'fzfa-smart-find-file))
+      (should-not (plist-get p :directory)))))
+
+(ert-deftest fzfa-resolve-action-slot-key-inheritance ()
+  "Matched slot overlays the `nil' slot; unset keys inherit."
+  (let ((fzfa-action-config
+         '((fzfa-file
+            (nil  :action fzfa-smart-find-file)
+            ((16) :directory ignore)))))
+    (let ((p (fzfa--resolve-action-slot 'fzfa-file '(16))))
+      (should (eq (plist-get p :action) 'fzfa-smart-find-file))
+      (should (eq (plist-get p :directory) 'ignore)))))
+
+(ert-deftest fzfa-resolve-action-slot-matched-wins ()
+  "Matched slot's key overrides `nil' slot's same key."
+  (let ((fzfa-action-config
+         '((fzfa-file
+            (nil  :action fzfa-smart-find-file)
+            ((4)  :action find-file-other-window)))))
+    (should (eq (plist-get
+                 (fzfa--resolve-action-slot 'fzfa-file '(4))
+                 :action)
+                'find-file-other-window))))
+
+(ert-deftest fzfa-resolve-action-slot-unknown-category ()
+  "Category not in the alist returns nil."
+  (let ((fzfa-action-config '((fzfa-file (nil :action ignore)))))
+    (should-not (fzfa--resolve-action-slot 'fzfa-buffer nil))))
+
+;;; Visit dispatchers
+
+(defvar fzfa-test--visit-seen nil
+  "Scratch variable for visit-dispatcher tests.
+
+`ert-deftest' rebinds locals in a way that breaks lexical-closure
+observation, so tests use this dynvar to observe action calls.")
+
+(ert-deftest fzfa-visit-file-dispatches-through-alist ()
+  "`fzfa-visit-file' funcalls the category action, not `find-file' directly."
+  (setq fzfa-test--visit-seen nil)
+  (let ((fzfa-action-config
+         '((fzfa-file
+            (nil :action (lambda (f) (setq fzfa-test--visit-seen f)))))))
+    (cl-letf (((symbol-function 'run-hooks) #'ignore))
+      (fzfa-visit-file "/tmp/x")
+      (should (equal fzfa-test--visit-seen "/tmp/x")))))
+
+(ert-deftest fzfa-visit-buffer-dispatches-through-alist ()
+  "`fzfa-visit-buffer' funcalls the `fzfa-buffer' action."
+  (setq fzfa-test--visit-seen nil)
+  (let ((fzfa-action-config
+         '((fzfa-buffer
+            (nil :action (lambda (b) (setq fzfa-test--visit-seen b)))))))
+    (cl-letf (((symbol-function 'run-hooks) #'ignore))
+      (fzfa-visit-buffer "some-buffer")
+      (should (equal fzfa-test--visit-seen "some-buffer")))))
+
 ;;; Multi-candidates-fetch — async producer refresh
 
 (ert-deftest fzfa-multi-candidates-fetch-async-refresh ()

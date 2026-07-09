@@ -675,8 +675,8 @@ with PROC=0), so Emacs doesn't block on the external viewer."
 Extension match (case-insensitive) against `fzfa-external-extensions'
 plus a non-nil `fzfa-external-open-command' dispatches to that command
 detached from Emacs (so the external player runs asynchronously).
-Everything else — including directories and any extension not on the
-list — falls through to `find-file'.
+`current-prefix-arg' of `(4)' (C-u) routes non-external files through
+`find-file-other-window'.  Everything else falls through to `find-file'.
 
 The extension check fires before `file-directory-p' so TRAMP-shaped
 inputs (`/ssh:host:', `/sudo::') don't trigger a remote connection
@@ -689,28 +689,98 @@ so `fzfa--external-p' short-circuits to nil and we route straight to
          (not (file-directory-p file)))
     (call-process fzfa-external-open-command nil 0 nil
                   (expand-file-name file)))
+   ((equal current-prefix-arg '(4))
+    (find-file-other-window file))
    (t (find-file file))))
 
-(defcustom fzfa-find-file-function #'fzfa-smart-find-file
-  "Function called by `fzfa-visit-file' to open the selected FILE.
+(defun fzfa-smart-switch-to-buffer (buffer-or-name)
+  "Switch to BUFFER-OR-NAME, other-window under `\\[universal-argument]'.
 
-Defaults to `fzfa-smart-find-file' which dispatches multimedia
-extensions to the OS handler and falls back to `find-file'.
-Override to e.g. `find-file-other-window' / `find-file-other-frame'
-to change where fzfa picks land, or to a thin wrapper around
-`ace-window' for an ace-based picker."
-  :type 'function
+`current-prefix-arg' of `(4)' routes through
+`switch-to-buffer-other-window'; anything else uses `switch-to-buffer'."
+  (if (equal current-prefix-arg '(4))
+      (switch-to-buffer-other-window buffer-or-name)
+    (switch-to-buffer buffer-or-name)))
+
+(defun fzfa-smart-bookmark-jump (bookmark)
+  "Jump to BOOKMARK, other-window under `\\[universal-argument]'.
+
+`current-prefix-arg' of `(4)' routes through `bookmark-jump-other-window';
+anything else uses `bookmark-jump'."
+  (if (equal current-prefix-arg '(4))
+      (bookmark-jump-other-window bookmark)
+    (bookmark-jump bookmark)))
+
+(defcustom fzfa-action-config
+  '((fzfa-file
+     (nil  :action fzfa-smart-find-file)
+     ((16) :directory (lambda () default-directory))
+     ((64) :directory (lambda () (read-directory-name "In dir: "))))
+    (fzfa-buffer
+     (nil :action fzfa-smart-switch-to-buffer))
+    (fzfa-bookmark
+     (nil :action fzfa-smart-bookmark-jump)))
+  "Category-keyed prefix-arg dispatch for fzfa commands.
+
+Each entry is `(CATEGORY (SLOT-KEY :action FN :directory FN) ...)'.
+SLOT-KEY is `nil' (no prefix), `(4)' (C-u), `(16)' (C-u C-u), or
+`(64)' (C-u C-u C-u).  `:action' is called with the picked candidate;
+`:directory' is called with no args and returns the working directory.
+
+Resolution: the `nil' slot's plist is the category baseline; the
+matched slot's plist overlays it (matched wins).  Missing slot -> falls
+to `nil' slot.  `:directory' returning `nil' falls back to
+`fzfa--default-dir'."
+  :type 'sexp
   :group 'fzfa)
 
-(defun fzfa-visit-file (file)
-  "Visit FILE via `fzfa-find-file-function' and fire `fzfa-after-visit-hook'.
+(defun fzfa--plist-merge (base overlay)
+  "Return BASE with OVERLAY's keys merged in; OVERLAY wins on collision."
+  (let ((out (copy-sequence base)))
+    (while overlay
+      (setq out (plist-put out (car overlay) (cadr overlay))
+            overlay (cddr overlay)))
+    out))
 
-The centralized entry point for fzfa commands that just open a file.
-Equivalent to the legacy `(fzfa-with-visit (find-file FILE))' pattern
-but routes through the customizable open function, so multimedia
-files reach the OS handler and the user's preferred window
-strategy stays effective."
-  (fzfa-with-visit (funcall fzfa-find-file-function file)))
+(defun fzfa--resolve-action-slot (category prefix)
+  "Return the effective plist for CATEGORY at PREFIX.
+
+Merges the `nil' slot's baseline with the matched slot's delta.  Slot
+key comparison uses `equal' — `(4)' is a cons, so `assq' won't match."
+  (let* ((table (alist-get category fzfa-action-config))
+         (nil-plist (cdr (assoc nil table)))
+         (match-plist (and prefix (cdr (assoc prefix table)))))
+    (fzfa--plist-merge nil-plist match-plist)))
+
+(defun fzfa-visit-file (file)
+  "Visit FILE via the `fzfa-file' category action and fire `fzfa-after-visit-hook'.
+
+The action is resolved from `fzfa-action-config' against
+`current-prefix-arg'."
+  (let ((action (plist-get
+                 (fzfa--resolve-action-slot 'fzfa-file current-prefix-arg)
+                 :action)))
+    (fzfa-with-visit (funcall action file))))
+
+(defun fzfa-visit-buffer (buffer-or-name)
+  "Switch to BUFFER-OR-NAME via the `fzfa-buffer' category action.
+
+The action is resolved from `fzfa-action-config' against
+`current-prefix-arg'."
+  (let ((action (plist-get
+                 (fzfa--resolve-action-slot 'fzfa-buffer current-prefix-arg)
+                 :action)))
+    (fzfa-with-visit (funcall action buffer-or-name))))
+
+(defun fzfa-visit-bookmark (bookmark)
+  "Jump to BOOKMARK via the `fzfa-bookmark' category action.
+
+The action is resolved from `fzfa-action-config' against
+`current-prefix-arg'."
+  (let ((action (plist-get
+                 (fzfa--resolve-action-slot 'fzfa-bookmark current-prefix-arg)
+                 :action)))
+    (fzfa-with-visit (funcall action bookmark))))
 
 ;;; Apply (persistent-action)
 
@@ -2463,6 +2533,11 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
     (setq category (if command 'fzfa-file 'fzfa-misc)))
   (when (eq require-match 'auto)
     (setq require-match (and candidates t)))
+  (when-let* ((slot-dir (plist-get
+                         (fzfa--resolve-action-slot category current-prefix-arg)
+                         :directory))
+              (d (funcall slot-dir)))
+    (setq directory d))
   (unless (or skip-executable-check candidates)
     (when-let* ((prog (and command (car (split-string command nil t)))))
       (unless (executable-find prog)

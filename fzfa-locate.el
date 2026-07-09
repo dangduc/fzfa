@@ -39,8 +39,8 @@ The command is configurable via `fzfa-locate-command'.  Selection
 is routed through `fzfa-visit-file', so files whose extension is
 in `fzfa-external-extensions' are dispatched to the OS handler
 \(`open' on macOS, `xdg-open' on Linux, `start' on Windows) and
-everything else goes through `fzfa-find-file-function' — same
-strategy every other fzfa file-picker uses."
+everything else goes through the `fzfa-file' category action in
+`fzfa-action-config' — same strategy every other fzfa file-picker uses."
   (interactive)
   (when-let* ((result (fzfa-completing-read
                        :command fzfa-locate-command)))
