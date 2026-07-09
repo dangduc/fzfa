@@ -105,7 +105,7 @@ The command is configurable via `fzfa-git-grep-command'."
                   :command fzfa-git-grep-command
                   :category 'fzfa-grep
                   :group #'fzfa--grep-group)))
-    (fzfa-with-visit (fzfa--grep-jump r))))
+    (fzfa-grep-jump r)))
 
 ;;;###autoload
 (defun fzfa-git-ls-files ()

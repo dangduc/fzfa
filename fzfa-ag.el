@@ -65,7 +65,7 @@ The command is configurable via `fzfa-ag-command'."
                                    (fzfa--max-columns-flag 'ag))
                   :category 'fzfa-grep
                   :group #'fzfa--grep-group)))
-    (fzfa-with-visit (fzfa--grep-jump r))))
+    (fzfa-grep-jump r)))
 
 (provide 'fzfa-ag)
 ;;; fzfa-ag.el ends here

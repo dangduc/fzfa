@@ -48,7 +48,7 @@ The command is configurable via `fzfa-ugrep-command'."
                                    (fzfa--max-columns-flag 'ugrep))
                   :category 'fzfa-grep
                   :group #'fzfa--grep-group)))
-    (fzfa-with-visit (fzfa--grep-jump r))))
+    (fzfa-grep-jump r)))
 
 (provide 'fzfa-ugrep)
 ;;; fzfa-ugrep.el ends here

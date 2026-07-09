@@ -799,8 +799,8 @@ Matches `ivy''s default `ivy-call' binding."
   '((fzfa-file     :apply find-file)
     (fzfa-buffer   :apply switch-to-buffer)
     (fzfa-bookmark :apply bookmark-jump)
-    (fzfa-grep     :apply fzfa--grep-jump)
-    (fzfa-location :apply fzfa--location-jump))
+    (fzfa-grep     :apply fzfa-grep-jump)
+    (fzfa-location :apply fzfa-location-jump))
   "Per-category apply handlers.
 
 Alist of (CATEGORY . PLIST), where PLIST recognizes the `:apply' slot
@@ -4545,20 +4545,34 @@ buffer name does not corrupt the split.")
   "Open SOURCE and jump to LINE.
 
 SOURCE is a file path when `file-exists-p'; otherwise it is treated as
-a buffer name."
-  (cond
-   ((file-exists-p source) (find-file source))
-   ((get-buffer source)    (switch-to-buffer source))
-   (t (user-error "Source not found: %s" source)))
+a buffer name.  `current-prefix-arg' of `(4)' (C-u) routes through
+`find-file-other-window' / `switch-to-buffer-other-window'; anything
+else uses `find-file' / `switch-to-buffer'."
+  (let ((other-window-p (equal current-prefix-arg '(4))))
+    (cond
+     ((file-exists-p source)
+      (if other-window-p
+          (find-file-other-window source)
+        (find-file source)))
+     ((get-buffer source)
+      (if other-window-p
+          (switch-to-buffer-other-window source)
+        (switch-to-buffer source)))
+     (t (user-error "Source not found: %s" source))))
   (goto-char (point-min))
   (forward-line (1- line)))
 
-(defun fzfa--grep-jump (cand)
-  "Open the SOURCE and jump to the LINE referenced by CAND."
+(defun fzfa-grep-jump (cand)
+  "Open the SOURCE and jump to the LINE referenced by grep candidate CAND.
+
+CAND is a FILE:LINE:CONTENT string as produced by `grep', `rg', `ag',
+etc.  Wraps `fzfa-with-visit' so `fzfa-after-visit-hook' fires;
+`fzfa--goto-source' honors `current-prefix-arg' for other-window opening."
   (when (string-match fzfa--grep-line-regexp cand)
-    (fzfa--goto-source
-     (match-string 1 cand)
-     (string-to-number (match-string 2 cand)))))
+    (fzfa-with-visit
+      (fzfa--goto-source
+       (match-string 1 cand)
+       (string-to-number (match-string 2 cand))))))
 
 (defvar-keymap fzfa-grep-map
   :doc "Embark keymap for `fzfa-grep' candidates.
@@ -4591,11 +4605,15 @@ in-band for jump but never enter fzf's scoring."
     (add-text-properties 0 1 `(fzfa-location (,source . ,line)) cand))
   cand)
 
-(defun fzfa--location-jump (cand)
-  "Open SOURCE and jump to LINE recorded on CAND's `fzfa-location' property."
+(defun fzfa-location-jump (cand)
+  "Open SOURCE and jump to LINE recorded on CAND's `fzfa-location' property.
+
+Wraps `fzfa-with-visit' so `fzfa-after-visit-hook' fires;
+`fzfa--goto-source' honors `current-prefix-arg' for other-window opening."
   (when-let* ((loc (and (stringp cand) (> (length cand) 0)
                         (get-text-property 0 'fzfa-location cand))))
-    (fzfa--goto-source (car loc) (cdr loc))))
+    (fzfa-with-visit
+      (fzfa--goto-source (car loc) (cdr loc)))))
 
 (defvar-keymap fzfa-location-map
   :doc "Embark keymap for `fzfa-location' candidates.
@@ -4672,9 +4690,9 @@ render."
                        (fzfa-location fzfa-location-map embark-general-map)))
         (add-to-list 'embark-keymap-alist entry))
       (setf (alist-get 'fzfa-grep     embark-default-action-overrides)
-            (lambda (cand) (fzfa-with-visit (fzfa--grep-jump cand))))
+            (lambda (cand) (fzfa-grep-jump cand)))
       (setf (alist-get 'fzfa-location embark-default-action-overrides)
-            (lambda (cand) (fzfa-with-visit (fzfa--location-jump cand))))
+            (lambda (cand) (fzfa-location-jump cand)))
       (setf (alist-get 'fzfa-multi    embark-default-action-overrides)
             #'fzfa--multi-default-action))
 

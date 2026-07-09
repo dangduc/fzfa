@@ -1925,7 +1925,7 @@ lambda: when a frontend hands back a bare string (e.g.
 `read-from-minibuffer' stripping under
 `minibuffer-allow-text-properties' nil), `member' against the
 source's snapshot returns the original propertized cell so
-downstream consumers (`fzfa--location-jump' etc.) still see the
+downstream consumers (`fzfa-location-jump' etc.) still see the
 in-band metadata."
   (let* ((orig (propertize "1:hello world"
                            'fzfa-location '("test.el" . 1)))
