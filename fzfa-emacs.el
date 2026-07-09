@@ -522,6 +522,47 @@ consumer's `prod-token' check makes the replaced ones harmless."
                           acc))
           (run-with-timer 0 nil #'process)))))))
 
+(defvar comint-input-ring)
+(defvar eshell-history-ring)
+(declare-function ring-elements "ring" (ring))
+(declare-function comint-line-beginning-position "comint" ())
+(declare-function eshell-bol "esh-mode" ())
+
+;;;###autoload
+(defun fzfa-history ()
+  "Pick from the current buffer's input history and insert at prompt.
+
+M-r replacement for shell / eshell / any comint-derived mode.  Reads
+`eshell-history-ring' under `eshell-mode', otherwise
+`comint-input-ring' under `comint-mode' (or derived).  Selection
+replaces the current input line."
+  (interactive)
+  (let ((ring (cond
+               ((and (derived-mode-p 'eshell-mode)
+                     (bound-and-true-p eshell-history-ring))
+                eshell-history-ring)
+               ((and (derived-mode-p 'comint-mode)
+                     (bound-and-true-p comint-input-ring))
+                comint-input-ring)
+               (t (user-error "No history ring in %s" major-mode)))))
+    (require 'ring)
+    (let ((entries (delete-dups (ring-elements ring))))
+      (unless entries
+        (user-error "History is empty"))
+      (when-let* ((r (fzfa-completing-read
+                      :candidates entries
+                      :prompt "history: "
+                      :category 'fzfa-history)))
+        (cond
+         ((derived-mode-p 'eshell-mode)
+          (eshell-bol)
+          (delete-region (point) (point-max))
+          (insert r))
+         ((derived-mode-p 'comint-mode)
+          (goto-char (comint-line-beginning-position))
+          (delete-region (point) (line-end-position))
+          (insert r)))))))
+
 ;;;###autoload
 (defun fzfa-complex-command ()
   "Pick from `command-history' and re-eval the selected sexp.
