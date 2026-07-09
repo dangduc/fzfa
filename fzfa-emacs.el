@@ -548,6 +548,60 @@ filter call is cheap."
       (fzfa--run-command result))))
 
 ;;;###autoload
+(defun fzfa-descbinds ()
+  "Pick a keybinding and describe (or execute) its command.
+
+Lists every binding currently active in the origin buffer (as
+reported by \\[describe-bindings]).  Selecting a candidate calls
+`describe-function' on the bound command; with
+`\\[universal-argument]' prefix, calls `command-execute' in the
+origin buffer instead."
+  (interactive)
+  (let* ((origin   (current-buffer))
+         (executep (equal current-prefix-arg '(4)))
+         (pairs
+          (with-temp-buffer
+            (let ((standard-output (current-buffer)))
+              (describe-buffer-bindings origin))
+            (goto-char (point-min))
+            (let (out)
+              (while (not (eobp))
+                (let* ((line (buffer-substring-no-properties
+                              (line-beginning-position) (line-end-position)))
+                       (tab (string-match "\t" line)))
+                  (when tab
+                    (let ((key (string-trim (substring line 0 tab)))
+                          (cmd (string-trim (substring line (1+ tab)))))
+                      (unless (or (string-empty-p key)
+                                  (string-empty-p cmd)
+                                  (member cmd '("Prefix Command" "??"))
+                                  (string-match-p "\\`key\\'" key))
+                        (push (cons key cmd) out)))))
+                (forward-line 1))
+              (nreverse out))))
+         (max-key
+          (min 40 (apply #'max 0 (mapcar (lambda (p) (length (car p))) pairs))))
+         (fmt (format "%%-%ds  %%s" max-key))
+         (candidates
+          (mapcar (lambda (p)
+                    (propertize
+                     (format fmt (car p) (cdr p))
+                     'fzfa-descbinds-command (cdr p)))
+                  pairs)))
+    (unless candidates
+      (user-error "No bindings collected"))
+    (when-let* ((r (fzfa-completing-read
+                    :candidates candidates
+                    :prompt (if executep "descbinds (execute): " "descbinds: ")
+                    :category 'fzfa-descbinds))
+                (cmd-name (get-text-property 0 'fzfa-descbinds-command r)))
+      (if-let* ((sym (intern-soft cmd-name)))
+          (if executep
+              (with-current-buffer origin (call-interactively sym))
+            (describe-function sym))
+        (user-error "Not a resolvable command: %s" cmd-name)))))
+
+;;;###autoload
 (defun fzfa-minor-mode-menu ()
   "Toggle a minor mode via fzf.
 
