@@ -276,6 +276,31 @@ list uniformly string-shaped."
                      (set-face-attribute 'default nil :family
                                          (fzfa-preview-get :saved))))))))
 
+(defcustom fzfa-man-command "apropos ."
+  "Shell command used by `fzfa-man' to list man page entries.
+
+Output is expected to be one entry per line in the standard
+\"NAME (SECTION) - DESCRIPTION\" format that `apropos' produces.
+Selection extracts the first token as the page name and passes it to
+`man'."
+  :type 'string
+  :group 'fzfa)
+
+;;;###autoload
+(defun fzfa-man ()
+  "Pick a man page and open it with `man'.
+
+Streams entries from `fzfa-man-command' (default `apropos .') as
+NAME (SECTION) - DESCRIPTION lines; selection extracts NAME and
+funcalls `man'."
+  (interactive)
+  (when-let* ((r (fzfa-completing-read
+                  :command fzfa-man-command
+                  :prompt "man: "
+                  :category 'fzfa-man)))
+    (when (string-match "\\`\\([^ (]+\\)" r)
+      (man (match-string 1 r)))))
+
 ;;;###autoload
 (defun fzfa-tramp ()
   "Connect to a remote host via TRAMP, with hosts from ~/.ssh/config."
