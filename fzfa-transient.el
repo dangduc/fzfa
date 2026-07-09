@@ -409,6 +409,7 @@ through `call-interactively'."
       ["Info"
        ("i" "Any node"     fzfa-info)
        ("?" "At point"     fzfa-info-at-point)
+       ("m" "Man page"     fzfa-man)
        ("E" "Elisp manual" fzfa-info-elisp)
        ("M" "Emacs manual" fzfa-info-emacs)
        ("c" "CL"           fzfa-info-cl)
@@ -459,11 +460,17 @@ through `call-interactively'."
 
 (setq fzfa-transient---emacs
       ["Emacs"
-       ("B" "Bookmark"   fzfa-bookmark)
-       ("y" "Yank Pop"   fzfa-yank-pop)
-       ("T" "Theme"      fzfa-theme)
-       ("x" "M-x"        fzfa-M-x)
-       ("X" "M-x (mode)" fzfa-M-x-for-buffer)])
+       ("B" "Bookmark"          fzfa-bookmark)
+       ("y" "Yank Pop"          fzfa-yank-pop)
+       ("T" "Theme"             fzfa-theme)
+       ("t" "Font"              fzfa-font)
+       ("x" "M-x"               fzfa-M-x)
+       ("X" "M-x (mode)"        fzfa-M-x-for-buffer)
+       ("s" "Symbol (apropos)"  fzfa-apropos)
+       ("k" "Key (descbinds)"   fzfa-descbinds)
+       (";" "Complex Command"   fzfa-complex-command)
+       ("h" "History"           fzfa-history)
+       ("u" "Unicode char"      fzfa-unicode-char)])
 
 (setq fzfa-transient---swiper
       ["Swiper"
