@@ -522,6 +522,34 @@ consumer's `prod-token' check makes the replaced ones harmless."
                           acc))
           (run-with-timer 0 nil #'process)))))))
 
+;;;###autoload
+(defun fzfa-unicode-char ()
+  "Pick a Unicode character by name and insert (or copy) it.
+
+Candidates are NAME<space>GLYPH lines from `ucs-names'.  Selection
+inserts the character at point when the buffer is writable, otherwise
+copies it to the kill ring."
+  (interactive)
+  (let* ((table (ucs-names))
+         (entries
+          (cl-loop
+           for name being the hash-keys of table
+           using (hash-values code)
+           when (and (integerp code) (not (string-empty-p name)))
+           collect (propertize (format "%s  %c" name code)
+                               'fzfa-unicode-code code))))
+    (unless entries
+      (user-error "No Unicode names available"))
+    (when-let* ((r (fzfa-completing-read
+                    :candidates entries
+                    :prompt "unicode: "
+                    :category 'fzfa-unicode))
+                (code (get-text-property 0 'fzfa-unicode-code r)))
+      (if (or buffer-read-only (minibufferp))
+          (progn (kill-new (string code))
+                 (message "Copied: %c" code))
+        (insert-char code 1 t)))))
+
 (defvar comint-input-ring)
 (defvar eshell-history-ring)
 (declare-function ring-elements "ring" (ring))
