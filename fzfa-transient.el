@@ -35,7 +35,10 @@
 (defvar fzfa-directory)
 (declare-function transient-args "transient" (prefix))
 (declare-function transient-arg-value "transient" (arg args))
-(declare-function transient-scope "transient" ())
+;; ARGLIST is `t' (unspecified) — `transient-scope's signature changed
+;; between 30.x and the snapshot; check-declare would trip on the
+;; mismatch otherwise.
+(declare-function transient-scope "transient" t t)
 (declare-function transient-prefix-object "transient" ())
 (declare-function transient-setup "transient"
                   (&optional name layout edit &rest params))
