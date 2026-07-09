@@ -55,6 +55,7 @@
 (declare-function find-file-at-point "ffap" (&optional filename))
 (defvar ffap-menu-alist)
 (defvar recentf-list)
+(declare-function x-family-fonts "xfaces.c" (&optional family frame))
 
 ;;;###autoload
 (defun fzfa-recent-file ()
@@ -227,6 +228,53 @@ when the command was invoked.  Selecting \"default\" disables all themes."
                    (mapc #'disable-theme custom-enabled-themes)
                    (mapc #'enable-theme
                          (reverse (fzfa-preview-get :saved))))))))
+
+;;;###autoload
+(defun fzfa-font ()
+  "Prompt for a font family, previewing each candidate live.
+
+Applies the picked family to the `default' face across all frames via
+`set-face-attribute'.  Only `:family' is touched — `:height' and other
+attributes are preserved.  Aborting (e.g. \\[keyboard-quit]) restores
+the family that was active when the command was invoked.
+
+With `\\[universal-argument]' prefix, filters to monospaced families
+via `x-family-fonts's FIXED-P field (index 5); FAMILY (index 0) is a
+symbol on some builds, so coerce via `format' to keep the candidate
+list uniformly string-shaped."
+  (interactive)
+  (let* ((mono-p   (equal current-prefix-arg '(4)))
+         (families (if mono-p
+                       (or (sort (delete-dups
+                                  (cl-loop for v in (x-family-fonts)
+                                           when (aref v 5)
+                                           collect (format "%s" (aref v 0))))
+                                 #'string<)
+                           (user-error "No monospaced fonts available"))
+                     (delete-dups (font-family-list)))))
+    (unless families
+      (user-error "No fonts available"))
+    (fzfa-completing-read
+     :candidates families
+     :prompt (if mono-p "mono font: " "font: ")
+     :category 'fzfa-font
+     :apply (lambda (cand)
+              (when cand
+                (set-face-attribute 'default nil :family cand)))
+     :preview `(:setup
+                ,(lambda ()
+                   (fzfa-preview-put :saved
+                                     (face-attribute 'default :family)))
+                :preview
+                ,(lambda (cand)
+                   (when cand
+                     (set-face-attribute 'default nil :family cand)))
+                :return
+                ,(lambda (cand)
+                   (if cand
+                       (set-face-attribute 'default nil :family cand)
+                     (set-face-attribute 'default nil :family
+                                         (fzfa-preview-get :saved))))))))
 
 ;;;###autoload
 (defun fzfa-tramp ()
