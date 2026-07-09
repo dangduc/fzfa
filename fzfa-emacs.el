@@ -547,6 +547,63 @@ filter call is cheap."
                          :history 'extended-command-history)))
       (fzfa--run-command result))))
 
+(defun fzfa--apropos-producer ()
+  "Return a 2-arg `:candidates' producer walking `obarray' non-blockingly.
+
+Collects every interned symbol that names a function (`fboundp'),
+variable (`boundp'), or face (`facep').  Same cooperative-chunking
+pattern as `fzfa--commands-producer' — chunk size is
+`fzfa-commands-chunk-size' — so the walk yields between slices."
+  (let ((symbols nil)
+        (results nil)
+        (final nil)
+        (latest-cb nil)
+        (started nil)
+        (chunk fzfa-commands-chunk-size))
+    (cl-labels
+        ((process ()
+           (let ((n 0))
+             (while (and symbols (< n chunk))
+               (let ((sym (pop symbols)))
+                 (when (or (fboundp sym) (boundp sym) (facep sym))
+                   (push (symbol-name sym) results)))
+               (cl-incf n)))
+           (cond
+            (symbols
+             (when latest-cb (funcall latest-cb results))
+             (run-with-timer 0 nil #'process))
+            (t
+             (setq final (sort (copy-sequence results) #'string<)
+                   results nil)
+             (when latest-cb (funcall latest-cb final))))))
+      (lambda (_input callback)
+        (setq latest-cb callback)
+        (cond
+         (final
+          (funcall callback final))
+         (started nil)
+         (t
+          (setq started t
+                symbols (let (acc)
+                          (mapatoms (lambda (s) (push s acc)))
+                          acc))
+          (run-with-timer 0 nil #'process)))))))
+
+;;;###autoload
+(defun fzfa-apropos ()
+  "Pick a symbol (function, variable, or face) and describe it.
+
+Presents every interned symbol that names a function (`fboundp'),
+variable (`boundp'), or face (`facep').  Selection calls
+`describe-symbol', which routes to `describe-function' /
+`describe-variable' / `describe-face' based on what the symbol names."
+  (interactive)
+  (when-let* ((r (fzfa-completing-read
+                  :candidates (fzfa--apropos-producer)
+                  :prompt "apropos: "
+                  :category 'fzfa-apropos)))
+    (describe-symbol (intern r))))
+
 ;;;###autoload
 (defun fzfa-descbinds ()
   "Pick a keybinding and describe (or execute) its command.
