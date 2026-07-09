@@ -35,8 +35,22 @@
 (defvar fzfa-directory)
 (declare-function transient-args "transient" (prefix))
 (declare-function transient-arg-value "transient" (arg args))
+(declare-function transient-scope "transient" ())
+(declare-function transient-prefix-object "transient" ())
+(declare-function transient-setup "transient"
+                  (&optional name layout edit &rest params))
 (declare-function project-current "project")
 (declare-function project-root "project")
+
+(defun fzfa-transient--current-scope ()
+  "Return the prefix arg to thread through the transient's scope.
+
+If invoked while another transient is active (sub-transient
+navigation), inherit its scope.  Otherwise capture the current
+`current-prefix-arg' fresh so it propagates to suffix commands via
+`transient-scope'."
+  (or (and (transient-prefix-object) (transient-scope))
+      current-prefix-arg))
 
 ;;; Boilerplate-reducing macro
 
@@ -50,7 +64,11 @@ transient's suffix-spec form.
 
 The underlying prefix is interned as NAME--def and re-defined on
 every call, so editing a column defvar is reflected on the next
-invocation.  `transient' is required lazily inside the body."
+invocation.  `transient' is required lazily inside the body.
+
+The entering `current-prefix-arg' is passed to `transient-setup' as
+the `:scope', so suffix commands can retrieve it via `transient-scope'
+and thread it through to their target fzfa command."
   (declare (indent 2))
   (let ((def (intern (format "%s--def" name))))
     `(defun ,name ()
@@ -64,9 +82,7 @@ invocation.  `transient' is required lazily inside the body."
                               `(vector ,g)
                             `(vector ,@g)))
                         groups)))
-       ;; Symbol (not `#'') — the prefix is defined at call time by
-       ;; the eval above, so byte-compile can't see it.
-       (call-interactively ',def))))
+       (transient-setup ',def nil nil :scope (fzfa-transient--current-scope)))))
 
 ;;; Dispatch helpers
 ;;
@@ -89,9 +105,14 @@ DIR-SPEC is \"current\", \"project\", or anything else (no override)."
     (_ (funcall fn))))
 
 (defun fzfa-transient--invoke (base prefix)
-  "Invoke BASE under PREFIX's --dir= infix env."
+  "Invoke BASE under PREFIX's --dir= infix env.
+
+Rebinds `current-prefix-arg' from `transient-scope' so a prefix arg
+supplied when entering the transient reaches BASE through
+`call-interactively'."
   (let* ((args (transient-args prefix))
-         (dir  (transient-arg-value "--dir=" args)))
+         (dir  (transient-arg-value "--dir=" args))
+         (current-prefix-arg (transient-scope)))
     (fzfa-transient--with-dir dir (lambda () (call-interactively base)))))
 
 (defun fzfa-transient--vcs-cmd (op args)
@@ -110,10 +131,15 @@ which dispatches via `fzfa-vc-*' (uses `vc-responsible-backend')."
     sym))
 
 (defun fzfa-transient--vcs-invoke (op)
-  "Invoke the VCS command for OP under --backend= / --dir= infixes."
+  "Invoke the VCS command for OP under --backend= / --dir= infixes.
+
+Rebinds `current-prefix-arg' from `transient-scope' so a prefix arg
+supplied when entering the transient reaches the target command
+through `call-interactively'."
   (let* ((args (transient-args 'fzfa-transient-vcs--def))
          (cmd  (fzfa-transient--vcs-cmd op args))
-         (dir  (transient-arg-value "--dir=" args)))
+         (dir  (transient-arg-value "--dir=" args))
+         (current-prefix-arg (transient-scope)))
     (fzfa-transient--with-dir dir (lambda () (call-interactively cmd)))))
 
 (defmacro fzfa-transient--def-dispatch (name base prefix)
