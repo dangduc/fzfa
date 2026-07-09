@@ -27,6 +27,10 @@
 ;;   `fzfa-org-todo'         Jump to a TODO-state heading in agenda files
 ;;   `fzfa-org-tags-view'    Pick a tag, then pick an entry with that tag
 ;;   `fzfa-org-insert-link'  Pick a heading; insert an org-link at point
+;;   `fzfa-org-grep'         Grep `.org' content across `fzfa-org-directories'
+;;   `fzfa-org-files'        Find `.org' files across `fzfa-org-directories'
+;;   `fzfa-org-mdfind-files' Find `.org' files via macOS Spotlight (mdfind)
+;;   `fzfa-org-mdfind-grep'  Grep across `.org' files discovered via mdfind
 ;;   `fzfa-org-any'          Multi-source over `fzfa-org-any-commands'
 
 ;;; Code:
@@ -36,6 +40,7 @@
 (eval-when-compile (require 'subr-x))   ; `when-let*' macro expansion only
 
 (defvar org-done-keywords)
+(defvar org-directory)
 
 (declare-function org-map-entries "org"
                   (func &optional match scope &rest skip))
@@ -47,18 +52,105 @@
 (declare-function org-agenda-files "org" (&optional unrestricted archives))
 (declare-function org-fold-show-context "org-fold" (&optional key))
 
+(defcustom fzfa-org-directories nil
+  "Directories `fzfa-org-grep' and `fzfa-org-files' search.
+
+Each entry is expanded and shell-quoted, then appended after the
+base command produced by `fzfa-org-grep-command-function' or
+`fzfa-org-files-command-function'.  When nil, falls back to a
+one-element list containing `org-directory'."
+  :type '(repeat directory)
+  :group 'fzfa)
+
+(defcustom fzfa-org-grep-command-function
+  (lambda ()
+    (cond
+     ((executable-find "rg")
+      (format
+       "rg --line-number --no-heading --with-filename -g '*.org' %s ''"
+       (fzfa--max-columns-flag 'rg)))
+     ((executable-find "ag")
+      (format
+       "ag --nocolor --nogroup --line-number -G '\\.org$' %s \".\""
+       (fzfa--max-columns-flag 'ag)))
+     ((executable-find "ugrep")
+      (format "ugrep -RIn --no-heading --include='*.org' %s ''"
+              (fzfa--max-columns-flag 'ugrep)))
+     (t "grep -Rn --include='*.org' ''")))
+  "Function returning the base grep command for `fzfa-org-grep'.
+
+Called with no args; must return a shell command string that streams
+FILE:LINE:CONTENT when appended with one or more shell-quoted
+directory paths.  Called at command time so `executable-find' picks
+up whichever backend is installed today, not at load."
+  :type 'function
+  :group 'fzfa)
+
+(defcustom fzfa-org-files-command-function
+  (lambda ()
+    (cond
+     ((executable-find "rg") "rg --files -g '*.org'")
+     ((executable-find "fd") "fd --type f --extension org --color=never .")
+     ((executable-find "ag") "ag -g '\\.org$'")
+     (t (user-error
+         (concat "No `rg', `fd', or `ag' found; "
+                 "customize `fzfa-org-files-command-function'")))))
+  "Function returning the base find-files command for `fzfa-org-files'.
+
+Called with no args; must return a shell command string that emits
+one file path per line when appended with one or more shell-quoted
+directory paths.  Called at command time so `executable-find' picks
+up whichever backend is installed today, not at load.
+
+`find' is not tried by default because it wants paths BEFORE
+predicates; users who need it can substitute a lambda that
+composes the paths in the correct position."
+  :type 'function
+  :group 'fzfa)
+
+(defcustom fzfa-org-mdfind-directories nil
+  "Directories `fzfa-org-mdfind-files' scopes via `mdfind -onlyin'.
+
+Nil (the default) searches the whole Spotlight index.  Distinct from
+`fzfa-org-directories' because the Spotlight command is most useful
+when it can see files OUTSIDE the user's known org roots — that's the
+whole point of running it instead of `fzfa-org-files'."
+  :type '(repeat directory)
+  :group 'fzfa)
+
+(defcustom fzfa-org-mdfind-query "kMDItemFSName == \"*.org\"c"
+  "Spotlight query used by `fzfa-org-mdfind-files'.
+
+Default matches any file whose name ends in `.org' (case-insensitive
+via the trailing `c' flag).  Passed verbatim to `mdfind' — the caller
+shell-quotes it."
+  :type 'string
+  :group 'fzfa)
+
 (defcustom fzfa-org-any-commands
-  '(fzfa-org-heading
-    fzfa-org-heading-all
-    fzfa-org-agenda
-    fzfa-org-todo)
+  (append
+   '(fzfa-org-heading
+     fzfa-org-heading-all
+     fzfa-org-agenda
+     fzfa-org-todo)
+   (if (eq system-type 'darwin)
+       '(fzfa-org-mdfind-files
+         fzfa-org-mdfind-grep)
+     '(fzfa-org-files
+       fzfa-org-grep)))
   "Commands shown by the multi-source `fzfa-org-any'.
 
-Each entry must be an interactive command that funnels through
-`fzfa-org--read'.  Two-step commands (`fzfa-org-tags-view') and
-non-jump commands (`fzfa-org-insert-link') are deliberately
-excluded — they don't compose cleanly under the jump-oriented
-multi flow."
+Each entry must be a jump-oriented interactive command that reaches
+`fzfa-completing-read' — either via `fzfa-org--read' (heading pickers)
+or via a `:command' shell source (`fzfa-org-grep', `fzfa-org-files',
+`fzfa-org-mdfind-files', `fzfa-org-mdfind-grep').  Two-step commands
+\(`fzfa-org-tags-view') and non-jump commands (`fzfa-org-insert-link')
+are deliberately excluded — they don't compose cleanly under the
+jump-oriented multi flow.
+
+The default picks Spotlight-backed sources on macOS (system-wide,
+indexed, near-instant) and directory-walking sources everywhere else.
+Users can override to include both flavors."
   :type '(repeat function)
   :group 'fzfa)
 
@@ -301,6 +393,126 @@ when the source has a file, `*HEADING' otherwise."
     (fzfa-org--read (fzfa-org--collect bufs)
                     "org-insert-link: "
                     #'fzfa-org--insert-link)))
+
+(defun fzfa-org--directories ()
+  "Return the effective directory list for `fzfa-org-grep'/`fzfa-org-files'.
+
+`fzfa-org-directories' when non-nil; otherwise `org' is loaded so
+`org-directory' is bound, and its value is returned as a one-element
+list.  Signals when neither is set."
+  (or fzfa-org-directories
+      (progn (require 'org)
+             (and (bound-and-true-p org-directory)
+                  (list org-directory)))
+      (user-error
+       "Set `fzfa-org-directories' or `org-directory'")))
+
+(defun fzfa-org--append-dirs (base dirs)
+  "Return BASE followed by shell-quoted, tilde-expanded DIRS.
+
+`expand-file-name' runs before `shell-quote-argument' — single-quoted
+`~/org' is NOT tilde-expanded by the shell, so the subprocess would
+otherwise receive a literal `~/org'."
+  (concat base " "
+          (mapconcat (lambda (d)
+                       (shell-quote-argument (expand-file-name d)))
+                     dirs " ")))
+
+;;;###autoload
+(defun fzfa-org-grep ()
+  "Grep across `fzfa-org-directories' for `.org' content.
+
+Base command comes from `fzfa-org-grep-command-function' (picks the
+first available of rg/ag/ugrep/grep and applies an `.org' glob
+filter); directories are shell-quoted and appended.  Output is
+FILE:LINE:CONTENT; selecting a candidate opens the file at that line."
+  (interactive)
+  (let ((cmd (fzfa-org--append-dirs
+              (funcall fzfa-org-grep-command-function)
+              (fzfa-org--directories))))
+    (when-let* ((r (fzfa-completing-read
+                    :command cmd
+                    :category 'fzfa-grep
+                    :group #'fzfa--grep-group)))
+      (fzfa-visit-grep r))))
+
+;;;###autoload
+(defun fzfa-org-files ()
+  "Find `.org' files across `fzfa-org-directories'.
+
+Base command comes from `fzfa-org-files-command-function' (picks the
+first available of rg/fd/ag in files-only mode with an `.org' filter);
+directories are shell-quoted and appended.  Selecting a candidate opens
+the file."
+  (interactive)
+  (let ((cmd (fzfa-org--append-dirs
+              (funcall fzfa-org-files-command-function)
+              (fzfa-org--directories))))
+    (when-let* ((r (fzfa-completing-read
+                    :command cmd
+                    :prompt "org-files: ")))
+      (fzfa-visit-file r))))
+
+(defun fzfa-org--mdfind-command ()
+  "Return the shell command string that streams `.org' paths via `mdfind'.
+
+Chains one `mdfind -onlyin' per `fzfa-org-mdfind-directories', joined
+with `;', or a single unrestricted `mdfind' when the list is nil."
+  (let ((query (shell-quote-argument fzfa-org-mdfind-query)))
+    (if fzfa-org-mdfind-directories
+        (mapconcat
+         (lambda (dir)
+           (format "mdfind -onlyin %s %s"
+                   (shell-quote-argument (expand-file-name dir))
+                   query))
+         fzfa-org-mdfind-directories
+         "; ")
+      (concat "mdfind " query))))
+
+;;;###autoload
+(defun fzfa-org-mdfind-files ()
+  "Find `.org' files via macOS Spotlight (`mdfind').
+
+Query comes from `fzfa-org-mdfind-query'.  When
+`fzfa-org-mdfind-directories' is non-nil, one `mdfind -onlyin' call is
+chained per directory; otherwise the whole Spotlight index is searched.
+
+Non-macOS systems have no `mdfind' — the executable check inside
+`fzfa-completing-read' surfaces that as a `user-error'."
+  (interactive)
+  (when-let* ((r (fzfa-completing-read
+                  :command (fzfa-org--mdfind-command)
+                  :prompt "org-mdfind: ")))
+    (fzfa-visit-file r)))
+
+;;;###autoload
+(defun fzfa-org-mdfind-grep ()
+  "Grep across `.org' files discovered via macOS Spotlight (`mdfind').
+
+Pipeline: `mdfind' produces the `.org' file list; `tr' NUL-terminates
+each path so filenames containing spaces or newlines survive; `xargs
+-0' hands the batch to the base grep command produced by
+`fzfa-org-grep-command-function'.  macOS `xargs' does not invoke the
+utility on empty input, so an empty mdfind result yields an empty
+candidate list rather than a hung `rg' waiting on stdin.
+
+The base grep's `-g '*.org'' filter still applies harmlessly — every
+mdfind hit already has that extension."
+  (interactive)
+  (let ((cmd (format "{ %s; } | tr '\\n' '\\0' | xargs -0 %s"
+                     (fzfa-org--mdfind-command)
+                     (funcall fzfa-org-grep-command-function))))
+    (when-let* ((r (fzfa-completing-read
+                    :command cmd
+                    :prompt "org-mdfind-grep: "
+                    :category 'fzfa-grep
+                    :group #'fzfa--grep-group
+                    ;; First token of the pipeline is `{', not a real
+                    ;; executable.  `mdfind' failures (e.g. off macOS)
+                    ;; surface as empty output, which `xargs' handles
+                    ;; by not invoking the grep tool.
+                    :skip-executable-check t)))
+      (fzfa-visit-grep r))))
 
 ;;;###autoload
 (defun fzfa-org-any ()

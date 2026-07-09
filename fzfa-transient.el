@@ -330,8 +330,12 @@ through `call-interactively'."
        ("H"   "Heading (All)" fzfa-org-heading-all)
        ("a"   "Agenda"        fzfa-org-agenda)
        ("t"   "Todo"          fzfa-org-todo)
+       ("f"   "Files"         fzfa-org-files)
        ("g"   "Tags View"     fzfa-org-tags-view)
+       ("G"   "Grep"          fzfa-org-grep)
        ("l"   "Insert Link"   fzfa-org-insert-link)
+       ("m"   "Files (mdfind)" fzfa-org-mdfind-files)
+       ("M"   "Grep (mdfind)"  fzfa-org-mdfind-grep)
        ("SPC" "Org Any"       fzfa-org-any)])
 
 (setq fzfa-transient---mail
