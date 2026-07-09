@@ -4,8 +4,7 @@
 [[https://github.com/jojojames/fzfa/actions/workflows/test.yaml][https://github.com/jojojames/fzfa/actions/workflows/test.yaml/badge.svg]]
 [[https://melpa.org/#/fzfa][file:https://melpa.org/packages/fzfa-badge.svg]]
 
-[[./screenshots/fzfa.png]]
-#+HTML: <video src="https://github.com/user-attachments/assets/383a2f07-6778-4e4e-89c8-68c540d8b404" controls style="max-width: 100%; height: auto;"></video>
+#+HTML: <img src="./screenshots/demo.webp" alt="fzfa demo" />
 
 This package provides async fuzzy completion for Emacs backed by
 [[https://github.com/dangduc/fzf-native][fzf-native]].
@@ -544,7 +543,7 @@ Duplicate explicit keys signal an error at session start so
 collisions surface loudly instead of silently shadowing.
 
 Demo below:
-#+HTML: <video src="https://github.com/user-attachments/assets/1f198d53-eabb-4149-bde4-33823d7e325e" controls style="max-width: 100%; height: auto;"></video>
+#+HTML: <img src="./screenshots/narrow.webp" alt="narrowing demo" />
 
 *** Mixing async and sync sources with ~fzfa-multi-read~
 
@@ -731,7 +730,7 @@ Comparison demo below (first is ~consult-ripgrep~, second is
 ~fzfa-rg~ with the ~>~ key revealing the underlying command, using
 ~fussy~ as the ~completion-style~.):
 
-#+HTML: <video src="https://github.com/user-attachments/assets/d6580b1b-13ee-40df-8626-f8ed4ac2ecd8" controls style="max-width: 100%; height: auto;"></video>
+#+HTML: <img src="./screenshots/rg-comparison.webp" alt="rg comparison" />
 
 * Smart dispatch
 
@@ -935,7 +934,7 @@ sessions.  Each completion group renders as its own vertical column instead
 of ~vertico~'s default stacked layout, which keeps every source visible at a
 glance and removes the need to scroll past one group to reach another.
 
-#+HTML: <video src="https://github.com/user-attachments/assets/0451785f-4b68-4e23-9370-88d65f4a4039" controls style="max-width: 100%; height: auto;"></video>
+#+HTML: <img src="./screenshots/vertico-columns.webp" alt="vertico columns" />
 
 When the number of groups exceeds ~fzfa-vertico-columns-max~ (3 by
 default), the overflow groups wrap into additional bands stacked below.
@@ -1005,7 +1004,7 @@ file alone is a no-op; ~fzfa-ivy-setup~ — called from ~fzfa-setup~
 display-transformer registration kicks in only when ~ivy~ itself is
 actually loaded.
 
-#+HTML: <video src="https://github.com/user-attachments/assets/c10e3407-b59e-41be-b1ce-3164064b5aed" controls style="max-width: 100%; height: auto;"></video>
+#+HTML: <img src="./screenshots/ivy.webp" alt="ivy transformer" />
 
 The ~fzfa~ entry points share their main code path with the
 other completing-read frontends, with ivy-specific bypass + push
@@ -1103,7 +1102,7 @@ Helm support lives in ~fzfa-helm.el~, loaded as part of
 ~fzfa.el~'s dispatch sites pick up the ~helm~ entry points via ~fboundp~,
 gated on ~helm-mode~ — no extra registration step.
 
-#+HTML: <video src="https://github.com/user-attachments/assets/856a2ed4-82a0-406b-a43b-ebbeb6c90ca4" controls style="max-width: 100%; height: auto;"></video>
+#+HTML: <img src="./screenshots/helm.webp" alt="helm dispatch" />
 
 When ~helm-mode~ is active, each ~fzfa~ entry point dispatches through
 a handler that bypasses ~completing-read~ entirely and runs
