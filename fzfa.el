@@ -1030,7 +1030,8 @@ when `fzfa-preview-key' is nil."
 (defcustom fzfa-preview-file-size-limit (* 10 1024 1024)
   "Maximum file size in bytes that `fzfa--file-preview' will open.
 
-Files larger than this are skipped (no preview) to keep selection
+Files larger than this fall back to a size-readout placeholder
+(`fzfa--file-preview-too-large') instead of loading — keeps selection
 movement snappy even when the cursor lands on multi-megabyte binaries.
 Set to nil to remove the cap (not recommended for large repositories).
 Set to 0 to disable file preview entirely without dropping the
@@ -1482,23 +1483,59 @@ though variable `delay-mode-hooks' suppresses `global-font-lock-mode'."
   "Initialize a fresh `fzfa--temporary-files' opener for this session."
   (fzfa-preview-put :opener (fzfa--temporary-files)))
 
+(defvar fzfa--file-preview-too-large-buffer " *fzfa-preview-too-large*"
+  "Name of the shared buffer used to render the \"file too large\" placeholder.")
+
+(defun fzfa--file-preview-too-large (path size)
+  "Return a shared placeholder buffer describing PATH being SIZE bytes.
+
+Overwritten on every hover so the buffer content always matches the
+current candidate — since preview buffers are per-buffer inside
+`posframe' etc., the reused buffer works whether the previous preview
+was another oversized candidate or a normal file."
+  (let ((buf (get-buffer-create fzfa--file-preview-too-large-buffer)))
+    (with-current-buffer buf
+      (setq-local buffer-read-only nil)
+      (erase-buffer)
+      (insert
+       (propertize "File too large for preview\n\n"
+                   'face 'warning)
+       "Path:  " path "\n"
+       "Size:  " (file-size-human-readable size) "\n"
+       "Limit: " (file-size-human-readable fzfa-preview-file-size-limit)
+       "\n\nAdjust `fzfa-preview-file-size-limit' to raise the threshold, "
+       "or press RET to open the file.")
+      (goto-char (point-min))
+      (setq-local buffer-read-only t))
+    buf))
+
 (defun fzfa--file-preview (cand)
   "Open CAND (a file or directory path) for preview.
 
-Regular files are gated by `fzfa-preview-file-size-limit'.  Directories
-are always previewed — `find-file-noselect' dispatches to `dired-mode',
-so the preview buffer is a dired listing of the directory."
+Regular files are gated by `fzfa-preview-file-size-limit'.  Files that
+exceed the limit fall back to a small placeholder buffer describing
+the size — useful signal instead of a silently stale preview from the
+previous candidate.  Directories are always previewed via `dired-mode'
+(from `find-file-noselect')."
   (when (and cand fzfa-preview-file-size-limit
              (> fzfa-preview-file-size-limit 0))
     (let ((path (expand-file-name cand)))
-      (when-let* (((file-readable-p path))
-                  ((or (file-directory-p path)
-                       (when-let* ((attrs (file-attributes path))
-                                   (size (file-attribute-size attrs)))
-                         (< size fzfa-preview-file-size-limit))))
-                  (opener (fzfa-preview-get :opener))
-                  (buf (funcall opener path)))
-        (fzfa-preview-show buf)))))
+      (when (file-readable-p path)
+        (cond
+         ((file-directory-p path)
+          (when-let* ((opener (fzfa-preview-get :opener))
+                      (buf (funcall opener path)))
+            (fzfa-preview-show buf)))
+         (t
+          (let* ((size (file-attribute-size (file-attributes path))))
+            (cond
+             ((and size (< size fzfa-preview-file-size-limit))
+              (when-let* ((opener (fzfa-preview-get :opener))
+                          (buf (funcall opener path)))
+                (fzfa-preview-show buf)))
+             (size
+              (fzfa-preview-show
+               (fzfa--file-preview-too-large path size)))))))))))
 
 (defun fzfa--file-preview-return (cand)
   "Promote CAND's buffer (if accepted) and kill the remaining ephemerals.
