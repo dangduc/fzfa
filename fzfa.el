@@ -1027,7 +1027,7 @@ when `fzfa-preview-key' is nil."
 ;; state that :setup stashed even though the minibuffer is gone.
 ;; Only :preview is required.
 
-(defcustom fzfa-preview-file-size-limit (* 1 1024 1024)
+(defcustom fzfa-preview-file-size-limit (* 10 1024 1024)
   "Maximum file size in bytes that `fzfa--file-preview' will open.
 
 Files larger than this are skipped (no preview) to keep selection
