@@ -39,8 +39,11 @@
 
 (require 'fzfa)
 
-(declare-function posframe-show "posframe"
-                  (buffer-or-name &rest args))
+;; `posframe-show' is a `cl-defun' with a long `&key ... &allow-other-keys'
+;; arglist that `check-declare' cannot match against our forward declaration.
+;; Pass `t' as the arglist to skip argument-shape validation while still
+;; letting `check-declare' verify the function lives in `posframe.el'.
+(declare-function posframe-show "posframe" t t)
 (declare-function posframe-hide "posframe" (buffer-or-name))
 (declare-function posframe-delete-frame "posframe" (buffer-or-name))
 (declare-function image-transform-fit-to-window "image-mode" ())

@@ -23,6 +23,8 @@ EVIL_DIR ?= ../evil
 HELM_DIR ?= ../helm
 MAGIT_DIR ?= ../magit/lisp
 PASSWORD_STORE_DIR ?= ../password-store/contrib/emacs
+POSFRAME_DIR ?= ../posframe
+IVY_POSFRAME_DIR ?= ../ivy-posframe
 # notmuch's upstream lives at git.notmuchmail.org, not GitHub.  The
 # strict `check-declare' target uses its read-only GitHub mirror; the
 # local target defaults to Homebrew's site-lisp path (override
@@ -87,6 +89,7 @@ check-declare:
 	  -L $(VERTICO_DIR) -L $(VERTICO_DIR)/extensions \
 	  -L $(COMPANY_DIR) -L $(EMBARK_DIR) -L $(EVIL_DIR) -L $(HELM_DIR) \
 	  -L $(MAGIT_DIR) -L $(PASSWORD_STORE_DIR) -L $(NOTMUCH_DIR) \
+	  -L $(POSFRAME_DIR) -L $(IVY_POSFRAME_DIR) \
 	  --eval "(require 'check-declare)" \
 	  --eval "(let (failed) \
 	             (dolist (f (directory-files \".\" nil \"^fzfa.*\\\\.el$$\")) \
