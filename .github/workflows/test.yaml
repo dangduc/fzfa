@@ -97,6 +97,21 @@ jobs:
           repository: zx2c4/password-store
           path: password-store
 
+      # posframe and ivy-posframe are optional deps for the telescope-style
+      # layout in fzfa-posframe.el.  Same as the others: only used by
+      # `make check-declare' to verify our forward declarations.  Path
+      # names match the Makefile defaults (POSFRAME_DIR=../posframe,
+      # IVY_POSFRAME_DIR=../ivy-posframe).
+      - uses: actions/checkout@v4
+        with:
+          repository: tumashu/posframe
+          path: posframe
+
+      - uses: actions/checkout@v4
+        with:
+          repository: tumashu/ivy-posframe
+          path: ivy-posframe
+
       - uses: jcs090218/setup-emacs@master
         with:
           version: ${{ matrix.emacs-version }}
