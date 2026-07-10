@@ -1055,6 +1055,75 @@ during preview, which would prompt for a passphrase."
   (and path (seq-find (lambda (re) (string-match-p re path))
                       fzfa-preview-excluded-files)))
 
+(defcustom fzfa-preview-suppressed-functions
+  '(;; Language servers — spawn subprocess and start network / stdio traffic.
+    eglot-ensure
+    eglot--maybe-activate-editing-mode
+    lsp
+    lsp-deferred
+    lsp-mode
+    ;; Syntax checkers — start background processes.
+    flycheck-mode
+    global-flycheck-mode
+    flymake-mode
+    flymake-mode-on
+    flymake-start
+    ;; Debuggers.
+    dap-mode
+    ;; VCS overlays / integration — probe git repository each open.
+    git-gutter-mode
+    git-gutter+-mode
+    diff-hl-mode
+    diff-hl-flydiff-mode
+    diff-hl-dired-mode
+    magit-file-mode
+    magit-blob-mode
+    ;; VCS state refresh (vc-mode-line + git status).  The prefix-based
+    ;; filter in `fzfa--filter-find-file-hook' catches the auto-generated
+    ;; `vc-refresh-<mode>' entries; this one covers the top-level function.
+    vc-refresh-state
+    ;; Session-tracking pollution — recentf logs every previewed file.
+    recentf-track-opened-file
+    ;; File watchers / periodic subprocess wake-ups.
+    auto-revert-mode
+    auto-revert-tail-mode
+    global-auto-revert-mode
+    ;; Snippet system — may load a large template set on activation.
+    yas-minor-mode
+    yas-global-mode)
+  "Functions filtered out of every hook while a preview buffer loads.
+
+Preview buffers open under `fzfa-with-quiet-find-file', which installs
+an `:around' advice on `run-hooks' that shims each hook variable's
+value with `cl-progv' — any function in this list is removed from a
+hook's value before the hook dispatches, so it never fires in preview.
+
+Filtering is by exact symbol match on hook contents.  For the
+`vc-refresh-<mode>' family of functions that helm's `find-file-hook'
+auto-generates, `fzfa--filter-find-file-hook' applies a separate
+prefix-based filter."
+  :type '(repeat (symbol :tag "Function"))
+  :group 'fzfa)
+
+(defun fzfa--filter-suppressed-hooks (orig-fn &rest hooks)
+  "Around advice for `run-hooks': drop `fzfa-preview-suppressed-functions'.
+
+Rebinds each named hook variable to a filtered copy for the duration
+of the underlying `run-hooks' call, via `cl-progv' so the technique
+works for arbitrary hook symbols without hard-coding them."
+  (let ((filtered
+         (mapcar
+          (lambda (h)
+            (if (boundp h)
+                (cl-remove-if
+                 (lambda (fn)
+                   (memq fn fzfa-preview-suppressed-functions))
+                 (symbol-value h))
+              nil))
+          hooks)))
+    (cl-progv hooks filtered
+      (apply orig-fn hooks))))
+
 (defcustom fzfa-preview-functions
   '((fzfa-buffer   :preview fzfa--buffer-preview)
     (fzfa-file     :setup   fzfa--file-preview-setup
@@ -1225,8 +1294,32 @@ see the same filtered list."
         (apply orig hooks))
     (apply orig hooks)))
 
+(defvar fzfa-loading-preview nil
+  "Non-nil while a preview buffer is being loaded by fzfa.
+
+Bound to `t' by `fzfa-with-quiet-find-file' around its body.  User
+hooks can consult this to conditionalize behaviour on whether the
+current mode-setup / find-file dispatch is happening for a preview
+buffer or a real user visit:
+
+  ;; Skip an expensive feature in preview:
+  (add-hook \\='dired-mode-hook
+            (lambda ()
+              (unless fzfa-loading-preview
+                (media-thumbnail-dired-mode))))
+
+  ;; Or, only run something in preview:
+  (add-hook \\='prog-mode-hook
+            (lambda ()
+              (when fzfa-loading-preview
+                (setq-local truncate-lines t))))
+
+Dynamic, not buffer-local — the binding is unwound when
+`fzfa-with-quiet-find-file' returns, so nothing observed later can be
+confused about whether a buffer is \"still\" a preview.")
+
 (defmacro fzfa-with-quiet-find-file (&rest body)
-  "Run BODY with file-loading prompt activity and `vc-refresh-*' hooks suppressed.
+  "Run BODY with file-loading noise and preview-hostile hooks suppressed.
 
 `find-file-noselect' can trigger minibuffer prompts via file-local
 variables, `find-file-hook', or warnings — inside an active completion
@@ -1234,23 +1327,27 @@ those signal \"Command attempted to use minibuffer while in minibuffer\".
 Custom `:preview' handlers that load files should wrap the call in this
 macro.
 
-Variable `delay-mode-hooks' is bound so user-extension mode hooks (e.g.
-`eglot-ensure' on `prog-mode-hook') don't spawn LSP servers during
-preview.  Major mode structural setup still happens.
+`fzfa-loading-preview' is dynamically bound to `t' around BODY so user
+hooks can detect the preview context (see its docstring).
 
-`run-hooks' is advised to drop any `vc-refresh-*' symbol from
-`find-file-hook' while BODY runs.  Advice is installed and removed
-under `unwind-protect' so a non-local exit can't strand the filter."
+Mode hooks run normally; costly / stateful entries are filtered by
+`fzfa--filter-suppressed-hooks' against `fzfa-preview-suppressed-functions'.
+`fzfa--filter-find-file-hook' additionally strips `vc-refresh-*'
+entries from `find-file-hook' via prefix match.  Both advices are
+installed and removed under `unwind-protect' so a non-local exit can't
+strand them."
   (declare (indent 0) (debug t))
   `(let ((enable-local-variables :safe)
          (enable-local-eval nil)
          (enable-dir-local-variables nil)
          (non-essential t)
          (inhibit-message t)
-         (delay-mode-hooks t))
+         (fzfa-loading-preview t))
      (advice-add 'run-hooks :around #'fzfa--filter-find-file-hook)
+     (advice-add 'run-hooks :around #'fzfa--filter-suppressed-hooks)
      (unwind-protect
          (progn ,@body)
+       (advice-remove 'run-hooks #'fzfa--filter-suppressed-hooks)
        (advice-remove 'run-hooks #'fzfa--filter-find-file-hook))))
 
 (defun fzfa--disassociate (buf)
