@@ -287,6 +287,7 @@ Read at session start; changing it does not affect running sessions."
     (notmuch   . "notmuch mail search")
     (org       . "Org-mode headings")
     (pass      . "password-store (pass)")
+    (posframe  . "Posframe preview pane")
     (project   . "project.el")
     (regexp    . "Regexp (buffer-line picker)")
     (replay    . "Persisted replay")
