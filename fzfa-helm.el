@@ -139,6 +139,31 @@ inside the action."
 
 (defvar helm--execute-persistent-action-timer)
 
+(defvar fzfa-helm--suppressing-snap nil
+  "Dynamically bound to t while fzfa's own snap-to-top runs.
+
+`helm-beginning-of-buffer' fires `helm-move-selection-after-hook' —
+the same hook fzfa uses to detect user navigation.  Binding this flag
+around our snap lets the marker distinguish our own move from a real
+user command.")
+
+(defvar fzfa-helm--user-nav-commands
+  '(helm-next-line
+    helm-previous-line
+    helm-next-page
+    helm-previous-page
+    helm-next-source
+    helm-previous-source
+    helm-beginning-of-buffer
+    helm-end-of-buffer)
+  "Commands that count as user navigation for snap-until-user-moves.
+
+`helm-move-selection-after-hook' fires from many contexts — helm's own
+`helm--update-move-first-line' during every update, the initial dispatch
+of the entry command (e.g. `fzfa-find-any'), etc.  Marking `user-moved'
+only when `this-command' matches one of these explicit navigation
+commands avoids treating those internal fires as user intent.")
+
 (defun fzfa-helm--cancel-stranded-follow-timer ()
   "Cancel helm's global `follow-mode' idle timer if still scheduled.
 
@@ -167,6 +192,15 @@ before the idle delay elapses -> timer fires post-cleanup ->
 (declare-function helm-make-source "helm-source")
 (declare-function helm-force-update "helm-core")
 (declare-function helm-goto-source "helm-core")
+(declare-function helm-beginning-of-buffer "helm-core" ())
+(declare-function helm-empty-buffer-p "helm-core" (&optional buffer))
+(declare-function helm-window "helm-lib" ())
+(declare-function helm-mark-current-line "helm-core"
+                  (&optional resumep nomouse))
+(declare-function helm-buffer-get "helm-lib" ())
+(declare-function helm-get-selection "helm-core"
+                  (&optional buffer force-display-part source))
+(defvar helm-pattern)
 (declare-function helm-set-source-filter "helm-core")
 (declare-function helm-get-selection "helm-core")
 (declare-function helm-execute-persistent-action "helm-core")
@@ -1339,7 +1373,82 @@ for fuzzy-multi-source UX."
                           best-i i)))
                 (when (and best-i (not (eql best-i last-leader)))
                   (setq last-leader best-i)
-                  (helm-goto-source (aref source-names best-i))))))))
+                  (helm-goto-source (aref source-names best-i)))))))
+         ;; Snap-to-top-until-user-moves.  Fires on `helm-after-update-hook'
+         ;; so it covers both the `:command' path (poll-timer refreshes)
+         ;; and the `:candidates' path (async callback → helm-force-update).
+         (user-moved nil)
+         (move-marker
+          (lambda ()
+            ;; Mark user-moved ONLY when this-command is a known helm
+            ;; navigation command.  Excludes:
+            ;;   - our own snap (suppress=t),
+            ;;   - helm's internal `helm--update-move-first-line' (this-cmd=nil),
+            ;;   - the entry command that invoked fzfa (e.g. `fzfa-find-any'),
+            ;;   - typing / self-insert-command (changes pattern, not selection),
+            ;;   - unknown commands (safer to keep snapping than stop early).
+            (when (and (not fzfa-helm--suppressing-snap)
+                       (memq this-command fzfa-helm--user-nav-commands))
+              (setq user-moved t))))
+         (snap-fn
+          (lambda ()
+            (unless user-moved
+              ;; `helm-after-update-hook' fires INSIDE `helm-update' — but
+              ;; `helm-force-update' runs its own `(recenter nil)' AFTER
+              ;; `helm-update' returns (helm-core.el:5401), which recenters
+              ;; the cursor mid-window and undoes any snap we do here.
+              ;; Defer the snap via `run-at-time 0' so it fires on the next
+              ;; event-loop tick, after helm's recenter has already run.
+              ;;
+              ;; Empty pattern: buffer top (first candidate of first source).
+              ;; Non-empty pattern in multi-source: leader (highest fzf-scored
+              ;; source), matching `jump-fn' — otherwise our snap would drag
+              ;; the cursor off the leader back to source 0.
+              (run-at-time
+               0 nil
+               (lambda ()
+                 (when-let* (((bound-and-true-p helm-alive-p))
+                             ((not user-moved))
+                             (win (helm-window))
+                             ((window-live-p win))
+                             ((not (helm-empty-buffer-p))))
+                   (let ((fzfa-helm--suppressing-snap t))
+                     (with-selected-window win
+                       (let* ((pat (bound-and-true-p helm-pattern))
+                              (multi-nonempty (and multi-p pat
+                                                   (not (string-empty-p pat))))
+                              (leader
+                               (when multi-nonempty
+                                 (let ((best-i nil) (best-r 0))
+                                   (dotimes (i n-sources)
+                                     (when-let* ((src (aref sources-v i))
+                                                 (r (fzfa-source-rank src))
+                                                 ((> r best-r)))
+                                       (setq best-r r best-i i)))
+                                   best-i))))
+                         (if leader
+                             (progn
+                               (helm-goto-source (aref source-names leader))
+                               ;; `helm-goto-source' lands on the source
+                               ;; HEADER (helm-core.el:6367).  The
+                               ;; skip-noncandidate logic in
+                               ;; `helm-move-selection-common-1' only
+                               ;; runs when direction is `next' /
+                               ;; `previous', not when direction is a
+                               ;; source name.  Advance past the header
+                               ;; ourselves and re-mark the candidate
+                               ;; line — this mirrors how
+                               ;; `helm-preselect' handles source jumps
+                               ;; (helm-core.el:6791-6792).
+                               (forward-line 1)
+                               (helm-mark-current-line))
+                           (helm-beginning-of-buffer))
+                         ;; `recenter 1' leaves row 0 for the source
+                         ;; header and puts the current line (first
+                         ;; candidate) on row 1 — otherwise the header
+                         ;; gets pushed off-screen and the user has to
+                         ;; scroll up to see which source they're on.
+                         (recenter 1)))))))))))
     ;; Single shared polling timer over all async handles.  Throttled to
     ;; one `helm-force-update' per `fzfa-input-throttle' to amortize the
     ;; cost of recomputing every source's `:candidates'.  Also skipped
@@ -1532,6 +1641,8 @@ for fuzzy-multi-source UX."
                                    restore-narrow)))))
           (add-hook 'helm-after-update-hook jump-fn)
           (add-hook 'helm-after-update-hook update-last-query)
+          (add-hook 'helm-after-update-hook snap-fn)
+          (add-hook 'helm-move-selection-after-hook move-marker)
           (when restore-narrow
             (add-hook 'helm-after-update-hook restore-narrow))
           (helm :sources helm-sources
@@ -1549,6 +1660,8 @@ for fuzzy-multi-source UX."
                 :buffer (if multi-p "*helm fzfa multi*" "*helm fzfa*")))
       (remove-hook 'helm-after-update-hook jump-fn)
       (remove-hook 'helm-after-update-hook update-last-query)
+      (remove-hook 'helm-after-update-hook snap-fn)
+      (remove-hook 'helm-move-selection-after-hook move-marker)
       (when restore-narrow
         (remove-hook 'helm-after-update-hook restore-narrow))
       ;; Snapshot for `fzfa-replay' BEFORE async producers stop —
