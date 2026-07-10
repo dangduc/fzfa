@@ -2897,10 +2897,23 @@ Lifecycle:
                  (dir (fzfa-preview-get :default-directory)))
              (dotimes (i n)
                (when-let* ((cell (aref cells i)))
-                 (let ((fzfa--preview-session cell))
+                 ;; Prefer this source's own `:directory' — that is the
+                 ;; search root the source's command ran under and the
+                 ;; base against which its candidate strings expand.
+                 ;; Falling back to the parent-session `dir'
+                 ;; (`fzfa--preview-install' captures ambient
+                 ;; `default-directory') is fine only when the two agree
+                 ;; — typical first invocation from a project root.
+                 ;; Once the user has visited a file into a different
+                 ;; directory and re-invokes fzfa, they diverge, and
+                 ;; every file-preview expansion silently fails
+                 ;; `file-readable-p'.
+                 (let* ((src (aref sources-v i))
+                        (src-dir (or (plist-get src :directory) dir))
+                        (fzfa--preview-session cell))
                    (fzfa-preview-put :origin-window    win)
                    (fzfa-preview-put :origin-buffer    buf)
-                   (fzfa-preview-put :default-directory dir)
+                   (fzfa-preview-put :default-directory src-dir)
                    (fzfa--preview-call :setup))))))
          :preview
          (lambda (cand)

@@ -1362,10 +1362,21 @@ for fuzzy-multi-source UX."
     (when any-preview
       (dotimes (i n-sources)
         (when-let* ((cell (aref preview-cells i)))
-          (let ((fzfa--preview-session cell))
+          (let ((fzfa--preview-session cell)
+                ;; Prefer the source's own `:directory' — that is the root
+                ;; the search command ran under and the base against which
+                ;; its candidate strings are expanded.  Falling back to the
+                ;; ambient `default-directory' works only when the two agree
+                ;; (typical first fzfa invocation from a project root); once
+                ;; the user has visited a file into a different directory
+                ;; and re-invokes fzfa, the two diverge and `:file-preview'
+                ;; expands candidates against the wrong base — every
+                ;; preview then fails `file-readable-p' and silently no-ops.
+                (src-dir (or (plist-get (nth i sources) :directory)
+                             default-directory)))
             (fzfa-preview-put :origin-window (selected-window))
             (fzfa-preview-put :origin-buffer (window-buffer (selected-window)))
-            (fzfa-preview-put :default-directory default-directory)
+            (fzfa-preview-put :default-directory src-dir)
             (fzfa--preview-call :setup)))))
     (unwind-protect
         (let* (;; Narrow-by-source: press `fzfa-multi-narrow-key',
