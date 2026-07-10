@@ -1385,15 +1385,19 @@ though variable `delay-mode-hooks' suppresses `global-font-lock-mode'."
   (fzfa-preview-put :opener (fzfa--temporary-files)))
 
 (defun fzfa--file-preview (cand)
-  "Open CAND (a file path) for preview, gated by size + readability."
+  "Open CAND (a file or directory path) for preview.
+
+Regular files are gated by `fzfa-preview-file-size-limit'.  Directories
+are always previewed — `find-file-noselect' dispatches to `dired-mode',
+so the preview buffer is a dired listing of the directory."
   (when (and cand fzfa-preview-file-size-limit
              (> fzfa-preview-file-size-limit 0))
     (let ((path (expand-file-name cand)))
       (when-let* (((file-readable-p path))
-                  ((not (file-directory-p path)))
-                  (attrs (file-attributes path))
-                  (size (file-attribute-size attrs))
-                  ((< size fzfa-preview-file-size-limit))
+                  ((or (file-directory-p path)
+                       (when-let* ((attrs (file-attributes path))
+                                   (size (file-attribute-size attrs)))
+                         (< size fzfa-preview-file-size-limit))))
                   (opener (fzfa-preview-get :opener))
                   (buf (funcall opener path)))
         (fzfa-preview-show buf)))))
