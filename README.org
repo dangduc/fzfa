@@ -1351,6 +1351,48 @@ whatever your frontend already uses for this concept:
 | ~ivy~ / ~counsel~       | ~C-M-m~ | ~ivy-call~ (~ivy~ default)                  |
 | ~helm~                | ~C-j~   | ~helm-execute-persistent-action~          |
 | ~vertico~ / ~icomplete~ | ~C-M-m~ | ~fzfa-apply-key~ (configurable defcustom) |
+
+** Telescope-style layout (~fzfa-posframe-mode~)
+Inspired by: [[https://github.com/nvim-telescope/telescope-fzf-native.nvim][telescope]]
+
+~posframe~ is required for this feature to work. Install separately. This feature
+isn't enabled by default so ~fzfa-posframe-mode~ needs to be called manually.
+
+#+BEGIN_SRC emacs-lisp
+;; fzfa-preview-delay is nil by default which disables automatic previews.
+(setq fzfa-preview-delay 0.25)
+(fzfa-posframe-mode 1)
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+;; By default posframe sets up the preview frame centered above.
+;; Set to side-by-side to get a telescope-esque layout.
+(setq fzfa-posframe-layout 'side-by-side)
+#+END_SRC
+
+~posframe~ works with ~vertico~, ~helm~, and ~ivy~.
+
+~ivy~ requires an additional package: [[https://github.com/tumashu/ivy-posframe][ivy-posframe]]
+
+*** Media thumbnails inside the preview
+We can view media thumbnails inside ~dired~ inside the preview like so:
+
+#+BEGIN_SRC emacs-lisp
+(use-package media-thumbnail
+  :diminish media-thumbnail-dired-mode
+  :ensure t
+  :commands (media-thumbnail-dired-mode)
+  :init
+  (add-hook 'dired-mode-hook
+            (lambda ()
+              (when (bound-and-true-p fzfa-loading-preview)
+                (media-thumbnail-dired-mode))))
+  :config
+  (setq media-thumbnail-image-width 300))
+#+END_SRC
+
+#+HTML: <img src="./screenshots/telescope.webp" alt="telescope-style layout" />
+
 * Customization
 
 | Variable                       | Default                  | Description                                                                   |
