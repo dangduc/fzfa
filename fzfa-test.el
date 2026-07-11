@@ -13,6 +13,7 @@
 
 (require 'ert)
 (require 'fzfa)
+(require 'fzfa-loader)
 (require 'fzfa-emacs)
 (require 'fzfa-hungry)
 (require 'fzfa-replay)
