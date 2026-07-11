@@ -69,6 +69,7 @@
 (defvar vertico-group-format)
 (defvar vertico-count)
 (defvar vertico--candidates)
+(defvar vertico--candidates-ov)
 (defvar vertico--metadata)
 (defvar vertico--index)
 (defvar vertico--input)
@@ -682,6 +683,17 @@ past its last item."
     (max 0 (min (max 0 (- n-items data-cap))
                 (- cur-row (1- data-cap))))))
 
+(defun fzfa-vertico--display-width ()
+  "Return the character width of the window that will render candidates.
+Prefers the `vertico--candidates-ov' overlay's `window' property — that
+is the window `vertico-buffer-mode' targets, and may live on a child
+frame (e.g. a posframe) that `vertico--window-width' does not visit
+because `get-buffer-window-list' defaults to the current frame only."
+  (or (and (overlayp vertico--candidates-ov)
+           (let ((w (overlay-get vertico--candidates-ov 'window)))
+             (and (window-live-p w) (window-width w))))
+      (vertico--window-width)))
+
 ;; The cl-defmethod can only be defined once `vertico--arrange-candidates'
 ;; exists as a generic, so defer registration until vertico loads.
 (with-eval-after-load 'vertico
@@ -746,7 +758,7 @@ qualifier; falls through to the default implementation otherwise."
              (band-offset (max 0 (min raw-offset (- nbands-total nbands))))
              (sep fzfa-vertico-columns-separator)
              (sepw (string-width sep))
-             (win-w (vertico--window-width))
+             (win-w (fzfa-vertico--display-width))
              (avail (max ncols (- win-w (* (max 0 (1- ncols)) sepw))))
              (col-w (max fzfa-vertico-columns-min-width
                          (if fzfa-vertico-columns-max-width

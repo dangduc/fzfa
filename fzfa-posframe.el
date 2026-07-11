@@ -50,6 +50,7 @@
 (declare-function vertico-multiform-mode "vertico-multiform" (&optional arg))
 (declare-function ivy-posframe-mode "ivy-posframe" (&optional arg))
 (declare-function ivy-posframe--display "ivy-posframe" (str &optional poshandler))
+(defvar fzfa-vertico-columns-max)
 
 (defvar fzfa-posframe-mode)
 (defvar vertico-buffer-display-action)
@@ -151,10 +152,12 @@ Nil (default) suppresses the header-line."
   "Completion categories that auto-enable `vertico-buffer-mode'.
 
 Consulted in `side-by-side' layout when the active frontend is vertico.
-Each symbol is pushed onto `vertico-multiform-categories' as
-\(CATEGORY `vertico-buffer-mode') so vertico renders inside a buffer
-during those completion sessions — that buffer is what fzfa routes into
-the left posframe."
+Each symbol is merged into `vertico-multiform-categories' so vertico
+renders inside a buffer during those completion sessions — that buffer
+is what fzfa routes into the left posframe.  When an entry for the
+category already exists (e.g. the columns-mode entry `fzfa-vertico'
+adds for `fzfa-multi'), `vertico-buffer-mode' is appended to it so
+both settings fire together."
   :type '(repeat symbol)
   :group 'fzfa)
 
@@ -565,14 +568,53 @@ sweep for the helm posframe lives in the mode-disable path."
 
 ;;; Frontend-specific routing
 
+(defun fzfa-posframe--multiform-merge (cat settings)
+  "Merge SETTINGS into CAT's entry on `vertico-multiform-categories'.
+
+Returns the ORIGINAL entry that existed for CAT (or nil if none did),
+so the caller can restore or delete it on uninstall.
+
+`vertico-multiform-categories' lookup is `seq-find'-based — first
+match wins — so a fresh entry for CAT that lands in front of an
+existing entry (e.g. the `fzfa-vertico-columns-mode' entry
+`fzfa-vertico-setup' `cl-pushnew's for `fzfa-multi') would mask it.
+This function collapses all entries for CAT into a single entry with
+the union of settings, then re-pushes that combined entry at the head
+of the list."
+  (let* ((matching (cl-remove-if-not (lambda (e) (eq (car e) cat))
+                                     vertico-multiform-categories))
+         (existing (car matching))
+         (existing-settings (mapcan (lambda (e) (copy-sequence (cdr e)))
+                                    matching))
+         (combined (cl-remove-duplicates
+                    (append existing-settings settings)
+                    :test #'equal :from-end t)))
+    (setq vertico-multiform-categories
+          (cons (cons cat combined)
+                (cl-remove-if (lambda (e) (eq (car e) cat))
+                              vertico-multiform-categories)))
+    existing))
+
+(defun fzfa-posframe--multiform-restore (cat original)
+  "Undo `fzfa-posframe--multiform-merge' for CAT with ORIGINAL entry.
+
+ORIGINAL is the entry that existed before the merge (or nil if we
+created the entry from scratch)."
+  (when (boundp 'vertico-multiform-categories)
+    (setq vertico-multiform-categories
+          (cl-remove-if (lambda (e) (eq (car e) cat))
+                        vertico-multiform-categories))
+    (when original
+      (push original vertico-multiform-categories))))
+
 (defun fzfa-posframe--install-vertico-routing ()
   "Wire vertico-buffer into the left posframe for fzfa completion categories.
 
-Requires `vertico-buffer' and `vertico-multiform'.  Pushes
-\(CATEGORY `vertico-buffer-mode') onto `vertico-multiform-categories'
-for each category in `fzfa-posframe-vertico-categories', turns
-`vertico-multiform-mode' on if it wasn't already, and rebinds
-`vertico-buffer-display-action' to the fzfa-supplied action."
+Requires `vertico-buffer' and `vertico-multiform'.  Merges
+`vertico-buffer-mode' into each `fzfa-posframe-vertico-categories'
+entry on `vertico-multiform-categories' (creating fresh entries when
+none exist), sets `vertico-buffer-display-action' to the fzfa-supplied
+action, and enables `vertico-multiform-mode' if it wasn't already."
   (cond
    ((not (require 'vertico-buffer nil t))
     (message "fzfa-posframe: `vertico-buffer' unavailable; \
@@ -586,11 +628,26 @@ side-by-side falls back to inline vertico"))
             (bound-and-true-p vertico-buffer-display-action)))
     (setq vertico-buffer-display-action
           '(fzfa-posframe--display-vertico-buffer))
+    (fzfa--ensure-setup)
     (dolist (cat fzfa-posframe-vertico-categories)
-      (let ((entry (list cat 'vertico-buffer-mode)))
-        (unless (member entry vertico-multiform-categories)
-          (push entry vertico-multiform-categories)
-          (push (cons cat entry)
+      (unless (assq cat fzfa-posframe--installed-vertico-categories)
+        (let* ((base '(vertico-buffer-mode))
+               ;; `fzfa-multi' additionally gets a column-max override:
+               ;; the columns default was tuned for the full-width
+               ;; minibuffer, so the narrower posframe produces cramped
+               ;; or cut-off bands.  Dropping the user's setting by one
+               ;; keeps the layout balanced across the smaller pane
+               ;; width — but only when the user has 3+ columns, so
+               ;; small values (2 or 1) pass through unchanged.
+               (settings
+                (if (and (eq cat 'fzfa-multi)
+                         (boundp 'fzfa-vertico-columns-max)
+                         (> fzfa-vertico-columns-max 2))
+                    (append base
+                            (list (cons 'fzfa-vertico-columns-max
+                                        (1- fzfa-vertico-columns-max))))
+                  base)))
+          (push (cons cat (fzfa-posframe--multiform-merge cat settings))
                 fzfa-posframe--installed-vertico-categories))))
     (unless (bound-and-true-p vertico-multiform-mode)
       (vertico-multiform-mode 1)
@@ -603,10 +660,8 @@ side-by-side falls back to inline vertico"))
           (or fzfa-posframe--saved-vertico-buffer-action
               '(display-buffer-use-least-recent-window))))
   (setq fzfa-posframe--saved-vertico-buffer-action nil)
-  (when (boundp 'vertico-multiform-categories)
-    (dolist (installed fzfa-posframe--installed-vertico-categories)
-      (setq vertico-multiform-categories
-            (delete (cdr installed) vertico-multiform-categories))))
+  (dolist (installed fzfa-posframe--installed-vertico-categories)
+    (fzfa-posframe--multiform-restore (car installed) (cdr installed)))
   (setq fzfa-posframe--installed-vertico-categories nil)
   (when (and fzfa-posframe--enabled-vertico-multiform
              (fboundp 'vertico-multiform-mode)
