@@ -1370,9 +1370,24 @@ isn't enabled by default so ~fzfa-posframe-mode~ needs to be called manually.
 (setq fzfa-posframe-layout 'side-by-side)
 #+END_SRC
 
-~posframe~ works with ~vertico~, ~helm~, and ~ivy~.
+~fzfa-posframe-mode~ works with ~vertico~, ~helm~, and ~ivy~.
 
 ~ivy~ requires an additional package: [[https://github.com/tumashu/ivy-posframe][ivy-posframe]]
+
+Example configuration;
+
+#+begin_src emacs-lisp :tangle yes
+(use-package fzfa
+  :ensure t
+  :defer t
+  :init
+  ;; (setq fzfa-extensions (delq 'firefox (default-value 'fzfa-extensions)))
+  (fzfa-sync-autoloads)
+  :config
+  (setq fzfa-preview-delay 0.25)
+  (setq fzfa-posframe-layout 'side-by-side)
+  (fzfa-posframe-mode))
+#+end_src
 
 *** Media thumbnails inside the preview
 We can view media thumbnails inside ~dired~ inside the preview like so:
