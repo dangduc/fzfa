@@ -4375,9 +4375,20 @@ Per-source plist keys:
       (fzfa--sessions-push specs sources prompt narrow-idx
                            last-query entry-command)
       (mapc #'fzfa-source--stop sources)
-      (when router (fzfa--preview-return result)))
+      ;; Re-bind the resolver dynvars for the post-`completing-read'
+      ;; :return dispatch — the `let' that first bound them at line
+      ;; ~4122 has already closed by the time this unwind cleanup
+      ;; runs, so `fzfa-resolve-candidate' inside `:return' handlers
+      ;; (e.g. `fzfa--file-preview-return' → `find-buffer-visiting')
+      ;; would otherwise miss the hash lookup and hand back a
+      ;; relative path.  Same rationale for the commit path below.
+      (let ((fzfa--active-sources specs-v)
+            (fzfa--candidate->source candidate->source))
+        (when router (fzfa--preview-return result))))
     (when result
-      (let* ((src-idx (or selected-idx
+      (let* ((fzfa--active-sources specs-v)
+             (fzfa--candidate->source candidate->source)
+             (src-idx (or selected-idx
                           (fzfa--multi-source-idx
                            result candidate->source)))
              (src     (and src-idx (aref specs-v src-idx)))
