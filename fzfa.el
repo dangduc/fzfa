@@ -1159,21 +1159,27 @@ persistent-action wiring both need the handler regardless of delay."
 (defun fzfa--preview-call (action session &rest args)
   "Dispatch ACTION to the current cell's handler with ARGS and SESSION.
 
-Handlers are invoked as (apply FN ARGS SESSION) — their signature is
-\(cand session)."
+Handlers may declare `(cand)' or `(cand session)' — SESSION is
+appended only when the handler's arity accepts it, so short lambdas
+that don't care about session stay clean."
   (when-let* ((handler (car fzfa--preview-session))
               (fn (plist-get handler action)))
-    (let ((win (fzfa-preview-get :origin-window))
-          (buf (fzfa-preview-get :origin-buffer))
-          (dir (fzfa-preview-get :default-directory)))
+    (let* ((win (fzfa-preview-get :origin-window))
+           (buf (fzfa-preview-get :origin-buffer))
+           (dir (fzfa-preview-get :default-directory))
+           (want (1+ (length args)))
+           (max  (cdr (func-arity fn)))
+           (call-args (if (or (eq max 'many) (>= max want))
+                          (append args (list session))
+                        args)))
       (condition-case err
           (if (and (window-live-p win) (buffer-live-p buf))
               (with-selected-window win
                 (with-current-buffer buf
                   (let ((default-directory (or dir default-directory)))
-                    (apply fn (append args (list session))))))
+                    (apply fn call-args))))
             (let ((default-directory (or dir default-directory)))
-              (apply fn (append args (list session)))))
+              (apply fn call-args)))
         (error
          (message "fzfa preview %s error: %s"
                   action (error-message-string err)))))))
