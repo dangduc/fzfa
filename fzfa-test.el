@@ -137,7 +137,7 @@ SPECS is a list of source plists.  CANDIDATES is an alist of
             '((:command "fd" :directory "/videos/" :resolve-paths auto))
             '(("movie.mkv" . 0)))))
     (should (equal (fzfa-resolve-candidate "movie.mkv" s)
-                   "/videos/movie.mkv"))))
+                   (expand-file-name "movie.mkv" "/videos/")))))
 
 (ert-deftest fzfa-resolve-candidate-non-path-source ()
   "Non-path source returns candidate unchanged."
@@ -148,11 +148,11 @@ SPECS is a list of source plists.  CANDIDATES is an alist of
 
 (ert-deftest fzfa-resolve-candidate-absolute-passthrough ()
   "Already-absolute candidate returns unchanged."
-  (let ((s (fzfa-test--make-session
-            '((:command "fd" :directory "/root/" :resolve-paths auto))
-            '(("/other/place.txt" . 0)))))
-    (should (equal (fzfa-resolve-candidate "/other/place.txt" s)
-                   "/other/place.txt"))))
+  (let* ((path (expand-file-name "place.txt" "/other/"))
+         (s (fzfa-test--make-session
+             '((:command "fd" :directory "/root/" :resolve-paths auto))
+             `((,path . 0)))))
+    (should (equal (fzfa-resolve-candidate path s) path))))
 
 (ert-deftest fzfa-resolve-candidate-grep-suffix ()
   "FILE:LINE:CONTENT candidates keep their suffix; only FILE is expanded."
@@ -160,7 +160,8 @@ SPECS is a list of source plists.  CANDIDATES is an alist of
             '((:command "rg" :directory "/proj/" :resolve-paths auto))
             '(("src/foo.el:42:  (message \"hi\")" . 0)))))
     (should (equal (fzfa-resolve-candidate "src/foo.el:42:  (message \"hi\")" s)
-                   "/proj/src/foo.el:42:  (message \"hi\")"))))
+                   (expand-file-name "src/foo.el:42:  (message \"hi\")"
+                                     "/proj/")))))
 
 (ert-deftest fzfa-resolve-candidate-multi-source ()
   "Different candidates resolve against their own source's dir."
@@ -168,8 +169,10 @@ SPECS is a list of source plists.  CANDIDATES is an alist of
             '((:command "fd" :directory "/videos/" :resolve-paths auto)
               (:command "fd" :directory "/docs/"   :resolve-paths auto))
             '(("movie.mkv" . 0) ("paper.pdf" . 1)))))
-    (should (equal (fzfa-resolve-candidate "movie.mkv" s) "/videos/movie.mkv"))
-    (should (equal (fzfa-resolve-candidate "paper.pdf" s) "/docs/paper.pdf"))))
+    (should (equal (fzfa-resolve-candidate "movie.mkv" s)
+                   (expand-file-name "movie.mkv" "/videos/")))
+    (should (equal (fzfa-resolve-candidate "paper.pdf" s)
+                   (expand-file-name "paper.pdf" "/docs/")))))
 
 (ert-deftest fzfa-resolve-candidate-ambient-dir-irrelevant ()
   "Regression: resolves to source's dir regardless of `default-directory'."
@@ -178,7 +181,7 @@ SPECS is a list of source plists.  CANDIDATES is an alist of
             '(("movie.mkv" . 0)))))
     (let ((default-directory "/completely/unrelated/"))
       (should (equal (fzfa-resolve-candidate "movie.mkv" s)
-                     "/videos/movie.mkv")))))
+                     (expand-file-name "movie.mkv" "/videos/"))))))
 
 (ert-deftest fzfa-resolve-candidate-empty-string ()
   "Empty candidate string is returned unchanged."
@@ -194,7 +197,8 @@ SPECS is a list of source plists.  CANDIDATES is an alist of
          (s (fzfa-test--make-session
              '((:command "fd" :directory "/root/" :resolve-paths auto))
              `((,tagged . 0)))))
-    (should (equal (fzfa-resolve-candidate tagged s) "/root/foo.txt"))))
+    (should (equal (fzfa-resolve-candidate tagged s)
+                   (expand-file-name clean "/root/")))))
 
 ;;;; fzfa-session-source-of
 
