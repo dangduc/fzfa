@@ -834,16 +834,6 @@ from the constructor's `:apply' keyword (falling back to
 `fzfa-apply-functions' by category).  Multi sessions look up
 `:apply' per-source via `fzfa--resolve-apply' instead.")
 
-(defvar fzfa--session-resolve-paths nil
-  "Whether to expand path candidates for the active single-source session.
-
-Mirrors the constructor's `:resolve-paths' argument; `let'-bound by
-`fzfa-completing-read'.  Passed
-to `fzfa--maybe-expand' in `fzfa-apply-current'; the directory comes
-from the minibuffer's `default-directory' which the setup hook
-already binds to the constructor's `:directory'.  Multi sessions read
-`:resolve-paths' (and `:directory') per-source instead.")
-
 (defun fzfa--resolve-apply (cand)
   "Resolve the apply function for CAND in the active fzfa session.
 
@@ -865,27 +855,6 @@ Single: return `fzfa--session-apply' (already pre-resolved against
            (alist-get (plist-get src :category) fzfa-apply-functions)
            :apply))))
    (t fzfa--session-apply)))
-
-(defun fzfa--resolve-candidate (cand)
-  "Return CAND with path resolution applied per session/source rules.
-
-Mirrors the commit-path `fzfa--maybe-expand' call so the apply lambda
-sees the same string the post-`completing-read' dispatch would.
-
-Multi: source plist's `:directory' + `:resolve-paths'.
-Single:  the minibuffer's `default-directory' (set by the constructor's
-setup hook) + `fzfa--session-resolve-paths'."
-  (let* ((clean (fzfa--tofu-hide cand))
-         (src (and (bound-and-true-p fzfa--active-sources)
-                   (fzfa--multi-source-of
-                    cand fzfa--active-sources nil)))
-         (dir (if src
-                  (plist-get src :directory)
-                default-directory))
-         (resolve (if src
-                      (plist-get src :resolve-paths)
-                    fzfa--session-resolve-paths)))
-    (fzfa--maybe-expand clean dir resolve)))
 
 (defun fzfa--pin-window-buffer (window buffer)
   "Ensure WINDOW stays on BUFFER once the active minibuffer session exits.
@@ -924,10 +893,10 @@ agree.  On abort the body doesn't run and the re-assert sticks."
   "Invoke the current candidate's `:apply' function without exiting.
 
 Looks up the apply via `fzfa--resolve-apply', resolves the candidate
-to an absolute path (when the session was created with
-`:resolve-paths' non-nil) via `fzfa--maybe-expand', then runs the
-apply lambda inside the origin window so file/buffer visits land there
-and the picker keeps focus.
+to an absolute path via `fzfa-resolve-candidate' (which consults the
+source's `:directory' + `:resolve-paths'), then runs the apply lambda
+inside the origin window so file/buffer visits land there and the
+picker keeps focus.
 
 `fzfa--pin-window-buffer' makes the visit survive the minibuffer
 unwind path's implicit window-state restoration.
@@ -936,7 +905,7 @@ Silently no-ops when no `:apply' is defined for the source/session."
   (interactive)
   (when-let* ((cand (fzfa--frontend-candidate))
               (apply (fzfa--resolve-apply cand))
-              (resolved (fzfa--resolve-candidate cand))
+              (resolved (fzfa-resolve-candidate cand))
               (origin (or (minibuffer-selected-window) (selected-window))))
     (condition-case err
         (with-selected-window origin
@@ -1418,13 +1387,17 @@ Public helper for `:preview' handlers to call."
 (defun fzfa--grep-preview (cand)
   "Open the FILE from a FILE:LINE:CONTENT grep CAND at LINE for preview.
 
-Resolves FILE against the captured `default-directory' (the search root
-when invoked from `fzfa-completing-read')."
+Resolves FILE against CAND's source's :directory via
+`fzfa-candidate-directory' — that's the search root grep was invoked
+under, and the base for the FILE part.  Falls back to
+`default-directory' when no session is in scope (e.g. embark preview
+outside fzfa)."
   (when (and cand
              (string-match "\\`\\(.+?\\):\\([0-9]+\\):" cand))
     (let* ((file (match-string 1 cand))
            (line (string-to-number (match-string 2 cand)))
-           (path (expand-file-name file)))
+           (dir  (or (fzfa-candidate-directory cand) default-directory))
+           (path (expand-file-name file dir)))
       (when (file-readable-p path)
         (let ((buf (fzfa-with-quiet-find-file
                     (find-file-noselect path 'nowarn))))
@@ -1545,7 +1518,7 @@ snappy on multi-megabyte binaries.  Directories are always previewed
 via `dired-mode' (from `find-file-noselect')."
   (when (and cand fzfa-preview-file-size-limit
              (> fzfa-preview-file-size-limit 0))
-    (let ((path (expand-file-name cand)))
+    (let ((path (fzfa-resolve-candidate cand)))
       (when (file-readable-p path)
         (cond
          ((file-directory-p path)
@@ -1574,7 +1547,7 @@ The promoted buffer survives so the caller's subsequent `find-file'
 reuses it instead of re-loading from disk."
   (when-let* ((opener (fzfa-preview-get :opener)))
     (when cand
-      (when-let* ((buf (find-buffer-visiting (expand-file-name cand))))
+      (when-let* ((buf (find-buffer-visiting (fzfa-resolve-candidate cand))))
         (funcall opener buf)))
     (funcall opener)))
 
@@ -2073,11 +2046,20 @@ fall back to global `minibuffer-history')."
 (defun fzfa--maybe-expand (result directory resolve-paths)
   "Return RESULT expanded against DIRECTORY when RESOLVE-PATHS is non-nil.
 
+Low-level primitive used by internal call sites that have DIRECTORY
+and RESOLVE-PATHS in explicit scope (e.g. the `:inject' replay path,
+the helm dispatch return, the nested-multi entry action) — call sites
+where no session dynvars are bound.  Session-aware consumers use
+`fzfa-resolve-candidate' instead, which layers over this by resolving
+`(source :directory)' and `(source :resolve-paths)' from the
+candidate's emitting source.
+
 For RESOLVE-PATHS=t the whole RESULT is passed through `expand-file-name'
 — this works for both plain paths and FILE:LINE:CONTENT grep candidates,
 since `expand-file-name' prepends DIRECTORY and leaves the suffix
-untouched.  Returns RESULT unchanged for non-strings, empty strings, or
-when RESOLVE-PATHS is nil."
+untouched.  RESOLVE-PATHS=`auto' resolves to t when the source has a
+`:command'; here (no session in scope) callers pre-resolve `auto' from
+their own context or pass t/nil explicitly."
   (if (and resolve-paths (stringp result) (not (string-empty-p result)))
       (expand-file-name result directory)
     result))
@@ -4412,16 +4394,12 @@ Per-source plist keys:
                            (fzfa-source-snapshot (aref sources src-idx))))
              (result  (or (and snap (car (member result snap))) result))
              (action (and src (plist-get src :action)))
-             (clean  (fzfa--tofu-hide result))
              (hist   (and src (plist-get src :history)))
-             ;; Per-source path resolution — at N=1 this restores the
-             ;; legacy `fzfa-completing-read' behavior of
-             ;; `fzfa--maybe-expand'-ing the selection before handing
-             ;; off; at N>1 each source contributes its own setting.
-             (expanded (fzfa--maybe-expand
-                        clean
-                        (and src (plist-get src :directory))
-                        (and src (plist-get src :resolve-paths)))))
+             ;; Per-source path resolution: `fzfa-resolve-candidate'
+             ;; consults `candidate->source' + the source's :directory
+             ;; and :resolve-paths, then strips tofu before expansion.
+             ;; N=1 and N>1 go through the same helper.
+             (expanded (fzfa-resolve-candidate result)))
         ;; Multi bypasses each source's inner `completing-read', so the
         ;; source's natural HIST push never fires.  Mirror it here so
         ;; recency-aware sources (e.g. `extended-command-history') stay
