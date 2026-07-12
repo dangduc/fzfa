@@ -2082,6 +2082,56 @@ when RESOLVE-PATHS is nil."
       (expand-file-name result directory)
     result))
 
+;; Forward declarations for the resolver helpers; the dynvars are
+;; defined later in the file (near the reader) but referenced here.
+(defvar fzfa--active-sources)
+(defvar fzfa--candidate->source)
+
+(defun fzfa-candidate-directory (cand)
+  "Return CAND's emitting source's :directory, or nil.
+
+Consults the session dynvars (`fzfa--candidate->source' +
+`fzfa--active-sources') to find the source that emitted CAND, then
+that source's `:directory' — but only when the source declares its
+candidates ARE paths.  That declaration comes from `:resolve-paths':
+
+  auto (default) — treated as t when the source has a `:command'
+                    (fd / rg / etc emit paths), nil otherwise
+                    (candidates lists usually don't).
+  t              — explicit path-shaped.
+  nil            — explicit non-path-shaped.
+
+Returns nil when the session is not active, CAND is not in the map,
+or the source is non-path-shaped by the rule above.  Multi-source
+sessions dispatch per-candidate — no \"first source wins\" heuristic."
+  (when-let* (((stringp cand))
+              ((> (length cand) 0))
+              (idx (and fzfa--candidate->source
+                        (gethash cand fzfa--candidate->source)))
+              (src (and fzfa--active-sources
+                        (aref fzfa--active-sources idx)))
+              (rp  (plist-get src :resolve-paths))
+              ((if (eq rp 'auto)
+                   (plist-get src :command)
+                 rp)))
+    (plist-get src :directory)))
+
+(defun fzfa-resolve-candidate (cand)
+  "Return CAND expanded against its emitting source's :directory.
+
+Returns CAND unchanged when the source is non-path-shaped or when
+no session is active — see `fzfa-candidate-directory' for the rule.
+Any tofu suffix on multi-source candidates is stripped before the
+expansion so absolute paths never carry disambiguation chars.
+
+The universal boundary between \"raw candidate string\" and \"an
+absolute path a consumer can filesystem-check\": preview handlers,
+`:action' closures, embark transformers, and async callbacks all
+funnel through this — no more scattered `expand-file-name'."
+  (if-let* ((dir (fzfa-candidate-directory cand)))
+      (expand-file-name (fzfa--tofu-hide cand) dir)
+    cand))
+
 (defun fzfa--default-dir ()
   "Return the working directory for fzfa commands.
 

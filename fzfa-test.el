@@ -57,6 +57,161 @@
   "Empty input returns nil."
   (should (null (fzfa-hungry--deduplicate-dirs '()))))
 
+;;; fzfa-candidate-directory / fzfa-resolve-candidate
+
+(defmacro fzfa-test--with-session (specs candidates &rest body)
+  "Bind session dynvars for a fake fzfa session and run BODY.
+
+SPECS is a list of source plists (indexed by source-idx).  CANDIDATES
+is an alist of (CAND-STRING . SOURCE-IDX)."
+  (declare (indent 2))
+  `(let ((fzfa--active-sources (vconcat ,specs))
+         (fzfa--candidate->source
+          (let ((h (make-hash-table :test 'equal)))
+            (dolist (c ,candidates) (puthash (car c) (cdr c) h))
+            h)))
+     ,@body))
+
+;;;; fzfa-candidate-directory
+
+(ert-deftest fzfa-candidate-directory-no-session ()
+  "Returns nil when no session is bound."
+  (let ((fzfa--active-sources nil)
+        (fzfa--candidate->source nil))
+    (should (null (fzfa-candidate-directory "foo.txt")))))
+
+(ert-deftest fzfa-candidate-directory-unknown-candidate ()
+  "Returns nil when candidate is not in the source map."
+  (fzfa-test--with-session
+      '((:command "fd" :directory "/root/" :resolve-paths auto))
+      '(("foo.txt" . 0))
+    (should (null (fzfa-candidate-directory "not-a-known-candidate")))))
+
+(ert-deftest fzfa-candidate-directory-command-auto ()
+  ":command source + :resolve-paths auto → returns :directory."
+  (fzfa-test--with-session
+      '((:command "fd" :directory "/root/" :resolve-paths auto))
+      '(("foo.txt" . 0))
+    (should (equal (fzfa-candidate-directory "foo.txt") "/root/"))))
+
+(ert-deftest fzfa-candidate-directory-candidates-auto ()
+  ":candidates source + :resolve-paths auto → nil (theme picker etc)."
+  (fzfa-test--with-session
+      '((:candidates ("modus" "ef") :directory "/anywhere/" :resolve-paths auto))
+      '(("modus" . 0))
+    (should (null (fzfa-candidate-directory "modus")))))
+
+(ert-deftest fzfa-candidate-directory-explicit-t ()
+  "Explicit :resolve-paths t returns :directory even without :command."
+  (fzfa-test--with-session
+      '((:candidates ("a.txt") :directory "/root/" :resolve-paths t))
+      '(("a.txt" . 0))
+    (should (equal (fzfa-candidate-directory "a.txt") "/root/"))))
+
+(ert-deftest fzfa-candidate-directory-explicit-nil ()
+  "Explicit :resolve-paths nil overrides auto-t on :command sources."
+  (fzfa-test--with-session
+      '((:command "fd" :directory "/root/" :resolve-paths nil))
+      '(("foo.txt" . 0))
+    (should (null (fzfa-candidate-directory "foo.txt")))))
+
+(ert-deftest fzfa-candidate-directory-multi-source ()
+  "Each candidate resolves against its OWN source's directory."
+  (fzfa-test--with-session
+      '((:command "fd" :directory "/videos/" :resolve-paths auto)
+        (:command "fd" :directory "/docs/"   :resolve-paths auto))
+      '(("movie.mkv" . 0) ("paper.pdf" . 1))
+    (should (equal (fzfa-candidate-directory "movie.mkv") "/videos/"))
+    (should (equal (fzfa-candidate-directory "paper.pdf") "/docs/"))))
+
+(ert-deftest fzfa-candidate-directory-nil-directory ()
+  "Source with nil :directory returns nil."
+  (fzfa-test--with-session
+      '((:command "fd" :directory nil :resolve-paths auto))
+      '(("foo.txt" . 0))
+    (should (null (fzfa-candidate-directory "foo.txt")))))
+
+;;;; fzfa-resolve-candidate
+
+(ert-deftest fzfa-resolve-candidate-no-session ()
+  "Returns cand unchanged when no session."
+  (let ((fzfa--active-sources nil)
+        (fzfa--candidate->source nil))
+    (should (equal (fzfa-resolve-candidate "foo.txt") "foo.txt"))))
+
+(ert-deftest fzfa-resolve-candidate-path-source ()
+  "Relative candidate is expanded against source's :directory."
+  (fzfa-test--with-session
+      '((:command "fd" :directory "/videos/" :resolve-paths auto))
+      '(("movie.mkv" . 0))
+    (should (equal (fzfa-resolve-candidate "movie.mkv")
+                   "/videos/movie.mkv"))))
+
+(ert-deftest fzfa-resolve-candidate-non-path-source ()
+  "Non-path source returns candidate unchanged."
+  (fzfa-test--with-session
+      '((:candidates ("modus" "ef") :directory "/anywhere/" :resolve-paths auto))
+      '(("modus" . 0))
+    (should (equal (fzfa-resolve-candidate "modus") "modus"))))
+
+(ert-deftest fzfa-resolve-candidate-absolute-passthrough ()
+  "Already-absolute candidate is returned unchanged when expanded."
+  (fzfa-test--with-session
+      '((:command "fd" :directory "/root/" :resolve-paths auto))
+      '(("/other/place.txt" . 0))
+    (should (equal (fzfa-resolve-candidate "/other/place.txt")
+                   "/other/place.txt"))))
+
+(ert-deftest fzfa-resolve-candidate-grep-suffix ()
+  "FILE:LINE:CONTENT candidates keep their suffix; only the file part is expanded."
+  (fzfa-test--with-session
+      '((:command "rg" :directory "/proj/" :resolve-paths auto))
+      '(("src/foo.el:42:  (message \"hi\")" . 0))
+    (should (equal (fzfa-resolve-candidate "src/foo.el:42:  (message \"hi\")")
+                   "/proj/src/foo.el:42:  (message \"hi\")"))))
+
+(ert-deftest fzfa-resolve-candidate-multi-source ()
+  "Different candidates resolve against their own source's dir."
+  (fzfa-test--with-session
+      '((:command "fd" :directory "/videos/" :resolve-paths auto)
+        (:command "fd" :directory "/docs/"   :resolve-paths auto))
+      '(("movie.mkv" . 0) ("paper.pdf" . 1))
+    (should (equal (fzfa-resolve-candidate "movie.mkv")  "/videos/movie.mkv"))
+    (should (equal (fzfa-resolve-candidate "paper.pdf")  "/docs/paper.pdf"))))
+
+(ert-deftest fzfa-resolve-candidate-ambient-dir-irrelevant ()
+  "Regression: candidate resolves to source's dir regardless of `default-directory'.
+
+`expand-file-name' alone would consult ambient `default-directory'
+and misresolve candidates emitted from a session recorded elsewhere
+(replay from ~/scratch of a session recorded in /videos/)."
+  (fzfa-test--with-session
+      '((:command "fd" :directory "/videos/" :resolve-paths auto))
+      '(("movie.mkv" . 0))
+    (let ((default-directory "/completely/unrelated/"))
+      (should (equal (fzfa-resolve-candidate "movie.mkv")
+                     "/videos/movie.mkv")))))
+
+(ert-deftest fzfa-resolve-candidate-empty-string ()
+  "Empty candidate string is returned unchanged."
+  (fzfa-test--with-session
+      '((:command "fd" :directory "/root/" :resolve-paths auto))
+      '(("" . 0))
+    (should (equal (fzfa-resolve-candidate "") ""))))
+
+(ert-deftest fzfa-resolve-candidate-strips-tofu ()
+  "Multi-source tofu-suffixed candidates resolve without the suffix.
+
+The hash is keyed by the TAGGED form (clean + tofu-suffix) so the
+disambiguation works cross-source; the returned absolute path must
+have the tofu char stripped so it names an actual filesystem file."
+  (let* ((clean "foo.txt")
+         (tagged (concat clean (fzfa--tofu-suffix 0))))
+    (fzfa-test--with-session
+        '((:command "fd" :directory "/root/" :resolve-paths auto))
+        `((,tagged . 0))
+      (should (equal (fzfa-resolve-candidate tagged) "/root/foo.txt")))))
+
 ;;; fzfa--default-dir
 
 (ert-deftest fzfa-project-dir-nil-backend-returns-default-directory ()
