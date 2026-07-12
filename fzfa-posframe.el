@@ -53,9 +53,12 @@
 (declare-function posframe-poshandler-frame-center "posframe" (info))
 (declare-function image-transform-fit-to-window "image-mode" ())
 (declare-function vertico-multiform-mode "vertico-multiform" (&optional arg))
+(declare-function vertico--resize-window "vertico" (height))
 (declare-function ivy-posframe-mode "ivy-posframe" (&optional arg))
 (declare-function ivy-posframe--display "ivy-posframe" (str &optional poshandler))
 (defvar fzfa-vertico-columns-max)
+(defvar vertico-count)
+(defvar vertico--total)
 
 (defvar fzfa-posframe-mode)
 (defvar vertico-buffer-display-action)
@@ -636,6 +639,30 @@ survives, only the vertico temp buffer is swapped in via
   (when (frame-live-p fzfa-posframe--vertico-frame)
     (make-frame-invisible fzfa-posframe--vertico-frame)))
 
+(defun fzfa-posframe--restore-vertico-minibuffer ()
+  "Restore Vertico's minibuffer height after a posframe preview update.
+
+`posframe-show' and child-frame redisplay can cause Emacs to re-run
+minibuffer window fitting outside Vertico's own `vertico--exhibit'
+dynamic context.  In inline-Vertico layouts this can collapse the
+candidate display to one line even though `vertico--total' and
+`vertico--candidates' still contain the full result set.  Re-applying
+Vertico's resize helper keeps the active fzfa minibuffer at the height
+Vertico computed for the current candidate set."
+  (when-let* ((win (active-minibuffer-window))
+              ((window-live-p win)))
+    (with-selected-window win
+      (when (and (bound-and-true-p vertico-mode)
+                 (fboundp 'vertico--resize-window))
+        (vertico--resize-window
+         (min (or (bound-and-true-p vertico-count) 10)
+              (max 0 (or (bound-and-true-p vertico--total) 0))))))))
+
+(defun fzfa-posframe--restore-vertico-minibuffer-soon ()
+  "Restore Vertico minibuffer sizing now and after pending redisplay."
+  (fzfa-posframe--restore-vertico-minibuffer)
+  (run-at-time 0 nil #'fzfa-posframe--restore-vertico-minibuffer))
+
 (defun fzfa-posframe--show (buffer)
   "Render BUFFER inside the preview posframe.
 
@@ -821,6 +848,7 @@ are on a TTY, or BUFFER is not live."
           (widen)
           (goto-char (if (markerp pos) (marker-position pos) pos)))))
     (fzfa-posframe--show buffer)
+    (fzfa-posframe--restore-vertico-minibuffer-soon)
     (let ((win (get-buffer-window buffer t)))
       (when (and win (window-live-p win))
         (with-selected-window win
