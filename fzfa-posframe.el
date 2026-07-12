@@ -391,18 +391,39 @@ sized identically so the right pane's width matches the left's."
     (cons (+ (fzfa-posframe--side-by-side-outer info) pw fzfa-posframe-margin)
           (max 0 (/ (- fh ph) 2)))))
 
+(defun fzfa-posframe--expected-minibuffer-height (parent plist-mbh)
+  "Return the pixel height Vertico's mini will settle at inside PARENT.
+
+`posframe-show' captures `:minibuffer-height' before its own
+`make-frame' collapses the mini, and on the initial preview
+`vertico--total' is still 0 because exhibit has not yet run — so
+PLIST-MBH is a lower bound that a naive `(min vertico-count
+vertico--total)' projection collapses back onto.  Reserve room for
+Vertico's *maximum* height instead: `(1+ vertico-count) *
+default-line-height'.  Any smaller candidate set just leaves extra
+air below the preview; the frame never clips into the restored
+mini.  Falls back to PLIST-MBH when Vertico is not active."
+  (let ((expected
+         (and (bound-and-true-p vertico-mode)
+              (boundp 'vertico-count)
+              (let ((lh (with-selected-frame parent (default-line-height))))
+                (* lh (1+ vertico-count))))))
+    (max (or plist-mbh 0) (or expected 0))))
+
 (defun fzfa-posframe-poshandler-above-minibuffer (info)
   "Center a posframe horizontally and anchor above the minibuffer.
 
 INFO is the plist supplied by `posframe-show'.  Leaves
 `fzfa-posframe-margin' pixels between posframe bottom and the
 minibuffer top."
-  (let ((fw  (plist-get info :parent-frame-width))
-        (fh  (plist-get info :parent-frame-height))
-        (pw  (plist-get info :posframe-width))
-        (ph  (plist-get info :posframe-height))
-        (mbh (plist-get info :minibuffer-height))
-        (mlh (plist-get info :mode-line-height)))
+  (let* ((fw  (plist-get info :parent-frame-width))
+         (fh  (plist-get info :parent-frame-height))
+         (pw  (plist-get info :posframe-width))
+         (ph  (plist-get info :posframe-height))
+         (mlh (plist-get info :mode-line-height))
+         (mbh (fzfa-posframe--expected-minibuffer-height
+               (plist-get info :parent-frame)
+               (plist-get info :minibuffer-height))))
     (cons (max 0 (/ (- fw pw) 2))
           (max 0 (- fh ph mbh mlh fzfa-posframe-margin)))))
 
@@ -663,7 +684,35 @@ or `minibuffer-depth' has grown)."
                  (fboundp 'vertico--resize-window))
         (vertico--resize-window
          (min (or (bound-and-true-p vertico-count) 10)
-              (max 0 (or (bound-and-true-p vertico--total) 0))))))))
+              (max 0 (or (bound-and-true-p vertico--total) 0))))))
+    (fzfa-posframe--reposition-preview-above-mini win)))
+
+(defun fzfa-posframe--reposition-preview-above-mini (mb-win)
+  "Move the preview posframe to sit above MB-WIN's actual pixel height.
+
+Runs after `vertico--resize-window' has expanded the mini, so we use
+the ground-truth restored height rather than the projection
+`fzfa-posframe--expected-minibuffer-height' installed on the initial
+positioning.  Repositioning is a no-op when the preview frame is not
+live or its parent is not MB-WIN's frame — same-shape frame reuse means
+no size change is needed."
+  (when (and (frame-live-p fzfa-posframe--preview-frame)
+             (window-live-p mb-win))
+    (let* ((parent (window-frame mb-win))
+           (frame  fzfa-posframe--preview-frame))
+      (when (eq (frame-parent frame) parent)
+        (let* ((ph  (frame-pixel-height frame))
+               (pw  (frame-pixel-width frame))
+               (fh  (frame-pixel-height parent))
+               (fw  (frame-pixel-width parent))
+               (mbh (window-pixel-height mb-win))
+               (above (ignore-errors (window-in-direction 'above mb-win)))
+               (mlh (if (window-live-p above)
+                        (window-mode-line-height above)
+                      0))
+               (x (max 0 (/ (- fw pw) 2)))
+               (y (max 0 (- fh ph mbh mlh fzfa-posframe-margin))))
+          (set-frame-position frame x y))))))
 
 (defun fzfa-posframe--restore-vertico-minibuffer-soon ()
   "Schedule a Vertico minibuffer sizing restore after pending redisplay.
