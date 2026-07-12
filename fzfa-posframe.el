@@ -174,6 +174,25 @@ face has no specified foreground."
 (defvar fzfa-posframe--current-buffer nil
   "Live preview buffer currently rendered inside the preview posframe.")
 
+(defvar fzfa-posframe--preview-frame nil
+  "Reusable child frame for the preview panel, if created.
+
+Kept alive across preview swaps so the fast path in
+`fzfa-posframe--show' can `set-window-buffer' into an existing frame
+instead of paying `make-frame' + `set-frame-size' — both of which are
+X-server round-trips that dominate the preview hot path.")
+
+(defvar fzfa-posframe--preview-geometry nil
+  "Last (WIDTH . HEIGHT) applied to `fzfa-posframe--preview-frame'.
+
+Compared against a fresh `fzfa-posframe--pane-geometry' each preview so
+`set-frame-size' only fires when the parent frame actually changed
+size — the plain call otherwise dominates the profile even when it is
+a no-op.")
+
+(defvar fzfa-posframe--preview-poshandler nil
+  "Last poshandler that positioned `fzfa-posframe--preview-frame'.")
+
 (defvar fzfa-posframe--vertico-frame nil
   "Child frame currently displaying the vertico buffer, if any.
 
@@ -181,6 +200,14 @@ Tracked separately from posframe's per-buffer registry because
 `vertico-buffer' swaps the buffer inside the returned window during
 its own setup — so `posframe-delete-frame' keyed on the original
 buffer name cannot find the frame at teardown time.")
+
+(defvar fzfa-posframe--vertico-geometry nil
+  "Last (WIDTH . HEIGHT) applied to `fzfa-posframe--vertico-frame'.
+
+`posframe-show' unconditionally calls `set-frame-size' even when it
+finds a cached frame, which measured at ~5% of a session's wallclock.
+Comparing against a fresh `fzfa-posframe--pane-geometry' lets the fast
+path skip that entirely.")
 
 (defvar fzfa-posframe--saved-vertico-buffer-action nil
   "Saved value of `vertico-buffer-display-action' before mode enable.")
@@ -430,17 +457,42 @@ Sizing depends on `fzfa-posframe--effective-layout'."
           (max 10 (/ ph char-h)))))
 
 (defun fzfa-posframe--dismiss (&optional buffer)
-  "Delete the preview posframe rendering BUFFER (or the tracked one)."
+  "Delete the preview posframe rendering BUFFER (or the tracked one).
+
+Also drops the cached-frame state (`fzfa-posframe--preview-frame' and
+its geometry / poshandler siblings) so the next `fzfa-posframe--show'
+takes the slow path and rebuilds from scratch."
   (let ((buf (or buffer fzfa-posframe--current-buffer)))
     (when (and buf (or (bufferp buf) (get-buffer buf)))
       (ignore-errors (posframe-delete-frame buf))))
-  (setq fzfa-posframe--current-buffer nil))
+  (when (frame-live-p fzfa-posframe--preview-frame)
+    (ignore-errors (delete-frame fzfa-posframe--preview-frame)))
+  (setq fzfa-posframe--current-buffer   nil
+        fzfa-posframe--preview-frame    nil
+        fzfa-posframe--preview-geometry nil
+        fzfa-posframe--preview-poshandler nil))
 
 (defun fzfa-posframe--dismiss-vertico ()
-  "Delete the vertico posframe if any."
+  "Delete the vertico posframe if any.
+
+Also drops the geometry cache so the next
+`fzfa-posframe--display-vertico-buffer' takes the slow path and
+rebuilds from scratch."
   (when (frame-live-p fzfa-posframe--vertico-frame)
     (ignore-errors (delete-frame fzfa-posframe--vertico-frame)))
-  (setq fzfa-posframe--vertico-frame nil))
+  (setq fzfa-posframe--vertico-frame    nil
+        fzfa-posframe--vertico-geometry nil))
+
+(defun fzfa-posframe--hide-vertico ()
+  "Make the vertico posframe invisible but keep it in the cache.
+
+Called on minibuffer exit so the next `completing-read' session hits
+the fast path in `fzfa-posframe--display-vertico-buffer' — the frame
+survives, only the vertico temp buffer is swapped in via
+`set-window-buffer'.  Full deletion still happens on mode disable via
+`fzfa-posframe--dismiss-vertico'."
+  (when (frame-live-p fzfa-posframe--vertico-frame)
+    (make-frame-invisible fzfa-posframe--vertico-frame)))
 
 (defun fzfa-posframe--show (buffer)
   "Render BUFFER inside the preview posframe.
@@ -449,7 +501,13 @@ Poshandler and dimensions are chosen from
 `fzfa-posframe--effective-layout'.  Buffer-local vars posframe would
 otherwise clobber (see `fzfa-posframe--restored-locals') are snapshotted
 and restored so the origin buffer's display state stays intact when
-BUFFER doubles as the origin."
+BUFFER doubles as the origin.
+
+Fast path: when a cached preview frame is already alive with the same
+parent, geometry, and poshandler, only `set-window-buffer' fires — the
+X-server round-trips of `make-frame' and `set-frame-size' are skipped.
+Falls through to `posframe-show' when the frame is missing or the
+layout / geometry has changed."
   (let* ((parent (fzfa-posframe--top-frame))
          (geom (fzfa-posframe--pane-geometry parent))
          (poshandler (pcase (fzfa-posframe--effective-layout)
@@ -461,24 +519,58 @@ BUFFER doubles as the origin."
                           #'fzfa-posframe-poshandler-above-minibuffer))
                        (_
                         #'fzfa-posframe-poshandler-above-minibuffer))))
-    (when (and fzfa-posframe--current-buffer
-               (not (eq fzfa-posframe--current-buffer buffer)))
-      (fzfa-posframe--dismiss fzfa-posframe--current-buffer))
-    (let ((snapshot (fzfa-posframe--capture-locals buffer))
-          (frame (fzfa-posframe--with-top-frame parent
-                   (posframe-show
-                    buffer
-                    :parent-frame          parent
-                    :poshandler            poshandler
-                    :width                 (car geom)
-                    :height                (cdr geom)
-                    :accept-focus          nil
-                    :respect-mode-line     fzfa-posframe-respect-mode-line
-                    :respect-header-line   fzfa-posframe-respect-header-line
-                    :internal-border-width fzfa-posframe-internal-border-width
-                    :internal-border-color (fzfa-posframe--border-color)))))
-      (fzfa-posframe--reparent frame parent)
-      (fzfa-posframe--restore-locals buffer snapshot))
+    (cond
+     ;; Fast path: reuse the cached child frame.
+     ((and (frame-live-p fzfa-posframe--preview-frame)
+           (eq (frame-parent fzfa-posframe--preview-frame) parent)
+           (equal fzfa-posframe--preview-geometry geom)
+           (eq fzfa-posframe--preview-poshandler poshandler)
+           (buffer-live-p buffer))
+      (let* ((frame fzfa-posframe--preview-frame)
+             (win (frame-root-window frame)))
+        (unless (eq (window-buffer win) buffer)
+          ;; `posframe-show' dedicates the child-frame's root window to
+          ;; its initial buffer; a plain `set-window-buffer' with a new
+          ;; buffer errors on that dedication.  Drop it for the swap,
+          ;; then reassert on the new buffer so any consumer that
+          ;; inspects the dedication flag still sees a dedicated window.
+          (let ((snapshot (fzfa-posframe--capture-locals buffer)))
+            (set-window-dedicated-p win nil)
+            (set-window-buffer win buffer)
+            (set-window-dedicated-p win buffer)
+            (fzfa-posframe--restore-locals buffer snapshot)))
+        (unless (frame-visible-p frame)
+          (make-frame-visible frame))))
+     ;; Slow path: (re)build the frame via posframe-show.
+     (t
+      (when (and fzfa-posframe--current-buffer
+                 (not (eq fzfa-posframe--current-buffer buffer)))
+        (fzfa-posframe--dismiss fzfa-posframe--current-buffer))
+      ;; A stale cached frame here means fast-path preconditions changed
+      ;; (parent, geometry, or poshandler differ).  Drop it explicitly —
+      ;; `posframe-show' would otherwise create a fresh frame and leave
+      ;; the old one behind, since it keys its cache on BUFFER identity
+      ;; and our tracking pointer would silently be overwritten.
+      (when (frame-live-p fzfa-posframe--preview-frame)
+        (ignore-errors (delete-frame fzfa-posframe--preview-frame)))
+      (let ((snapshot (fzfa-posframe--capture-locals buffer))
+            (frame (fzfa-posframe--with-top-frame parent
+                     (posframe-show
+                      buffer
+                      :parent-frame          parent
+                      :poshandler            poshandler
+                      :width                 (car geom)
+                      :height                (cdr geom)
+                      :accept-focus          nil
+                      :respect-mode-line     fzfa-posframe-respect-mode-line
+                      :respect-header-line   fzfa-posframe-respect-header-line
+                      :internal-border-width fzfa-posframe-internal-border-width
+                      :internal-border-color (fzfa-posframe--border-color)))))
+        (fzfa-posframe--reparent frame parent)
+        (fzfa-posframe--restore-locals buffer snapshot)
+        (setq fzfa-posframe--preview-frame     frame
+              fzfa-posframe--preview-geometry  geom
+              fzfa-posframe--preview-poshandler poshandler))))
     (fzfa-posframe--fit-image buffer)
     (setq fzfa-posframe--current-buffer buffer)))
 
@@ -497,38 +589,56 @@ window, so run it inside the posframe's window."
   "Display action routing BUFFER (vertico's buffer) into a left posframe.
 
 Used as `vertico-buffer-display-action' when `fzfa-posframe-mode' is on,
-layout is `side-by-side', and the active frontend is vertico.  Deletes
-any previously tracked frame first — `vertico-buffer' generates a new
-temp buffer per session, and posframe keys its cache on buffer identity,
-so an old frame would otherwise leak.
+layout is `side-by-side', and the active frontend is vertico.
 
 Posframe marks its window dedicated to the buffer it was shown with;
 `vertico-buffer' immediately swaps that window's buffer to the real
 completion buffer, which errors on a dedicated window.  Undedicate
 before returning so the swap succeeds; `vertico-buffer' re-dedicates
-after the swap."
-  (fzfa-posframe--dismiss-vertico)
+after the swap.
+
+Fast path: when a cached left-pane frame is still alive with the same
+parent and geometry, swap its window's buffer instead of tearing the
+frame down and rebuilding — `posframe-show' unconditionally re-runs
+`set-frame-size' on reuse, which measured at ~5% of session wallclock.
+Falls through to a full teardown + `posframe-show' when the parent or
+geometry differ."
   (let* ((parent (fzfa-posframe--top-frame))
-         (geom (fzfa-posframe--pane-geometry parent))
-         (snapshot (fzfa-posframe--capture-locals buffer))
-         (frame (fzfa-posframe--with-top-frame parent
-                  (posframe-show
-                   buffer
-                   :parent-frame          parent
-                   :poshandler            #'fzfa-posframe-poshandler-side-by-side-left
-                   :width                 (car geom)
-                   :height                (cdr geom)
-                   :accept-focus          nil
-                   :respect-mode-line     fzfa-posframe-respect-mode-line
-                   :respect-header-line   fzfa-posframe-respect-header-line
-                   :internal-border-width fzfa-posframe-internal-border-width
-                   :internal-border-color (fzfa-posframe--border-color))))
-         (win (frame-root-window frame)))
-    (fzfa-posframe--reparent frame parent)
-    (fzfa-posframe--restore-locals buffer snapshot)
-    (set-window-dedicated-p win nil)
-    (setq fzfa-posframe--vertico-frame frame)
-    win))
+         (geom (fzfa-posframe--pane-geometry parent)))
+    (cond
+     ;; Fast path: reuse the cached child frame.
+     ((and (frame-live-p fzfa-posframe--vertico-frame)
+           (eq (frame-parent fzfa-posframe--vertico-frame) parent)
+           (equal fzfa-posframe--vertico-geometry geom))
+      (let ((win (frame-root-window fzfa-posframe--vertico-frame)))
+        (set-window-dedicated-p win nil)
+        (set-window-buffer win buffer)
+        (unless (frame-visible-p fzfa-posframe--vertico-frame)
+          (make-frame-visible fzfa-posframe--vertico-frame))
+        win))
+     ;; Slow path: rebuild.
+     (t
+      (fzfa-posframe--dismiss-vertico)
+      (let* ((snapshot (fzfa-posframe--capture-locals buffer))
+             (frame (fzfa-posframe--with-top-frame parent
+                      (posframe-show
+                       buffer
+                       :parent-frame          parent
+                       :poshandler            #'fzfa-posframe-poshandler-side-by-side-left
+                       :width                 (car geom)
+                       :height                (cdr geom)
+                       :accept-focus          nil
+                       :respect-mode-line     fzfa-posframe-respect-mode-line
+                       :respect-header-line   fzfa-posframe-respect-header-line
+                       :internal-border-width fzfa-posframe-internal-border-width
+                       :internal-border-color (fzfa-posframe--border-color))))
+             (win (frame-root-window frame)))
+        (fzfa-posframe--reparent frame parent)
+        (fzfa-posframe--restore-locals buffer snapshot)
+        (set-window-dedicated-p win nil)
+        (setq fzfa-posframe--vertico-frame    frame
+              fzfa-posframe--vertico-geometry geom)
+        win)))))
 
 (defun fzfa-posframe--preview-show-advice (orig-fn buffer &optional pos)
   "Around advice for `fzfa-preview-show'; render via posframe when active.
@@ -562,9 +672,12 @@ already handles frame deletion for a helm session — deleting the frame
 here first strands `helm-cleanup' with `(helm--frame) = nil', which
 then reaches `(delete-frame nil)' at line 4351 and errors with
 \"Attempt to delete the sole visible or iconified frame\".  Orphan
-sweep for the helm posframe lives in the mode-disable path."
+sweep for the helm posframe lives in the mode-disable path.
+
+Hides — rather than deletes — the vertico posframe so its cache
+survives across sessions.  The full teardown lives on mode disable."
   (fzfa-posframe--dismiss)
-  (fzfa-posframe--dismiss-vertico))
+  (fzfa-posframe--hide-vertico))
 
 ;;; Frontend-specific routing
 
