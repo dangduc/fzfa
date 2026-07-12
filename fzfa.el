@@ -378,6 +378,13 @@ visible from :setup, :preview, :exit, and :return.  Use
   "Buffer-local debounce timer; lives in the minibuffer only.")
 (defvar-local fzfa--preview-last 'unset
   "Last previewed candidate in this minibuffer (for change detection).")
+(defvar-local fzfa--minibuffer-marker nil
+  "Buffer-local marker set on the fzfa minibuffer by `fzfa--preview-install'.
+
+Extensions (notably `fzfa-posframe') use this to detect whether a
+given minibuffer belongs to an fzfa session — needed because embark's
+nested completing-read stacks a fresh minibuffer whose display-buffer
+routing wants to peek at the parent-fzfa's context, not fire globally.")
 
 ;; Tofu
 
@@ -1183,15 +1190,25 @@ preview only fires via `fzfa-preview-key' / `fzfa-preview-current'."
   (let* ((delay (or delay fzfa-preview-delay))
          (mb (current-buffer))
          (run (lambda ()
-                (when-let* ((cand (fzfa--frontend-candidate)))
-                  (unless (equal cand fzfa--preview-last)
-                    (setq fzfa--preview-last cand)
-                    (fzfa--preview-call :preview cand))))))
+                ;; Suppress dispatch while a nested minibuffer is up
+                ;; (embark's action prompter or similar) — otherwise
+                ;; the idle timer would stomp embark's UI with a fresh
+                ;; preview swap.  Depth = 1 means we're inside just
+                ;; the fzfa session; > 1 means something nested.
+                (when (<= (minibuffer-depth) 1)
+                  (when-let* ((cand (fzfa--frontend-candidate)))
+                    (unless (equal cand fzfa--preview-last)
+                      (setq fzfa--preview-last cand)
+                      (fzfa--preview-call :preview cand)))))))
     (fzfa-preview-put :origin-window    (minibuffer-selected-window))
     (fzfa-preview-put :origin-buffer    (window-buffer
                                          (minibuffer-selected-window)))
     (fzfa-preview-put :default-directory default-directory)
-    (setq fzfa--preview-last 'unset)
+    (setq fzfa--preview-last 'unset
+          ;; Marker consulted by fzfa-posframe's embark-buffer routing
+          ;; to distinguish "this is a fzfa minibuffer" from a random
+          ;; other minibuffer that happens to be visible.
+          fzfa--minibuffer-marker t)
     (fzfa--preview-call :setup)
     (when delay
       (add-hook
@@ -1223,6 +1240,7 @@ preview only fires via `fzfa-preview-key' / `fzfa-preview-current'."
        (when (timerp fzfa--preview-timer)
          (cancel-timer fzfa--preview-timer)
          (setq fzfa--preview-timer nil))
+       (setq fzfa--minibuffer-marker nil)
        (fzfa--preview-call :preview nil)
        (fzfa--preview-call :exit))
      nil t)))

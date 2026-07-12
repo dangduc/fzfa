@@ -161,6 +161,25 @@ both settings fire together."
   :type '(repeat symbol)
   :group 'fzfa)
 
+(defcustom fzfa-posframe-embark-categories
+  '(embark-keybinding embark-become)
+  "Completion categories for embark's nested completing-read prompters.
+
+Consulted in `side-by-side' layout only.  Each symbol is merged into
+`vertico-multiform-categories' with a category-scoped override of
+`vertico-buffer-display-action' that routes the nested vertico buffer
+into the existing left (candidates) posframe — the nested prompter is
+just another completing-read, so it belongs in the same visual slot
+as the outer one it stacks on top of, not in a third floating frame.
+
+Defaults cover the two prompter shapes that arise from stock embark
+plus `embark-prefix-help-command':
+
+  embark-keybinding — `embark-prefix-help-command' / help-shaped prompts.
+  embark-become     — `embark-become' target picker."
+  :type '(repeat symbol)
+  :group 'fzfa)
+
 (defun fzfa-posframe--border-color ()
   "Resolve the posframe border color.
 
@@ -762,6 +781,16 @@ side-by-side falls back to inline vertico"))
                   base)))
           (push (cons cat (fzfa-posframe--multiform-merge cat settings))
                 fzfa-posframe--installed-vertico-categories))))
+    ;; Embark's nested completing-read (action prompter, `embark-become')
+    ;; is another completing-read, so it belongs in the same left/candidates
+    ;; slot as the outer fzfa completion it stacks on top of.
+    ;; `vertico-buffer's own restore hook swaps the outer buffer back into
+    ;; the pane when the nested completion exits.
+    (dolist (cat fzfa-posframe-embark-categories)
+      (unless (assq cat fzfa-posframe--installed-vertico-categories)
+        (push (cons cat (fzfa-posframe--multiform-merge
+                         cat '(vertico-buffer-mode)))
+              fzfa-posframe--installed-vertico-categories)))
     (unless (bound-and-true-p vertico-multiform-mode)
       (vertico-multiform-mode 1)
       (setq fzfa-posframe--enabled-vertico-multiform t)))))
@@ -1054,6 +1083,109 @@ in a posframe; using centered layout")))))
   (fzfa-posframe--uninstall-helm-routing)
   (fzfa-posframe--uninstall-ivy-routing))
 
+;;; Embark keymap-prompter filter (switch-frame from trackpad scroll)
+
+(declare-function embark-keymap-prompter "embark" (keymap update))
+
+(defvar fzfa-posframe--embark-swallow-commands
+  '(handle-switch-frame handle-focus-in handle-focus-out)
+  "Commands `embark-keymap-prompter' should treat as non-picked events.
+
+`embark-keymap-prompter's pcase catch-all returns any unrecognized
+command as the picked action.  When the actions posframe is a child
+frame, macOS trackpad scroll generates `switch-frame' events that bind
+to `handle-switch-frame' — landing in the catch-all and being picked
+as the action, which then runs a stale-state closure that later errors
+on the dead frame handle at drain time.
+
+Around advice at `fzfa-posframe--embark-prompter-around' re-invokes
+the prompter when the returned command is in this list.")
+
+(defun fzfa-posframe--embark-prompter-around (orig keymap update)
+  "Discard frame-focus command returns from embark's prompter, re-read.
+
+Only kicks in when `fzfa-posframe-mode' is active AND we are inside a
+fzfa session — so unrelated embark sessions keep normal semantics."
+  (if (and fzfa-posframe-mode
+           (fzfa-posframe--in-fzfa-session-p))
+      (let ((result (funcall orig keymap update)))
+        (while (memq result fzfa-posframe--embark-swallow-commands)
+          (setq result (funcall orig keymap update)))
+        result)
+    (funcall orig keymap update)))
+
+;;; Embark-actions routing (case 1: the verbose indicator buffer)
+
+(defvar fzfa-posframe--embark-actions-buffer " *Embark Actions*"
+  "Name of embark's verbose-indicator buffer we route into the preview frame.")
+
+(defvar fzfa-posframe--saved-display-buffer-entry nil
+  "Pointer back to the alist entry we pushed on `display-buffer-alist'.
+
+Kept so `--uninstall-embark-actions-routing' can `delq' precisely what
+we added rather than pattern-matching entries and risking a false hit
+on a user-installed entry that happens to reuse our functions.")
+
+(defun fzfa-posframe--in-fzfa-session-p ()
+  "Return non-nil when any live minibuffer belongs to an fzfa session.
+
+Walks the minibuffer stack (`\" *Minibuf-N*\"' buffers) rather than
+just checking the currently active one — embark's action prompter
+opens a nested minibuffer whose buffer does NOT have the fzfa marker,
+but the outer fzfa minibuffer is still on the stack underneath and
+should still be treated as \"we're in fzfa\"."
+  (cl-loop for depth from 1 to (minibuffer-depth)
+           for buf = (get-buffer (format " *Minibuf-%d*" depth))
+           thereis (and buf
+                        (buffer-local-value 'fzfa--minibuffer-marker buf))))
+
+(defun fzfa-posframe--embark-actions-condition (buf _action)
+  "`display-buffer-alist' condition for `\" *Embark Actions*\"' routing.
+
+Fires only when BUF names the embark verbose-indicator buffer AND we
+are inside an fzfa session — so non-fzfa embark sessions retain the
+user's own `embark-verbose-indicator-display-action' behavior."
+  (and (or (stringp buf) (bufferp buf))
+       (string= (if (bufferp buf) (buffer-name buf) buf)
+                fzfa-posframe--embark-actions-buffer)
+       (fzfa-posframe--in-fzfa-session-p)))
+
+(defun fzfa-posframe--display-embark-actions (buffer _alist)
+  "Display action routing BUFFER (embark's verbose actions) into the preview frame.
+
+The action buffer is a passive indicator, so it clobbers whatever the
+preview frame currently shows.  When embark closes and the next
+candidate hover fires, `fzfa--preview-call' repaints the preview
+naturally through the existing pipeline — no explicit restore needed."
+  (fzfa-posframe--show buffer)
+  (when-let* ((frame fzfa-posframe--preview-frame)
+              ((frame-live-p frame)))
+    (frame-root-window frame)))
+
+(defun fzfa-posframe--install-embark-actions-routing ()
+  "Prepend a scoped entry on `display-buffer-alist' for embark's actions buffer.
+
+Idempotent."
+  (let ((entry `(fzfa-posframe--embark-actions-condition
+                 (fzfa-posframe--display-embark-actions))))
+    (unless (member entry display-buffer-alist)
+      (setq fzfa-posframe--saved-display-buffer-entry entry)
+      (push entry display-buffer-alist)))
+  (with-eval-after-load 'embark
+    (advice-add 'embark-keymap-prompter :around
+                #'fzfa-posframe--embark-prompter-around)))
+
+(defun fzfa-posframe--uninstall-embark-actions-routing ()
+  "Remove the `display-buffer-alist' entry installed by mode-on."
+  (when fzfa-posframe--saved-display-buffer-entry
+    (setq display-buffer-alist
+          (delq fzfa-posframe--saved-display-buffer-entry
+                display-buffer-alist))
+    (setq fzfa-posframe--saved-display-buffer-entry nil))
+  (when (fboundp 'embark-keymap-prompter)
+    (advice-remove 'embark-keymap-prompter
+                   #'fzfa-posframe--embark-prompter-around)))
+
 ;;; Mode
 
 ;;;###autoload
@@ -1081,6 +1213,7 @@ All installed state is restored on disable."
     (remove-hook 'minibuffer-exit-hook
                  #'fzfa-posframe--minibuffer-exit)
     (fzfa-posframe--uninstall-frontend-routing)
+    (fzfa-posframe--uninstall-embark-actions-routing)
     (fzfa-posframe--uninstall-helm-preview-follow)
     (fzfa-posframe--dismiss)
     (fzfa-posframe--dismiss-vertico)
@@ -1097,7 +1230,8 @@ All installed state is restored on disable."
     (add-hook 'minibuffer-exit-hook
               #'fzfa-posframe--minibuffer-exit)
     (fzfa-posframe--install-helm-preview-follow)
-    (fzfa-posframe--install-frontend-routing))))
+    (fzfa-posframe--install-frontend-routing)
+    (fzfa-posframe--install-embark-actions-routing))))
 
 (provide 'fzfa-posframe)
 ;;; fzfa-posframe.el ends here
