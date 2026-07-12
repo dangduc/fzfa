@@ -283,6 +283,7 @@ Read at session start; changing it does not affect running sessions."
     (locate    . "locate")
     (mail      . "macOS Mail.app")
     (make      . "make / ninja targets")
+    (media-thumbnail . "Video thumbnails (media-thumbnail)")
     (music     . "macOS Music.app")
     (notmuch   . "notmuch mail search")
     (org       . "Org-mode headings")
