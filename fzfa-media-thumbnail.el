@@ -160,29 +160,27 @@ larger thumbnail)."
       (setq-local buffer-read-only t))
     buf))
 
-(defun fzfa-media-thumbnail--still-hovering-p (path origin-dir)
+(defun fzfa-media-thumbnail--still-hovering-p (path)
   "Return non-nil when the active fzfa session's candidate resolves to PATH.
 
-ORIGIN-DIR is the session's captured `default-directory' — passed
-explicitly because the sentinel fires in an arbitrary buffer context,
-so a plain `expand-file-name' on the relative candidate string would
-resolve against the wrong directory and miss.  Nil once the session
-has ended or the user has moved to another candidate."
+Consults `fzfa-resolve-candidate' which reads the session dynvars for
+the candidate's emitting source's :directory.  Nil once the session
+has ended (no minibuffer active → `fzfa--frontend-candidate' returns
+nil) or the user has moved to another candidate."
   (when-let* ((cand (fzfa--frontend-candidate)))
-    (equal path (expand-file-name cand origin-dir))))
+    (equal path (fzfa-resolve-candidate cand))))
 
-(defun fzfa-media-thumbnail--make-callback (path origin-win origin-dir)
+(defun fzfa-media-thumbnail--make-callback (path origin-win)
   "Return a `media-thumbnail-generate-async' callback for PATH.
 
-ORIGIN-WIN and ORIGIN-DIR are the fzfa origin window and directory
-captured at dispatch time — the sentinel fires outside the minibuffer's
-dynamic scope, so we restore both before `fzfa-preview-show' picks a
-display window and before checking whether the user is still hovering
-PATH (iOS cell-reuse pattern), so a stale generation doesn't stomp on
-a preview the user has since moved off of."
+ORIGIN-WIN is the fzfa origin window captured at dispatch time — the
+sentinel fires outside the minibuffer's dynamic scope, so we restore
+it before `fzfa-preview-show' picks a display window.  Only refreshes
+when the user is still hovering PATH (iOS cell-reuse pattern), so a
+stale generation doesn't stomp on a preview the user has moved off."
   (lambda (_file cache-path success-p)
     (when (and success-p
-               (fzfa-media-thumbnail--still-hovering-p path origin-dir)
+               (fzfa-media-thumbnail--still-hovering-p path)
                (window-live-p origin-win))
       (let ((buf (fzfa-media-thumbnail--image-buffer cache-path)))
         (with-selected-window origin-win
@@ -215,8 +213,7 @@ is still on PATH when it lands."
            :size size
            :callback (fzfa-media-thumbnail--make-callback
                       path
-                      (fzfa-preview-get :origin-window)
-                      (fzfa-preview-get :default-directory)))
+                      (fzfa-preview-get :origin-window)))
           (fzfa-media-thumbnail--generating-placeholder path))))))))
 
 ;;;###autoload
