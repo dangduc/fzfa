@@ -597,7 +597,7 @@ replay a past ~fzfa-*~ command's inputs (e.g. command, directory, query, etc).
 |----------------------------------+------------------------------------------------------------|
 | ~fzfa-sessions-max~              | In-memory ring cap (default 16)                            |
 | ~fzfa-sessions-exclude-commands~ | Commands to exclude from replay                            |
-| ~fzfa-replay-file~               | On-disk path (default ~~/.emacs.d/.fzfa-replay~)           |
+| ~fzfa-replay-file~               | On-disk path (default ~~/.emacs.d/cache/replay/fzfa-replay-<major>~) |
 | ~fzfa-replay-max-saved-items~    | On-disk ring cap (default 20)                              |
 | ~fzfa-replay-save-file-modes~    | Permission bits on the file (default ~#o600~ — owner-only) |
 | ~fzfa-replay-auto-save-interval~ | Idle seconds between background saves (default 300)        |

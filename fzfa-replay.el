@@ -44,7 +44,8 @@ same directory, different queries).  Same idea as
   :group 'fzfa-replay)
 
 (defcustom fzfa-replay-file
-  (locate-user-emacs-file ".fzfa-replay")
+  (locate-user-emacs-file
+   (format "cache/replay/fzfa-replay-%d" emacs-major-version))
   "File where `fzfa-replay-mode' persists the session list."
   :type 'file
   :group 'fzfa-replay)
