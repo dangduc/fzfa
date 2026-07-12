@@ -4597,6 +4597,15 @@ through here so all replay paths share one dispatch."
            ;; Let `fzfa--read''s capture site see the *replayed*
            ;; command (e.g. `fzfa-fd') instead of `fzfa-replay'.
            (this-command (or entry-cmd this-command))
+           ;; Restore the ambient dir the session was captured under.
+           ;; `fzfa--sessions-push' snapshots `default-directory' into
+           ;; the session's dedup key AND its `:directory' slot; without
+           ;; this rebind the replay always looks like a fresh session
+           ;; from wherever the picker was invoked from, so dedup fails
+           ;; and the picker keeps accumulating identical-looking
+           ;; entries every time you replay one.
+           (default-directory (or (plist-get session :directory)
+                                  default-directory))
            (result (fzfa--read specs
                                :prompt (plist-get session :prompt)
                                :narrow-idx (plist-get session :narrow-idx))))
