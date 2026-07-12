@@ -385,6 +385,14 @@ Extensions (notably `fzfa-posframe') use this to detect whether a
 given minibuffer belongs to an fzfa session — needed because embark's
 nested completing-read stacks a fresh minibuffer whose display-buffer
 routing wants to peek at the parent-fzfa's context, not fire globally.")
+(defvar-local fzfa--preview-run-fn nil
+  "Buffer-local reference to the preview `run' closure.
+
+Installed by `fzfa--preview-install' so `fzfa--frontend-exhibit' can
+call the closure right after `vertico--exhibit' populates candidates.
+Ties preview firing to actual candidate arrival instead of relying on
+`post-command-hook' — which does not fire while the user is idle
+waiting on a slow async producer.")
 
 ;; Tofu
 
@@ -537,7 +545,14 @@ Mark the char at (point) with the same property — the closest
 (defun fzfa--frontend-exhibit ()
   "Trigger a display refresh in the active completion UI.
 
-Handles vertico and icomplete.  `ivy' is handled separately."
+Handles vertico and icomplete.  `ivy' is handled separately.
+
+After the frontend commits new candidates, invokes
+`fzfa--preview-run-fn' if it is bound in the minibuffer buffer —
+this is how the initial preview lands for slow async producers, since
+`post-command-hook' does not fire while the user waits idly for the
+first batch of results.  Subsequent typing then re-triggers preview
+through the usual post-command-hook / idle-timer path."
   (when-let* ((win (active-minibuffer-window)))
     (with-selected-window win
       (cond
@@ -545,7 +560,9 @@ Handles vertico and icomplete.  `ivy' is handled separately."
         (setq vertico--input t)
         (vertico--exhibit))
        ((bound-and-true-p icomplete-mode)
-        (fzfa--icomplete-exhibit))))))
+        (fzfa--icomplete-exhibit)))
+      (when (functionp fzfa--preview-run-fn)
+        (funcall fzfa--preview-run-fn)))))
 
 (defun fzfa--frontend-push (ivy-push-fn)
   "Refresh the active completion display.
@@ -1208,7 +1225,20 @@ preview only fires via `fzfa-preview-key' / `fzfa-preview-current'."
           ;; Marker consulted by fzfa-posframe's embark-buffer routing
           ;; to distinguish "this is a fzfa minibuffer" from a random
           ;; other minibuffer that happens to be visible.
-          fzfa--minibuffer-marker t)
+          fzfa--minibuffer-marker t
+          ;; Expose `run' to `fzfa--frontend-exhibit' so preview fires
+          ;; the instant the frontend commits its first batch of
+          ;; candidates.  Without this, a session that starts with a
+          ;; pre-set query (replay, saved input, etc.) would install
+          ;; `post-command-hook' but never re-enter it: the user is
+          ;; idle waiting on async results, and timer-fires don't fire
+          ;; `post-command-hook'.  Piggybacking on exhibit ties preview
+          ;; to actual candidate readiness instead.
+          ;;
+          ;; Only wire it when auto-preview is enabled (DELAY set) —
+          ;; otherwise the user opted out of hover-fired previews
+          ;; entirely and only wants preview on explicit key press.
+          fzfa--preview-run-fn (and delay run))
     (fzfa--preview-call :setup)
     (when delay
       (add-hook
@@ -1240,7 +1270,8 @@ preview only fires via `fzfa-preview-key' / `fzfa-preview-current'."
        (when (timerp fzfa--preview-timer)
          (cancel-timer fzfa--preview-timer)
          (setq fzfa--preview-timer nil))
-       (setq fzfa--minibuffer-marker nil)
+       (setq fzfa--preview-run-fn nil
+             fzfa--minibuffer-marker nil)
        (fzfa--preview-call :preview nil)
        (fzfa--preview-call :exit))
      nil t)))
