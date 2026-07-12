@@ -234,16 +234,18 @@ disk reload round-trip."
           (let ((inhibit-message t))
             (message "fzfa-replay-save-list: dropped %d unreadable session(s)"
                      dropped)))
-        (with-temp-buffer
-          (insert fzfa-replay--save-file-header)
-          (insert "\n(setq fzfa-replay--persisted-sessions\n      '")
-          (prin1 safe (current-buffer))
-          (insert ")\n")
-          (write-region (point-min) (point-max)
-                        (expand-file-name fzfa-replay-file))
-          (when fzfa-replay-save-file-modes
-            (set-file-modes (expand-file-name fzfa-replay-file)
-                            fzfa-replay-save-file-modes))
+        (let* ((file (expand-file-name fzfa-replay-file))
+               (dir (file-name-directory file)))
+          (when (and dir (not (file-directory-p dir)))
+            (make-directory dir t))
+          (with-temp-buffer
+            (insert fzfa-replay--save-file-header)
+            (insert "\n(setq fzfa-replay--persisted-sessions\n      '")
+            (prin1 safe (current-buffer))
+            (insert ")\n")
+            (write-region (point-min) (point-max) file)
+            (when fzfa-replay-save-file-modes
+              (set-file-modes file fzfa-replay-save-file-modes)))
           ;; Sync the in-memory mirror to what we just wrote so the
           ;; next merge / picker sees the accumulated list without a
           ;; disk reload, and invalidate the async cache so any other
