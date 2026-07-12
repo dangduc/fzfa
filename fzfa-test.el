@@ -59,158 +59,158 @@
 
 ;;; fzfa-candidate-directory / fzfa-resolve-candidate
 
-(defmacro fzfa-test--with-session (specs candidates &rest body)
-  "Bind session dynvars for a fake fzfa session and run BODY.
+(defun fzfa-test--make-session (specs candidates)
+  "Build an `fzfa-session' with SPECS and CANDIDATES.
 
-SPECS is a list of source plists (indexed by source-idx).  CANDIDATES
-is an alist of (CAND-STRING . SOURCE-IDX)."
-  (declare (indent 2))
-  `(let ((fzfa--active-sources (vconcat ,specs))
-         (fzfa--candidate->source
-          (let ((h (make-hash-table :test 'equal)))
-            (dolist (c ,candidates) (puthash (car c) (cdr c) h))
-            h)))
-     ,@body))
+SPECS is a list of source plists.  CANDIDATES is an alist of
+\(CAND-STRING . SOURCE-IDX)."
+  (let ((h (make-hash-table :test 'equal)))
+    (dolist (c candidates) (puthash (car c) (cdr c) h))
+    (fzfa-session-create :specs (vconcat specs) :cand->src h)))
 
 ;;;; fzfa-candidate-directory
 
-(ert-deftest fzfa-candidate-directory-no-session ()
-  "Returns nil when no session is bound."
-  (let ((fzfa--active-sources nil)
-        (fzfa--candidate->source nil))
-    (should (null (fzfa-candidate-directory "foo.txt")))))
+(ert-deftest fzfa-candidate-directory-nil-session ()
+  "Returns nil when session is nil."
+  (should (null (fzfa-candidate-directory "foo.txt" nil))))
 
 (ert-deftest fzfa-candidate-directory-unknown-candidate ()
   "Returns nil when candidate is not in the source map."
-  (fzfa-test--with-session
-      '((:command "fd" :directory "/root/" :resolve-paths auto))
-      '(("foo.txt" . 0))
-    (should (null (fzfa-candidate-directory "not-a-known-candidate")))))
+  (let ((s (fzfa-test--make-session
+            '((:command "fd" :directory "/root/" :resolve-paths auto))
+            '(("foo.txt" . 0)))))
+    (should (null (fzfa-candidate-directory "not-known" s)))))
 
 (ert-deftest fzfa-candidate-directory-command-auto ()
   ":command source + :resolve-paths auto → returns :directory."
-  (fzfa-test--with-session
-      '((:command "fd" :directory "/root/" :resolve-paths auto))
-      '(("foo.txt" . 0))
-    (should (equal (fzfa-candidate-directory "foo.txt") "/root/"))))
+  (let ((s (fzfa-test--make-session
+            '((:command "fd" :directory "/root/" :resolve-paths auto))
+            '(("foo.txt" . 0)))))
+    (should (equal (fzfa-candidate-directory "foo.txt" s) "/root/"))))
 
 (ert-deftest fzfa-candidate-directory-candidates-auto ()
-  ":candidates source + :resolve-paths auto → nil (theme picker etc)."
-  (fzfa-test--with-session
-      '((:candidates ("modus" "ef") :directory "/anywhere/" :resolve-paths auto))
-      '(("modus" . 0))
-    (should (null (fzfa-candidate-directory "modus")))))
+  ":candidates source + :resolve-paths auto → nil."
+  (let ((s (fzfa-test--make-session
+            '((:candidates ("modus") :directory "/anywhere/" :resolve-paths auto))
+            '(("modus" . 0)))))
+    (should (null (fzfa-candidate-directory "modus" s)))))
 
 (ert-deftest fzfa-candidate-directory-explicit-t ()
   "Explicit :resolve-paths t returns :directory even without :command."
-  (fzfa-test--with-session
-      '((:candidates ("a.txt") :directory "/root/" :resolve-paths t))
-      '(("a.txt" . 0))
-    (should (equal (fzfa-candidate-directory "a.txt") "/root/"))))
+  (let ((s (fzfa-test--make-session
+            '((:candidates ("a.txt") :directory "/root/" :resolve-paths t))
+            '(("a.txt" . 0)))))
+    (should (equal (fzfa-candidate-directory "a.txt" s) "/root/"))))
 
 (ert-deftest fzfa-candidate-directory-explicit-nil ()
   "Explicit :resolve-paths nil overrides auto-t on :command sources."
-  (fzfa-test--with-session
-      '((:command "fd" :directory "/root/" :resolve-paths nil))
-      '(("foo.txt" . 0))
-    (should (null (fzfa-candidate-directory "foo.txt")))))
+  (let ((s (fzfa-test--make-session
+            '((:command "fd" :directory "/root/" :resolve-paths nil))
+            '(("foo.txt" . 0)))))
+    (should (null (fzfa-candidate-directory "foo.txt" s)))))
 
 (ert-deftest fzfa-candidate-directory-multi-source ()
   "Each candidate resolves against its OWN source's directory."
-  (fzfa-test--with-session
-      '((:command "fd" :directory "/videos/" :resolve-paths auto)
-        (:command "fd" :directory "/docs/"   :resolve-paths auto))
-      '(("movie.mkv" . 0) ("paper.pdf" . 1))
-    (should (equal (fzfa-candidate-directory "movie.mkv") "/videos/"))
-    (should (equal (fzfa-candidate-directory "paper.pdf") "/docs/"))))
+  (let ((s (fzfa-test--make-session
+            '((:command "fd" :directory "/videos/" :resolve-paths auto)
+              (:command "fd" :directory "/docs/"   :resolve-paths auto))
+            '(("movie.mkv" . 0) ("paper.pdf" . 1)))))
+    (should (equal (fzfa-candidate-directory "movie.mkv" s) "/videos/"))
+    (should (equal (fzfa-candidate-directory "paper.pdf" s) "/docs/"))))
 
 (ert-deftest fzfa-candidate-directory-nil-directory ()
   "Source with nil :directory returns nil."
-  (fzfa-test--with-session
-      '((:command "fd" :directory nil :resolve-paths auto))
-      '(("foo.txt" . 0))
-    (should (null (fzfa-candidate-directory "foo.txt")))))
+  (let ((s (fzfa-test--make-session
+            '((:command "fd" :directory nil :resolve-paths auto))
+            '(("foo.txt" . 0)))))
+    (should (null (fzfa-candidate-directory "foo.txt" s)))))
 
 ;;;; fzfa-resolve-candidate
 
-(ert-deftest fzfa-resolve-candidate-no-session ()
-  "Returns cand unchanged when no session."
-  (let ((fzfa--active-sources nil)
-        (fzfa--candidate->source nil))
-    (should (equal (fzfa-resolve-candidate "foo.txt") "foo.txt"))))
+(ert-deftest fzfa-resolve-candidate-nil-session ()
+  "Returns cand unchanged when session is nil."
+  (should (equal (fzfa-resolve-candidate "foo.txt" nil) "foo.txt")))
 
 (ert-deftest fzfa-resolve-candidate-path-source ()
   "Relative candidate is expanded against source's :directory."
-  (fzfa-test--with-session
-      '((:command "fd" :directory "/videos/" :resolve-paths auto))
-      '(("movie.mkv" . 0))
-    (should (equal (fzfa-resolve-candidate "movie.mkv")
+  (let ((s (fzfa-test--make-session
+            '((:command "fd" :directory "/videos/" :resolve-paths auto))
+            '(("movie.mkv" . 0)))))
+    (should (equal (fzfa-resolve-candidate "movie.mkv" s)
                    "/videos/movie.mkv"))))
 
 (ert-deftest fzfa-resolve-candidate-non-path-source ()
   "Non-path source returns candidate unchanged."
-  (fzfa-test--with-session
-      '((:candidates ("modus" "ef") :directory "/anywhere/" :resolve-paths auto))
-      '(("modus" . 0))
-    (should (equal (fzfa-resolve-candidate "modus") "modus"))))
+  (let ((s (fzfa-test--make-session
+            '((:candidates ("modus") :directory "/anywhere/" :resolve-paths auto))
+            '(("modus" . 0)))))
+    (should (equal (fzfa-resolve-candidate "modus" s) "modus"))))
 
 (ert-deftest fzfa-resolve-candidate-absolute-passthrough ()
-  "Already-absolute candidate is returned unchanged when expanded."
-  (fzfa-test--with-session
-      '((:command "fd" :directory "/root/" :resolve-paths auto))
-      '(("/other/place.txt" . 0))
-    (should (equal (fzfa-resolve-candidate "/other/place.txt")
+  "Already-absolute candidate returns unchanged."
+  (let ((s (fzfa-test--make-session
+            '((:command "fd" :directory "/root/" :resolve-paths auto))
+            '(("/other/place.txt" . 0)))))
+    (should (equal (fzfa-resolve-candidate "/other/place.txt" s)
                    "/other/place.txt"))))
 
 (ert-deftest fzfa-resolve-candidate-grep-suffix ()
-  "FILE:LINE:CONTENT candidates keep their suffix; only the file part is expanded."
-  (fzfa-test--with-session
-      '((:command "rg" :directory "/proj/" :resolve-paths auto))
-      '(("src/foo.el:42:  (message \"hi\")" . 0))
-    (should (equal (fzfa-resolve-candidate "src/foo.el:42:  (message \"hi\")")
+  "FILE:LINE:CONTENT candidates keep their suffix; only FILE is expanded."
+  (let ((s (fzfa-test--make-session
+            '((:command "rg" :directory "/proj/" :resolve-paths auto))
+            '(("src/foo.el:42:  (message \"hi\")" . 0)))))
+    (should (equal (fzfa-resolve-candidate "src/foo.el:42:  (message \"hi\")" s)
                    "/proj/src/foo.el:42:  (message \"hi\")"))))
 
 (ert-deftest fzfa-resolve-candidate-multi-source ()
   "Different candidates resolve against their own source's dir."
-  (fzfa-test--with-session
-      '((:command "fd" :directory "/videos/" :resolve-paths auto)
-        (:command "fd" :directory "/docs/"   :resolve-paths auto))
-      '(("movie.mkv" . 0) ("paper.pdf" . 1))
-    (should (equal (fzfa-resolve-candidate "movie.mkv")  "/videos/movie.mkv"))
-    (should (equal (fzfa-resolve-candidate "paper.pdf")  "/docs/paper.pdf"))))
+  (let ((s (fzfa-test--make-session
+            '((:command "fd" :directory "/videos/" :resolve-paths auto)
+              (:command "fd" :directory "/docs/"   :resolve-paths auto))
+            '(("movie.mkv" . 0) ("paper.pdf" . 1)))))
+    (should (equal (fzfa-resolve-candidate "movie.mkv" s) "/videos/movie.mkv"))
+    (should (equal (fzfa-resolve-candidate "paper.pdf" s) "/docs/paper.pdf"))))
 
 (ert-deftest fzfa-resolve-candidate-ambient-dir-irrelevant ()
-  "Regression: candidate resolves to source's dir regardless of `default-directory'.
-
-`expand-file-name' alone would consult ambient `default-directory'
-and misresolve candidates emitted from a session recorded elsewhere
-(replay from ~/scratch of a session recorded in /videos/)."
-  (fzfa-test--with-session
-      '((:command "fd" :directory "/videos/" :resolve-paths auto))
-      '(("movie.mkv" . 0))
+  "Regression: resolves to source's dir regardless of `default-directory'."
+  (let ((s (fzfa-test--make-session
+            '((:command "fd" :directory "/videos/" :resolve-paths auto))
+            '(("movie.mkv" . 0)))))
     (let ((default-directory "/completely/unrelated/"))
-      (should (equal (fzfa-resolve-candidate "movie.mkv")
+      (should (equal (fzfa-resolve-candidate "movie.mkv" s)
                      "/videos/movie.mkv")))))
 
 (ert-deftest fzfa-resolve-candidate-empty-string ()
   "Empty candidate string is returned unchanged."
-  (fzfa-test--with-session
-      '((:command "fd" :directory "/root/" :resolve-paths auto))
-      '(("" . 0))
-    (should (equal (fzfa-resolve-candidate "") ""))))
+  (let ((s (fzfa-test--make-session
+            '((:command "fd" :directory "/root/" :resolve-paths auto))
+            '(("" . 0)))))
+    (should (equal (fzfa-resolve-candidate "" s) ""))))
 
 (ert-deftest fzfa-resolve-candidate-strips-tofu ()
-  "Multi-source tofu-suffixed candidates resolve without the suffix.
-
-The hash is keyed by the TAGGED form (clean + tofu-suffix) so the
-disambiguation works cross-source; the returned absolute path must
-have the tofu char stripped so it names an actual filesystem file."
+  "Multi-source tofu-suffixed candidates resolve without the suffix."
   (let* ((clean "foo.txt")
-         (tagged (concat clean (fzfa--tofu-suffix 0))))
-    (fzfa-test--with-session
-        '((:command "fd" :directory "/root/" :resolve-paths auto))
-        `((,tagged . 0))
-      (should (equal (fzfa-resolve-candidate tagged) "/root/foo.txt")))))
+         (tagged (concat clean (fzfa--tofu-suffix 0)))
+         (s (fzfa-test--make-session
+             '((:command "fd" :directory "/root/" :resolve-paths auto))
+             `((,tagged . 0)))))
+    (should (equal (fzfa-resolve-candidate tagged s) "/root/foo.txt"))))
+
+;;;; fzfa-session-source-of
+
+(ert-deftest fzfa-session-source-of-basic ()
+  "Returns the emitting source's plist."
+  (let ((s (fzfa-test--make-session
+            '((:command "fd" :directory "/videos/" :resolve-paths auto)
+              (:command "fd" :directory "/docs/"   :resolve-paths auto))
+            '(("movie.mkv" . 0) ("paper.pdf" . 1)))))
+    (should (equal (plist-get (fzfa-session-source-of s "movie.mkv")
+                              :directory)
+                   "/videos/"))
+    (should (equal (plist-get (fzfa-session-source-of s "paper.pdf")
+                              :directory)
+                   "/docs/"))
+    (should (null (fzfa-session-source-of s "not-in-map")))))
 
 ;;; fzfa--default-dir
 
@@ -707,16 +707,16 @@ when the inner sources arrive without `:narrow'."
 (ert-deftest fzfa-grep-preview-parses-candidate ()
   "Grep preview accepts FILE:LINE:CONTENT and ignores malformed input."
   ;; No-op for nil / wrong shape — must not error.
-  (fzfa--grep-preview nil)
-  (fzfa--grep-preview "no-colons")
-  (fzfa--grep-preview "only:one-colon")
+  (fzfa--grep-preview nil nil)
+  (fzfa--grep-preview "no-colons" nil)
+  (fzfa--grep-preview "only:one-colon" nil)
   ;; Well-formed candidate to a nonexistent path is a silent no-op.
-  (fzfa--grep-preview "no-such-file.xyz:1:irrelevant"))
+  (fzfa--grep-preview "no-such-file.xyz:1:irrelevant" nil))
 
 (ert-deftest fzfa-buffer-preview-handles-missing-buffer ()
   "Buffer preview is a silent no-op when the named buffer does not exist."
-  (fzfa--buffer-preview nil)
-  (fzfa--buffer-preview "*no-such-buffer*-fzfa-test*"))
+  (fzfa--buffer-preview nil nil)
+  (fzfa--buffer-preview "*no-such-buffer*-fzfa-test*" nil))
 
 (ert-deftest fzfa-temporary-files-creates-and-kills ()
   "Opener creates an ephemeral buffer for a new file and kills it on cleanup."
@@ -749,9 +749,9 @@ when the inner sources arrive without `:narrow'."
     (unwind-protect
         (let ((fzfa--preview-session (list nil))
               (fzfa-preview-file-size-limit 0))
-          (fzfa--file-preview-setup)
+          (fzfa--file-preview-setup nil)
           ;; Limit of 0 disables — opener should not produce a buffer.
-          (fzfa--file-preview tmpfile)
+          (fzfa--file-preview tmpfile nil)
           ;; Nothing was opened (no file-visiting buffer for our path).
           (should-not (find-buffer-visiting tmpfile)))
       (delete-file tmpfile))))
@@ -759,8 +759,8 @@ when the inner sources arrive without `:narrow'."
 (ert-deftest fzfa-multi-router-routes-preview-per-source ()
   "Router's :preview dispatches to the source identified by CAND's tagged idx."
   (let* ((calls nil)
-         (h0 (list :preview (lambda (c) (push (cons 0 c) calls))))
-         (h1 (list :preview (lambda (c) (push (cons 1 c) calls))))
+         (h0 (list :preview (lambda (c _s) (push (cons 0 c) calls))))
+         (h1 (list :preview (lambda (c _s) (push (cons 1 c) calls))))
          (fzfa-preview-functions `((cat-a :preview ,(plist-get h0 :preview))
                                    (cat-b :preview ,(plist-get h1 :preview))))
          (fzfa-preview-delay 0.3)
@@ -774,15 +774,15 @@ when the inner sources arrive without `:narrow'."
     (fzfa-preview-put :origin-buffer nil)
     (fzfa-preview-put :default-directory "/")
     ;; Run :setup → broadcasts to both sources.
-    (funcall (plist-get router :setup))
+    (funcall (plist-get router :setup) nil)
     ;; Source 0 candidate
     (let ((c0 (propertize "alpha" 'fzfa-src-idx 0)))
       (puthash c0 0 candidate->source)
-      (funcall (plist-get router :preview) c0))
+      (funcall (plist-get router :preview) c0 nil))
     ;; Source 1 candidate
     (let ((c1 (propertize "beta" 'fzfa-src-idx 1)))
       (puthash c1 1 candidate->source)
-      (funcall (plist-get router :preview) c1))
+      (funcall (plist-get router :preview) c1 nil))
     (should (equal (reverse calls)
                    '((0 . "alpha") (1 . "beta"))))))
 
@@ -798,8 +798,8 @@ when the inner sources arrive without `:narrow'."
 (ert-deftest fzfa-multi-router-return-routes-selection ()
   "On :return, the selected source gets CAND; others get nil."
   (let* ((returns nil)
-         (h0 (list :return (lambda (c) (push (cons 0 c) returns))))
-         (h1 (list :return (lambda (c) (push (cons 1 c) returns))))
+         (h0 (list :return (lambda (c _s) (push (cons 0 c) returns))))
+         (h1 (list :return (lambda (c _s) (push (cons 1 c) returns))))
          (fzfa-preview-functions `((cat-a :return ,(plist-get h0 :return)
                                           :preview ignore)
                                    (cat-b :return ,(plist-get h1 :return)
@@ -814,9 +814,9 @@ when the inner sources arrive without `:narrow'."
     (fzfa-preview-put :origin-window nil)
     (fzfa-preview-put :origin-buffer nil)
     (fzfa-preview-put :default-directory "/")
-    (funcall (plist-get router :setup))
+    (funcall (plist-get router :setup) nil)
     (puthash sel 1 candidate->source)
-    (funcall (plist-get router :return) sel)
+    (funcall (plist-get router :return) sel nil)
     ;; Source 1 got the candidate; source 0 got nil.
     (should (equal (sort (copy-sequence returns) (lambda (a b)
                                                    (< (car a) (car b))))

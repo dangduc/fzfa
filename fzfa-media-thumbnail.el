@@ -160,33 +160,27 @@ larger thumbnail)."
       (setq-local buffer-read-only t))
     buf))
 
-(defun fzfa-media-thumbnail--still-hovering-p (path)
-  "Return non-nil when the active fzfa session's candidate resolves to PATH.
-
-Consults `fzfa-resolve-candidate' which reads the session dynvars for
-the candidate's emitting source's :directory.  Nil once the session
-has ended (no minibuffer active → `fzfa--frontend-candidate' returns
-nil) or the user has moved to another candidate."
+(defun fzfa-media-thumbnail--still-hovering-p (path session)
+  "Return non-nil when SESSION's candidate resolves to PATH."
   (when-let* ((cand (fzfa--frontend-candidate)))
-    (equal path (fzfa-resolve-candidate cand))))
+    (equal path (fzfa-resolve-candidate cand session))))
 
-(defun fzfa-media-thumbnail--make-callback (path origin-win)
+(defun fzfa-media-thumbnail--make-callback (path origin-win session)
   "Return a `media-thumbnail-generate-async' callback for PATH.
 
-ORIGIN-WIN is the fzfa origin window captured at dispatch time — the
-sentinel fires outside the minibuffer's dynamic scope, so we restore
-it before `fzfa-preview-show' picks a display window.  Only refreshes
-when the user is still hovering PATH (iOS cell-reuse pattern), so a
-stale generation doesn't stomp on a preview the user has moved off."
+ORIGIN-WIN is the fzfa origin window; SESSION is the fzfa session at
+dispatch time.  The sentinel only refreshes when the user is still
+hovering PATH (iOS cell-reuse pattern), so a stale generation doesn't
+stomp on a preview the user has moved off."
   (lambda (_file cache-path success-p)
     (when (and success-p
-               (fzfa-media-thumbnail--still-hovering-p path)
+               (fzfa-media-thumbnail--still-hovering-p path session)
                (window-live-p origin-win))
       (let ((buf (fzfa-media-thumbnail--image-buffer cache-path)))
         (with-selected-window origin-win
           (fzfa-preview-show buf))))))
 
-(defun fzfa-media-thumbnail--dispatch (path)
+(defun fzfa-media-thumbnail--dispatch (path session)
   "Return a preview buffer for PATH when it names a video file.
 
 Non-video paths return nil so `fzfa--file-preview' falls through to
@@ -213,7 +207,8 @@ is still on PATH when it lands."
            :size size
            :callback (fzfa-media-thumbnail--make-callback
                       path
-                      (fzfa-preview-get :origin-window)))
+                      (fzfa-preview-get :origin-window)
+                      session))
           (fzfa-media-thumbnail--generating-placeholder path))))))))
 
 ;;;###autoload

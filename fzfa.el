@@ -366,14 +366,12 @@ Priority: `fzfa-directory' > project backend > `default-directory'.")
 
 ;; Preview Variables
 
-(defvar fzfa--preview-session)
-
 (defvar fzfa--preview-session nil
-  "Active preview session: (HANDLER . STATE-PLIST).
+  "Active preview cell for the in-flight dispatch: (HANDLER . STATE-PLIST).
 
-`let'-bound by `fzfa-sync/async-completing-read' so the session is
-visible from :setup, :preview, :exit, and :return.  Use
-`fzfa-preview-get' / `fzfa-preview-put' to access the state plist.")
+`let'-bound by the router's broadcast to the current source's cell so
+`:setup', `:preview', `:exit', and `:return' handlers see per-source
+state via `fzfa-preview-get' / `fzfa-preview-put'.")
 
 (defvar-local fzfa--preview-timer nil
   "Buffer-local debounce timer; lives in the minibuffer only.")
@@ -386,6 +384,13 @@ Extensions (notably `fzfa-posframe') use this to detect whether a
 given minibuffer belongs to an fzfa session — needed because embark's
 nested completing-read stacks a fresh minibuffer whose display-buffer
 routing wants to peek at the parent-fzfa's context, not fire globally.")
+(defvar-local fzfa--minibuffer-session nil
+  "Buffer-local `fzfa-session' for the current fzfa minibuffer.
+
+Set by `fzfa--preview-install' at session open, cleared on
+`minibuffer-exit-hook'.  Read via `fzfa--current-session' by
+fixed-arity integrations that can't take session by parameter (embark
+transformer, `fzfa-apply-current' from a keybinding).")
 (defvar-local fzfa--preview-run-fn nil
   "Buffer-local reference to the preview `run' closure.
 
@@ -905,7 +910,7 @@ Silently no-ops when no `:apply' is defined for the source/session."
   (interactive)
   (when-let* ((cand (fzfa--frontend-candidate))
               (apply (fzfa--resolve-apply cand))
-              (resolved (fzfa-resolve-candidate cand))
+              (resolved (fzfa-resolve-candidate cand (fzfa--current-session)))
               (origin (or (minibuffer-selected-window) (selected-window))))
     (condition-case err
         (with-selected-window origin
@@ -949,9 +954,10 @@ Looks up the active session's preview handler and dispatches `:preview'
 with the current candidate.  Silently no-ops when no handler is
 registered for this session."
   (interactive)
-  (when-let* ((cand (fzfa--frontend-candidate)))
+  (when-let* ((cand (fzfa--frontend-candidate))
+              (session (fzfa--current-session)))
     (setq fzfa--preview-last cand)
-    (fzfa--preview-call :preview cand)))
+    (fzfa--preview-call :preview session cand)))
 
 (defun fzfa--minibuffer-install-preview-key ()
   "Bind `fzfa-preview-key' to `fzfa-preview-current' in the active minibuffer.
@@ -997,10 +1003,9 @@ Set to 0 to disable file preview entirely without dropping the
 (defcustom fzfa-file-preview-dispatch-functions nil
   "Abnormal hook consulted by `fzfa--file-preview' before the default handler.
 
-Each function is called with one argument, PATH (the expanded, readable
-file name of the candidate).  Return a live buffer to use as the
-preview; return nil to defer to subsequent functions or the built-in
-text buffer path.  The first non-nil return wins.
+Each function is called with `(PATH SESSION)'.  Return a live buffer
+to use as the preview; return nil to defer to subsequent functions or
+the built-in text buffer path.  The first non-nil return wins.
 
 Extensions attach here to intercept specific file types — e.g.,
 `fzfa-media-thumbnail-setup' routes video files to an ffmpeg-generated
@@ -1120,12 +1125,16 @@ or `setq') to add categories of your own."
   :group 'fzfa)
 
 (defun fzfa-preview-get (key &optional default)
-  "Return KEY from the active preview session's state plist, or DEFAULT."
+  "Return KEY from the current preview cell's state plist, or DEFAULT.
+
+Called by preview handlers to reach per-source state (`:opener',
+`:origin-window', `:default-directory') that :setup stashed on the
+cell.  Only meaningful during handler invocation."
   (let ((cell (plist-member (cdr fzfa--preview-session) key)))
     (if cell (cadr cell) default)))
 
 (defun fzfa-preview-put (key value)
-  "Set KEY to VALUE in the active preview session's state plist."
+  "Set KEY to VALUE on the current preview cell's state plist."
   (setcdr fzfa--preview-session
           (plist-put (cdr fzfa--preview-session) key value)))
 
@@ -1147,13 +1156,11 @@ persistent-action wiring both need the handler regardless of delay."
    ((and (listp preview) preview) preview)
    (t (alist-get category fzfa-preview-functions))))
 
-(defun fzfa--preview-call (action &rest args)
-  "Dispatch ACTION to the active session's handler with ARGS.
+(defun fzfa--preview-call (action session &rest args)
+  "Dispatch ACTION to the current cell's handler with ARGS and SESSION.
 
-Selects the captured origin window, makes its buffer current, rebinds
-`default-directory' to the value captured at install time, and traps
-errors so a bad handler can't break completion.  No-op when ACTION has
-no slot in the handler or when there is no active session."
+Handlers are invoked as (apply FN ARGS SESSION) — their signature is
+\(cand session)."
   (when-let* ((handler (car fzfa--preview-session))
               (fn (plist-get handler action)))
     (let ((win (fzfa-preview-get :origin-window))
@@ -1164,14 +1171,14 @@ no slot in the handler or when there is no active session."
               (with-selected-window win
                 (with-current-buffer buf
                   (let ((default-directory (or dir default-directory)))
-                    (apply fn args))))
+                    (apply fn (append args (list session))))))
             (let ((default-directory (or dir default-directory)))
-              (apply fn args)))
+              (apply fn (append args (list session)))))
         (error
          (message "fzfa preview %s error: %s"
                   action (error-message-string err)))))))
 
-(defun fzfa--preview-install (&optional delay)
+(defun fzfa--preview-install (session &optional delay)
   "Install live preview in the current minibuffer for the active session.
 
 Call from inside a `minibuffer-with-setup-hook' lambda.  Reads the
@@ -1200,30 +1207,32 @@ preview only fires via `fzfa-preview-key' / `fzfa-preview-current'."
                   (when-let* ((cand (fzfa--frontend-candidate)))
                     (unless (equal cand fzfa--preview-last)
                       (setq fzfa--preview-last cand)
-                      (fzfa--preview-call :preview cand)))))))
-    (fzfa-preview-put :origin-window    (minibuffer-selected-window))
-    (fzfa-preview-put :origin-buffer    (window-buffer
-                                         (minibuffer-selected-window)))
+                      (fzfa--preview-call :preview session cand)))))))
+    (fzfa-preview-put :origin-window (minibuffer-selected-window))
+    (fzfa-preview-put :origin-buffer (window-buffer
+                                      (minibuffer-selected-window)))
     (fzfa-preview-put :default-directory default-directory)
     (setq fzfa--preview-last 'unset
           ;; Marker consulted by fzfa-posframe's embark-buffer routing
           ;; to distinguish "this is a fzfa minibuffer" from a random
           ;; other minibuffer that happens to be visible.
           fzfa--minibuffer-marker t
+          ;; Session pointer for fixed-arity third-party integrations
+          ;; (embark transformer, mostly) — looked up on the active
+          ;; minibuffer via `fzfa--current-session'.
+          fzfa--minibuffer-session session
           ;; Expose `run' to `fzfa--frontend-exhibit' so preview fires
           ;; the instant the frontend commits its first batch of
-          ;; candidates.  Without this, a session that starts with a
-          ;; pre-set query (replay, saved input, etc.) would install
-          ;; `post-command-hook' but never re-enter it: the user is
-          ;; idle waiting on async results, and timer-fires don't fire
-          ;; `post-command-hook'.  Piggybacking on exhibit ties preview
-          ;; to actual candidate readiness instead.
+          ;; candidates.  A session that starts with a pre-set query
+          ;; (replay) never re-enters `post-command-hook' otherwise:
+          ;; the user is idle waiting on async results, and
+          ;; timer-fires don't touch `post-command-hook'.
           ;;
           ;; Only wire it when auto-preview is enabled (DELAY set) —
           ;; otherwise the user opted out of hover-fired previews
           ;; entirely and only wants preview on explicit key press.
           fzfa--preview-run-fn (and delay run))
-    (fzfa--preview-call :setup)
+    (fzfa--preview-call :setup session)
     (when delay
       (add-hook
        'post-command-hook
@@ -1255,18 +1264,15 @@ preview only fires via `fzfa-preview-key' / `fzfa-preview-current'."
          (cancel-timer fzfa--preview-timer)
          (setq fzfa--preview-timer nil))
        (setq fzfa--preview-run-fn nil
-             fzfa--minibuffer-marker nil)
-       (fzfa--preview-call :preview nil)
-       (fzfa--preview-call :exit))
+             fzfa--minibuffer-marker nil
+             fzfa--minibuffer-session nil)
+       (fzfa--preview-call :preview session nil)
+       (fzfa--preview-call :exit session))
      nil t)))
 
-(defun fzfa--preview-return (cand)
-  "Dispatch :return on the active session with CAND (nil = aborted).
-
-Called from the constructors after `completing-read' unwinds.  The
-session `let'-binding still encloses this call, so handlers see their
-stashed state and the captured `default-directory'."
-  (fzfa--preview-call :return cand))
+(defun fzfa--preview-return (cand session)
+  "Dispatch :return on SESSION with CAND (nil = aborted)."
+  (fzfa--preview-call :return session cand))
 
 ;;; Built-in preview handlers
 
@@ -1384,19 +1390,17 @@ Public helper for `:preview' handlers to call."
           (run-hooks 'fzfa-after-preview-hook)))
       win)))
 
-(defun fzfa--grep-preview (cand)
+(defun fzfa--grep-preview (cand session)
   "Open the FILE from a FILE:LINE:CONTENT grep CAND at LINE for preview.
 
-Resolves FILE against CAND's source's :directory via
-`fzfa-candidate-directory' — that's the search root grep was invoked
-under, and the base for the FILE part.  Falls back to
-`default-directory' when no session is in scope (e.g. embark preview
-outside fzfa)."
+Resolves FILE against CAND's source's :directory — the search root
+grep ran under."
   (when (and cand
              (string-match "\\`\\(.+?\\):\\([0-9]+\\):" cand))
     (let* ((file (match-string 1 cand))
            (line (string-to-number (match-string 2 cand)))
-           (dir  (or (fzfa-candidate-directory cand) default-directory))
+           (dir  (or (fzfa-candidate-directory cand session)
+                     default-directory))
            (path (expand-file-name file dir)))
       (when (file-readable-p path)
         (let ((buf (fzfa-with-quiet-find-file
@@ -1408,7 +1412,7 @@ outside fzfa)."
               (forward-line (1- line))))
           (fzfa-preview-show buf))))))
 
-(defun fzfa--location-preview (cand)
+(defun fzfa--location-preview (cand _session)
   "Preview SOURCE at LINE for an `fzfa-location' CAND.
 
 Reads `(SOURCE . LINE)' off CAND's `fzfa-location' text property.
@@ -1434,7 +1438,7 @@ is missing or the target cannot be resolved."
                      (point))))))
       (fzfa-preview-show buf pos))))
 
-(defun fzfa--buffer-preview (cand)
+(defun fzfa--buffer-preview (cand _session)
   "Show CAND (a buffer name) in a side window for preview."
   (when-let* ((buf (and cand (get-buffer cand))))
     (fzfa-preview-show buf)))
@@ -1476,7 +1480,7 @@ though variable `delay-mode-hooks' suppresses `global-font-lock-mode'."
                   (fzfa--disassociate buf)
                   buf)))))))))
 
-(defun fzfa--file-preview-setup ()
+(defun fzfa--file-preview-setup (_session)
   "Initialize a fresh `fzfa--temporary-files' opener for this session."
   (fzfa-preview-put :opener (fzfa--temporary-files)))
 
@@ -1506,7 +1510,7 @@ was another oversized candidate or a normal file."
       (setq-local buffer-read-only t))
     buf))
 
-(defun fzfa--file-preview (cand)
+(defun fzfa--file-preview (cand session)
   "Open CAND (a file or directory path) for preview.
 
 `fzfa-file-preview-dispatch-functions' gets first crack at each
@@ -1518,7 +1522,7 @@ snappy on multi-megabyte binaries.  Directories are always previewed
 via `dired-mode' (from `find-file-noselect')."
   (when (and cand fzfa-preview-file-size-limit
              (> fzfa-preview-file-size-limit 0))
-    (let ((path (fzfa-resolve-candidate cand)))
+    (let ((path (fzfa-resolve-candidate cand session)))
       (when (file-readable-p path)
         (cond
          ((file-directory-p path)
@@ -1526,7 +1530,8 @@ via `dired-mode' (from `find-file-noselect')."
                       (buf (funcall opener path)))
             (fzfa-preview-show buf)))
          ((when-let* ((buf (run-hook-with-args-until-success
-                            'fzfa-file-preview-dispatch-functions path)))
+                            'fzfa-file-preview-dispatch-functions
+                            path session)))
             (fzfa-preview-show buf)
             t))
          (t
@@ -1540,14 +1545,15 @@ via `dired-mode' (from `find-file-noselect')."
               (fzfa-preview-show
                (fzfa--file-preview-too-large path size)))))))))))
 
-(defun fzfa--file-preview-return (cand)
+(defun fzfa--file-preview-return (cand session)
   "Promote CAND's buffer (if accepted) and kill the remaining ephemerals.
 
 The promoted buffer survives so the caller's subsequent `find-file'
 reuses it instead of re-loading from disk."
   (when-let* ((opener (fzfa-preview-get :opener)))
     (when cand
-      (when-let* ((buf (find-buffer-visiting (fzfa-resolve-candidate cand))))
+      (when-let* ((buf (find-buffer-visiting
+                        (fzfa-resolve-candidate cand session))))
         (funcall opener buf)))
     (funcall opener)))
 
@@ -2064,53 +2070,36 @@ their own context or pass t/nil explicitly."
       (expand-file-name result directory)
     result))
 
-;; Forward declarations for the resolver helpers; the dynvars are
-;; defined later in the file (near the reader) but referenced here.
-(defvar fzfa--active-sources)
-(defvar fzfa--candidate->source)
-
-(defun fzfa-candidate-directory (cand)
+(defun fzfa-candidate-directory (cand session)
   "Return CAND's emitting source's :directory, or nil.
 
-Consults the session dynvars (`fzfa--candidate->source' +
-`fzfa--active-sources') to find the source that emitted CAND, then
-that source's `:directory' — but only when the source declares its
-candidates ARE paths.  That declaration comes from `:resolve-paths':
+Looks up CAND in SESSION's `cand->src' hash, gets that source's plist
+from SESSION's `specs' vector, and returns its `:directory' — but only
+when the source declares its candidates ARE paths, via `:resolve-paths':
 
-  auto (default) — treated as t when the source has a `:command'
-                    (fd / rg / etc emit paths), nil otherwise
-                    (candidates lists usually don't).
-  t              — explicit path-shaped.
-  nil            — explicit non-path-shaped.
+  auto — treated as t when the source has a `:command' (fd / rg / etc
+         emit paths), nil otherwise (candidates lists usually don't).
+  t    — explicit path-shaped.
+  nil  — explicit non-path-shaped.
 
-Returns nil when the session is not active, CAND is not in the map,
-or the source is non-path-shaped by the rule above.  Multi-source
-sessions dispatch per-candidate — no \"first source wins\" heuristic."
-  (when-let* (((stringp cand))
+Returns nil when SESSION is nil, CAND is not in the map, or the
+source is non-path-shaped."
+  (when-let* ((session)
+              ((stringp cand))
               ((> (length cand) 0))
-              (idx (and fzfa--candidate->source
-                        (gethash cand fzfa--candidate->source)))
-              (src (and fzfa--active-sources
-                        (aref fzfa--active-sources idx)))
+              (idx (gethash cand (fzfa-session-cand->src session)))
+              (src (aref (fzfa-session-specs session) idx))
               (rp  (plist-get src :resolve-paths))
-              ((if (eq rp 'auto)
-                   (plist-get src :command)
-                 rp)))
+              ((if (eq rp 'auto) (plist-get src :command) rp)))
     (plist-get src :directory)))
 
-(defun fzfa-resolve-candidate (cand)
+(defun fzfa-resolve-candidate (cand session)
   "Return CAND expanded against its emitting source's :directory.
 
-Returns CAND unchanged when the source is non-path-shaped or when
-no session is active — see `fzfa-candidate-directory' for the rule.
-Any tofu suffix on multi-source candidates is stripped before the
-expansion so absolute paths never carry disambiguation chars.
-
-The universal boundary between \"raw candidate string\" and \"an
-absolute path a consumer can filesystem-check\": preview handlers,
-`:action' closures, embark transformers, and async callbacks all
-funnel through this — no more scattered `expand-file-name'."
-  (if-let* ((dir (fzfa-candidate-directory cand)))
+Returns CAND unchanged when the source is non-path-shaped or SESSION
+is nil.  Any tofu suffix on multi-source candidates is stripped before
+the expansion so absolute paths never carry disambiguation chars."
+  (if-let* ((dir (fzfa-candidate-directory cand session)))
       (expand-file-name (fzfa--tofu-hide cand) dir)
     cand))
 
@@ -2477,6 +2466,62 @@ to eager-start via `fzf-native-async-start' or to defer."
      :filtered 0
      :preview-cell nil
      :source-name nil)))
+
+;;; Session
+
+(cl-defstruct (fzfa-session (:constructor fzfa-session-create)
+                            (:copier nil))
+  "Runtime state of one in-flight fzfa completing-read.
+
+Slots:
+
+  SPECS           Vector of source plists (immutable).
+  SOURCES         Vector of `fzfa-source' structs (mutable runtime).
+  CAND->SRC       Hash table: candidate string → source index.
+  DIRECTORY       Session's captured search root.
+  ENTRY-COMMAND   `this-command' at session open; used by replay.
+  NARROW-IDX      Current narrow selection or nil.
+  ROUTER-CELLS    Per-source `(handler . state-plist)' cells for
+                  preview dispatch, or nil when no source has a
+                  registered preview handler.
+  APPLY-FN        The `:apply' function for single-source sessions
+                  (multi-source lookup is per-candidate via
+                  `router-cells').
+  SELECTED-IDX    Source idx picked at exit, captured by
+                  `minibuffer-exit-hook' before completing-read
+                  returns.
+  LAST-QUERY      Final query string; captured for replay."
+  specs
+  sources
+  cand->src
+  directory
+  entry-command
+  narrow-idx
+  router-cells
+  apply-fn
+  selected-idx
+  last-query)
+
+(defun fzfa--current-session ()
+  "Return the `fzfa-session' for the active minibuffer, or nil.
+
+Walks the minibuffer stack — the outer fzfa minibuffer carries the
+session even when a nested minibuffer (embark's action prompter) sits
+on top.  Used by fixed-arity integrations that can't take session by
+parameter (`fzfa-apply-current' from a keybinding, embark transformer)."
+  (or (when-let* ((mbwin (active-minibuffer-window)))
+        (buffer-local-value 'fzfa--minibuffer-session (window-buffer mbwin)))
+      (cl-loop for depth from 1 to (minibuffer-depth)
+               for buf = (get-buffer (format " *Minibuf-%d*" depth))
+               thereis (and buf (buffer-local-value
+                                 'fzfa--minibuffer-session buf)))))
+
+(defun fzfa-session-source-of (session cand)
+  "Return the source plist responsible for CAND in SESSION, or nil."
+  (when-let* ((hash (fzfa-session-cand->src session))
+              (idx (gethash cand hash))
+              (specs (fzfa-session-specs session)))
+    (aref specs idx)))
 
 (defun fzfa-source--display-clear (source)
   "Delete SOURCE's display-mode overlays."
@@ -3082,55 +3127,46 @@ Lifecycle:
           (aset cells i (cons handler nil))
           (setq any t))))
     (when any
-      (cl-flet ((broadcast (action &optional cand cand-i)
+      (cl-flet ((broadcast (action session &optional cand cand-i)
                   (dotimes (i n)
                     (when-let* ((cell (aref cells i)))
                       (let ((fzfa--preview-session cell))
                         (fzfa--preview-call
-                         action
+                         action session
                          (when (and cand (eql i cand-i))
                            (fzfa--tofu-hide cand))))))))
         (list
          :setup
-         (lambda ()
+         (lambda (session)
            (let ((win (fzfa-preview-get :origin-window))
                  (buf (fzfa-preview-get :origin-buffer))
                  (dir (fzfa-preview-get :default-directory)))
              (dotimes (i n)
                (when-let* ((cell (aref cells i)))
-                 ;; Prefer this source's own `:directory' — that is the
-                 ;; search root the source's command ran under and the
-                 ;; base against which its candidate strings expand.
-                 ;; Falling back to the parent-session `dir'
-                 ;; (`fzfa--preview-install' captures ambient
-                 ;; `default-directory') is fine only when the two agree
-                 ;; — typical first invocation from a project root.
-                 ;; Once the user has visited a file into a different
-                 ;; directory and re-invokes fzfa, they diverge, and
-                 ;; every file-preview expansion silently fails
-                 ;; `file-readable-p'.
+                 ;; Each source's cell gets its OWN :default-directory
+                 ;; — the search root the source's command ran under.
+                 ;; Handlers expand relative candidates against it.
                  (let* ((src (aref sources-v i))
                         (src-dir (or (plist-get src :directory) dir))
                         (fzfa--preview-session cell))
                    (fzfa-preview-put :origin-window    win)
                    (fzfa-preview-put :origin-buffer    buf)
                    (fzfa-preview-put :default-directory src-dir)
-                   (fzfa--preview-call :setup))))))
+                   (fzfa--preview-call :setup session))))))
          :preview
-         (lambda (cand)
+         (lambda (cand session)
            (if-let* ((i (and cand
                              (fzfa--multi-source-idx cand candidate->source)))
                      (cell (aref cells i)))
                (let ((fzfa--preview-session cell))
-                 (fzfa--preview-call :preview (fzfa--tofu-hide cand)))
+                 (fzfa--preview-call :preview session (fzfa--tofu-hide cand)))
              ;; cand=nil (reset) — broadcast.
-             (unless cand (broadcast :preview nil nil))))
-         :exit  (lambda () (broadcast :exit))
+             (unless cand (broadcast :preview session nil nil))))
+         :exit  (lambda (session) (broadcast :exit session))
          :return
-         (lambda (cand)
+         (lambda (cand session)
            (let ((i (and cand (fzfa--multi-source-idx cand candidate->source))))
-             (broadcast :return cand i)))
-         ;; Expose cells so callers can route per-source from outside.
+             (broadcast :return session cand i)))
          :multi-cells cells)))))
 
 (defun fzfa--multi-rank (results query async-p)
@@ -3953,6 +3989,17 @@ Per-source plist keys:
                         (ivy--exhibit))))
                 (setq menu-active nil)))))
          (router      (fzfa--multi-build-router specs-v candidate->source))
+         (session
+          (fzfa-session-create
+           :specs specs-v
+           :sources sources
+           :cand->src candidate->source
+           :directory (or (fzfa--default-dir)
+                          (and s0 (plist-get s0 :directory)))
+           :entry-command entry-command
+           :narrow-idx narrow-idx
+           :router-cells (and router (plist-get router :multi-cells))
+           :apply-fn (and (not multi-p) (plist-get s0 :apply))))
          (fzfa--preview-session
           (and router
                ;; Stash the candidate→source-idx table for per-candidate
@@ -4026,7 +4073,8 @@ Per-source plist keys:
                         (add-hook 'post-command-hook
                                   #'fzfa--icomplete-cursor-override
                                   nil t))
-                      (when router (fzfa--preview-install))
+                      (when router
+                        (fzfa--preview-install session fzfa-preview-delay))
                       ;; Capture source idx from the propertized minibuffer
                       ;; text before completing-read returns and strips text
                       ;; properties from its return value.  Reliable
@@ -4375,22 +4423,11 @@ Per-source plist keys:
       (fzfa--sessions-push specs sources prompt narrow-idx
                            last-query entry-command)
       (mapc #'fzfa-source--stop sources)
-      ;; Re-bind the resolver dynvars for the post-`completing-read'
-      ;; :return dispatch — the `let' that first bound them at line
-      ;; ~4122 has already closed by the time this unwind cleanup
-      ;; runs, so `fzfa-resolve-candidate' inside `:return' handlers
-      ;; (e.g. `fzfa--file-preview-return' → `find-buffer-visiting')
-      ;; would otherwise miss the hash lookup and hand back a
-      ;; relative path.  Same rationale for the commit path below.
-      (let ((fzfa--active-sources specs-v)
-            (fzfa--candidate->source candidate->source))
-        (when router (fzfa--preview-return result))))
+      (when router (fzfa--preview-return result session)))
     (when result
-      (let* ((fzfa--active-sources specs-v)
-             (fzfa--candidate->source candidate->source)
-             (src-idx (or selected-idx
-                          (fzfa--multi-source-idx
-                           result candidate->source)))
+      (let* ((src-idx (or selected-idx
+                           (fzfa--multi-source-idx
+                            result candidate->source)))
              (src     (and src-idx (aref specs-v src-idx)))
              ;; Property recovery: the canonical candidate lives on
              ;; the source's snapshot with all in-band metadata the
@@ -4406,11 +4443,7 @@ Per-source plist keys:
              (result  (or (and snap (car (member result snap))) result))
              (action (and src (plist-get src :action)))
              (hist   (and src (plist-get src :history)))
-             ;; Per-source path resolution: `fzfa-resolve-candidate'
-             ;; consults `candidate->source' + the source's :directory
-             ;; and :resolve-paths, then strips tofu before expansion.
-             ;; N=1 and N>1 go through the same helper.
-             (expanded (fzfa-resolve-candidate result)))
+             (expanded (fzfa-resolve-candidate result session)))
         ;; Multi bypasses each source's inner `completing-read', so the
         ;; source's natural HIST push never fires.  Mirror it here so
         ;; recency-aware sources (e.g. `extended-command-history') stay

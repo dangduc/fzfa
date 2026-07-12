@@ -105,14 +105,8 @@
 ;; the target directly into the fzf minibuffer.
 
 (defun fzfa--embark-resolve (type target)
-  "Embark transformer: return (TYPE . ABSOLUTE-PATH) for TARGET.
-
-Runs synchronously during `embark-act', while the outer fzfa
-minibuffer's session dynvars are still bound — so
-`fzfa-resolve-candidate' can consult the emitting source's
-`:directory' + `:resolve-paths' and hand actions an absolute path
-regardless of the ambient `default-directory'."
-  (cons type (fzfa-resolve-candidate target)))
+  "Embark transformer: return (TYPE . ABSOLUTE-PATH) for TARGET."
+  (cons type (fzfa-resolve-candidate target (fzfa--current-session))))
 
 (defun fzfa-embark-grep-this-file (file)
   "Grep within FILE via `fzfa-grep-current-file'.
@@ -272,15 +266,9 @@ Idempotent — safe to call more than once."
           #'fzfa-embark-export-location)
 
     ;; Transformer: resolve every fzfa candidate to an absolute path
-    ;; before the action fires.  Embark calls the transformer
-    ;; synchronously while the outer fzfa minibuffer is still up, so
-    ;; the session dynvars are live and `fzfa-resolve-candidate' hits
-    ;; the emitting source's :directory.  Actions — built-in
-    ;; (`find-file', `embark-dired-jump', `delete-file'), third-party,
-    ;; or unknown — all receive the absolute path with no per-action
-    ;; wiring.  `embark--quit-and-run' captures the already-resolved
-    ;; string in its deferred closure, so post-exit action dispatch
-    ;; also gets the right path.
+    ;; before the action fires.  Built-in (`find-file',
+    ;; `embark-dired-jump', `delete-file'), third-party, and unknown
+    ;; actions all receive the absolute path with no per-action wiring.
     (dolist (cat '(fzfa-file fzfa-multi fzfa-grep fzfa-location))
       (setf (alist-get cat embark-transformer-alist)
             #'fzfa--embark-resolve))

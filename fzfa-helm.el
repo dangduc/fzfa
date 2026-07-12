@@ -281,7 +281,7 @@ level for the whole helm session)."
             (setq preview-last cur)
             (let ((fzfa--preview-session
                    (or session-cell fzfa--preview-session)))
-              (fzfa--preview-call :preview cur)))))
+              (fzfa--preview-call :preview nil cur)))))
        ((not (timerp preview-timer))
         (setq preview-timer
               (run-with-idle-timer
@@ -294,7 +294,7 @@ level for the whole helm session)."
                      (setq preview-last cur)
                      (let ((fzfa--preview-session
                             (or session-cell fzfa--preview-session)))
-                       (fzfa--preview-call :preview cur))))))))))))
+                       (fzfa--preview-call :preview nil cur))))))))))))
 
 ;;; Display transformer — preserves text properties and optionally annotates
 
@@ -1486,7 +1486,7 @@ for fuzzy-multi-source UX."
             (fzfa-preview-put :origin-window (selected-window))
             (fzfa-preview-put :origin-buffer (window-buffer (selected-window)))
             (fzfa-preview-put :default-directory src-dir)
-            (fzfa--preview-call :setup)))))
+            (fzfa--preview-call :setup nil)))))
     (unwind-protect
         (let* (;; Narrow-by-source: press `fzfa-multi-narrow-key',
                ;; then the source's `:narrow' key, to filter helm to
@@ -1690,10 +1690,11 @@ for fuzzy-multi-source UX."
         (dotimes (i n-sources)
           (when-let* ((cell (aref preview-cells i)))
             (let ((fzfa--preview-session cell))
-              (fzfa--preview-call :exit)
+              (fzfa--preview-call :exit nil)
               (fzfa--preview-return (if (eql i result-src-idx)
                                         result-cand
-                                      nil))))))
+                                      nil)
+                                    nil)))))
       (fzfa-helm--cancel-stranded-follow-timer))
     result))
 
