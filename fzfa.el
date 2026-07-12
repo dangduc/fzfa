@@ -1024,6 +1024,20 @@ Set to 0 to disable file preview entirely without dropping the
                  (integer :tag "Bytes"))
   :group 'fzfa)
 
+(defcustom fzfa-file-preview-dispatch-functions nil
+  "Abnormal hook consulted by `fzfa--file-preview' before the default handler.
+
+Each function is called with one argument, PATH (the expanded, readable
+file name of the candidate).  Return a live buffer to use as the
+preview; return nil to defer to subsequent functions or the built-in
+text buffer path.  The first non-nil return wins.
+
+Extensions attach here to intercept specific file types — e.g.,
+`fzfa-media-thumbnail-setup' routes video files to an ffmpeg-generated
+JPEG instead of a raw-bytes buffer."
+  :type 'hook
+  :group 'fzfa)
+
 (defcustom fzfa-preview-excluded-files
   '("\\`/[^/|:]+:"   ;; tramp-shaped paths (e.g. /ssh:host:/path)
     "\\.gpg\\'")      ;; gpg-encrypted (would prompt for passphrase)
@@ -1521,11 +1535,13 @@ was another oversized candidate or a normal file."
 (defun fzfa--file-preview (cand)
   "Open CAND (a file or directory path) for preview.
 
-Regular files are gated by `fzfa-preview-file-size-limit'.  Files that
-exceed the limit fall back to a small placeholder buffer describing
-the size — useful signal instead of a silently stale preview from the
-previous candidate.  Directories are always previewed via `dired-mode'
-(from `find-file-noselect')."
+`fzfa-file-preview-dispatch-functions' gets first crack at each
+readable, non-directory PATH; a non-nil return replaces the built-in
+handler for that candidate.  Regular files that fall through are gated
+by `fzfa-preview-file-size-limit' — files exceeding the limit render a
+size-readout placeholder instead of loading, keeping selection movement
+snappy on multi-megabyte binaries.  Directories are always previewed
+via `dired-mode' (from `find-file-noselect')."
   (when (and cand fzfa-preview-file-size-limit
              (> fzfa-preview-file-size-limit 0))
     (let ((path (expand-file-name cand)))
@@ -1535,6 +1551,10 @@ previous candidate.  Directories are always previewed via `dired-mode'
           (when-let* ((opener (fzfa-preview-get :opener))
                       (buf (funcall opener path)))
             (fzfa-preview-show buf)))
+         ((when-let* ((buf (run-hook-with-args-until-success
+                            'fzfa-file-preview-dispatch-functions path)))
+            (fzfa-preview-show buf)
+            t))
          (t
           (let* ((size (file-attribute-size (file-attributes path))))
             (cond
