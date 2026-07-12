@@ -639,7 +639,7 @@ survives, only the vertico temp buffer is swapped in via
   (when (frame-live-p fzfa-posframe--vertico-frame)
     (make-frame-invisible fzfa-posframe--vertico-frame)))
 
-(defun fzfa-posframe--restore-vertico-minibuffer ()
+(defun fzfa-posframe--restore-vertico-minibuffer (target-win target-depth)
   "Restore Vertico's minibuffer height after a posframe preview update.
 
 `posframe-show' and child-frame redisplay can cause Emacs to re-run
@@ -648,9 +648,16 @@ dynamic context.  In inline-Vertico layouts this can collapse the
 candidate display to one line even though `vertico--total' and
 `vertico--candidates' still contain the full result set.  Re-applying
 Vertico's resize helper keeps the active fzfa minibuffer at the height
-Vertico computed for the current candidate set."
+Vertico computed for the current candidate set.
+
+TARGET-WIN and TARGET-DEPTH pin the restore to the specific fzfa
+minibuffer captured at schedule time — the deferred tick bails if the
+user has entered a nested read since (a different mini is now active,
+or `minibuffer-depth' has grown)."
   (when-let* ((win (active-minibuffer-window))
-              ((window-live-p win)))
+              ((window-live-p win))
+              ((eq win target-win))
+              ((= (minibuffer-depth) target-depth)))
     (with-selected-window win
       (when (and (bound-and-true-p vertico-mode)
                  (fboundp 'vertico--resize-window))
@@ -659,9 +666,18 @@ Vertico computed for the current candidate set."
               (max 0 (or (bound-and-true-p vertico--total) 0))))))))
 
 (defun fzfa-posframe--restore-vertico-minibuffer-soon ()
-  "Restore Vertico minibuffer sizing now and after pending redisplay."
-  (fzfa-posframe--restore-vertico-minibuffer)
-  (run-at-time 0 nil #'fzfa-posframe--restore-vertico-minibuffer))
+  "Schedule a Vertico minibuffer sizing restore after pending redisplay.
+
+Only runs for `preview-centered' — that's the layout where
+`posframe-show' provokes the collapse.  `side-by-side' places the
+preview beside the mini and `top-to-bottom' stacks it above the
+candidate frame (not the mini), so neither is affected."
+  (when (eq (fzfa-posframe--effective-layout) 'preview-centered)
+    (when-let* ((win (active-minibuffer-window))
+                ((window-live-p win)))
+      (run-at-time 0 nil
+                   #'fzfa-posframe--restore-vertico-minibuffer
+                   win (minibuffer-depth)))))
 
 (defun fzfa-posframe--show (buffer)
   "Render BUFFER inside the preview posframe.
