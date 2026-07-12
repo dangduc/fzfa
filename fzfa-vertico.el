@@ -117,6 +117,27 @@ layout is three bands of (3 3 1) columns."
   :type 'natnum
   :group 'fzfa-vertico)
 
+(defcustom fzfa-vertico-columns-strategy 'auto
+  "How `fzfa-vertico-columns-mode' picks the column count.
+
+  `fixed'  Always use `fzfa-vertico-columns-max' (clamped to the
+           number of source-groups) — original behaviour, hands
+           control to the user.
+  `auto'   Collapse to 1 column when every source-group fits within
+           `vertico-count' rows stacked; scale up to
+           `fzfa-vertico-columns-max' when stacking would push later
+           groups off-screen.  Trades horizontal density for text
+           visibility on light result sets — with few candidates
+           the wider single column shows each candidate untruncated,
+           while a busy multi-source query still gets columns to
+           avoid pagination scroll.
+
+The auto heuristic re-evaluates on every arrange call, so layout
+can flip as the user's filter changes group sizes."
+  :type '(choice (const :tag "Fixed (always columns-max)" fixed)
+                 (const :tag "Auto (stack when it fits, else columns)" auto))
+  :group 'fzfa-vertico)
+
 (defcustom fzfa-vertico-columns-page-size 6
   "Maximum sources displayed simultaneously; pagination kicks in beyond.
 
@@ -454,15 +475,21 @@ jumps to the corresponding source in the previous band."
                 (vertico--goto idx))))))))))
 
 (defun fzfa-vertico--multi-columns-p ()
-  "Non-nil when more than one group is currently rendered as columns.
+  "Non-nil when the current arrange decision renders >1 column.
 
-This is the condition under which our custom columnar navigation
-is meaningful.  When the active completion has no group-function,
-or when narrowing collapses the layout to a single column,
-returns nil so the navigation wrappers fall through to standard
-vertico / cursor commands."
-  (when-let* ((gf (fzfa-vertico--group-function)))
-    (> (length (fzfa-vertico--partition gf)) 1)))
+Not the same as \"there are >1 groups\": auto-strategy may collapse
+even a multi-group session to a single stacked column when the
+whole thing fits within `vertico-count' vertically.  Consulted by
+the column-nav wrappers (`fzfa-vertico-columns-next' etc.) so
+that stacked mode inherits vertico's default C-n / C-p / cursor
+motion instead of our column-aware jumps."
+  (when-let* ((gf (fzfa-vertico--group-function))
+              (parts (fzfa-vertico--partition gf)))
+    (and (> (length parts) 1)
+         (> (fzfa-vertico--pick-ncols
+             parts (max 1 fzfa-vertico-columns-max)
+             vertico-count fzfa-vertico-columns-headers)
+            1))))
 
 (defun fzfa-vertico-columns-right (&optional n)
   "Move N sources to the right in reading order (default 1).
@@ -683,6 +710,28 @@ past its last item."
     (max 0 (min (max 0 (- n-items data-cap))
                 (- cur-row (1- data-cap))))))
 
+(defun fzfa-vertico--pick-ncols (parts max-cols vcount headers?)
+  "Return the column count `vertico--arrange-candidates' should use.
+
+PARTS is the group partition (list of (HEADER . ITEMS)).  MAX-COLS is
+`fzfa-vertico-columns-max' clamped to at least 1.  VCOUNT is
+`vertico-count' (visible rows).  HEADERS? is `fzfa-vertico-columns-headers'.
+
+`fixed' strategy always returns `(min MAX-COLS (length PARTS))'.
+`auto' strategy returns 1 when every source-group's items plus
+header fit stacked within VCOUNT vertically; otherwise falls back
+to `fixed'.  The fit check sums per-group heights so a single
+oversized group still trips into multi-column even when the total
+count is low."
+  (let ((nparts (length parts)))
+    (pcase fzfa-vertico-columns-strategy
+      ('auto
+       (let ((stacked-height
+              (cl-loop for (_hdr . items) in parts
+                       sum (+ (length items) (if headers? 1 0)))))
+         (if (<= stacked-height vcount) 1 (min max-cols nparts))))
+      (_ (min max-cols nparts)))))
+
 (defun fzfa-vertico--display-width ()
   "Return the character width of the window that will render candidates.
 Prefers the `vertico--candidates-ov' overlay's `window' property — that
@@ -727,7 +776,9 @@ qualifier; falls through to the default implementation otherwise."
           (vertico--goto target)))
       (let* ((nparts (length parts))
              (max-cols (max 1 fzfa-vertico-columns-max))
-             (ncols (min max-cols nparts))
+             (ncols (fzfa-vertico--pick-ncols
+                     parts max-cols vertico-count
+                     fzfa-vertico-columns-headers))
              (nbands-total (max 1 (ceiling (/ (float nparts) ncols))))
              ;; Pagination: cap visible bands to fit `page-size' sources.
              ;; `page-size' nil / 0 → show all bands (no pagination).
