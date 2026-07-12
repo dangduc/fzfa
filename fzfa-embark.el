@@ -60,6 +60,7 @@
 (defvar embark-pre-action-hooks)
 (defvar embark-target-injection-hooks)
 (defvar embark-exporters-alist)
+(defvar embark-transformer-alist)
 (declare-function embark--unmark-target "embark")
 (declare-function embark--allow-edit "embark")
 (declare-function grep-mode "grep" t t)
@@ -102,6 +103,16 @@
 ;; identifier targets where the target IS the desired fzf filter, no
 ;; wrapper is needed; embark's pre-action hooks (installed below) inject
 ;; the target directly into the fzf minibuffer.
+
+(defun fzfa--embark-resolve (type target)
+  "Embark transformer: return (TYPE . ABSOLUTE-PATH) for TARGET.
+
+Runs synchronously during `embark-act', while the outer fzfa
+minibuffer's session dynvars are still bound — so
+`fzfa-resolve-candidate' can consult the emitting source's
+`:directory' + `:resolve-paths' and hand actions an absolute path
+regardless of the ambient `default-directory'."
+  (cons type (fzfa-resolve-candidate target)))
 
 (defun fzfa-embark-grep-this-file (file)
   "Grep within FILE via `fzfa-grep-current-file'.
@@ -259,6 +270,20 @@ Idempotent — safe to call more than once."
     ;; to `embark-collect's plain list.
     (setf (alist-get 'fzfa-location embark-exporters-alist)
           #'fzfa-embark-export-location)
+
+    ;; Transformer: resolve every fzfa candidate to an absolute path
+    ;; before the action fires.  Embark calls the transformer
+    ;; synchronously while the outer fzfa minibuffer is still up, so
+    ;; the session dynvars are live and `fzfa-resolve-candidate' hits
+    ;; the emitting source's :directory.  Actions — built-in
+    ;; (`find-file', `embark-dired-jump', `delete-file'), third-party,
+    ;; or unknown — all receive the absolute path with no per-action
+    ;; wiring.  `embark--quit-and-run' captures the already-resolved
+    ;; string in its deferred closure, so post-exit action dispatch
+    ;; also gets the right path.
+    (dolist (cat '(fzfa-file fzfa-multi fzfa-grep fzfa-location))
+      (setf (alist-get cat embark-transformer-alist)
+            #'fzfa--embark-resolve))
 
     ;; Install target-injection hooks on the palette commands.  Two
     ;; flavors:
