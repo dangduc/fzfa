@@ -18,18 +18,22 @@
 ;;
 ;; `fzfa-posframe-layout' selects the layout:
 ;;
-;;   centered      Preview posframe sits above the minibuffer, horizontally
-;;                 centered.  Candidates stay in the minibuffer.  Default.
-;;   side-by-side  Preview posframe pinned to the right edge with margin.
-;;                 The candidate pane goes to the left, sourced from whichever
-;;                 frontend integration is active:
-;;                   vertico   → `vertico-buffer-mode' via vertico-multiform.
-;;                   helm      → routed via `helm-display-function' (fzfa
-;;                               supplies its own; only `helm' itself is
-;;                               required).
-;;                   ivy       → `ivy-posframe' (MELPA) if installed.
-;;                   icomplete → falls back to the `centered' layout — inline
-;;                               icomplete cannot be moved into a buffer.
+;;   preview-centered  Preview posframe sits above the minibuffer, horizontally
+;;                     centered.  Candidates stay in the minibuffer.  Default.
+;;   side-by-side      Preview posframe pinned to the right edge with margin.
+;;                     The candidate pane goes to the left, sourced from
+;;                     whichever frontend integration is active:
+;;                       vertico   → `vertico-buffer-mode' via vertico-multiform.
+;;                       helm      → routed via `helm-display-function' (fzfa
+;;                                   supplies its own; only `helm' itself is
+;;                                   required).
+;;                       ivy       → `ivy-posframe' (MELPA) if installed.
+;;                       icomplete → falls back to `preview-centered' — inline
+;;                                   icomplete cannot be moved into a buffer.
+;;   top-to-bottom     Candidate posframe stacked above the preview posframe,
+;;                     both horizontally centered; the combined block is
+;;                     vertically centered.  Candidate height tracks the
+;;                     frontend's declared candidate count.  Vertico only.
 ;;
 ;; Enable with `fzfa-posframe-mode'.  Requires the `posframe' package and a
 ;; graphical display; enabling on TTY or without `posframe' installed refuses
@@ -46,6 +50,7 @@
 (declare-function posframe-show "posframe" t t)
 (declare-function posframe-hide "posframe" (buffer-or-name))
 (declare-function posframe-delete-frame "posframe" (buffer-or-name))
+(declare-function posframe-poshandler-frame-center "posframe" (info))
 (declare-function image-transform-fit-to-window "image-mode" ())
 (declare-function vertico-multiform-mode "vertico-multiform" (&optional arg))
 (declare-function ivy-posframe-mode "ivy-posframe" (&optional arg))
@@ -65,27 +70,38 @@
 (defvar ivy-posframe-hide-minibuffer)
 (defvar ivy-height)
 
-(defcustom fzfa-posframe-layout 'centered
+(defcustom fzfa-posframe-layout 'preview-centered
   "Layout for fzfa's posframe(s).
 
-  centered      Preview posframe sits above the minibuffer, horizontally
-                centered.  Candidates stay in the minibuffer.  Default.
-  side-by-side  Preview posframe on the right half of the frame plus a
-                matching candidate posframe on the left.  The candidate
-                pane is sourced from the active frontend:
-                  vertico   → `vertico-buffer-mode'.
-                  helm      → `helm-display-function' (fzfa supplies its
-                              own; only `helm' itself is required).
-                  ivy       → `ivy-posframe' if installed.
-                  icomplete → downgrades to `centered' automatically.
+  side-by-side      Preview posframe pinned to the right half of the
+                    parent frame; candidates routed to a matching left
+                    posframe by the active frontend:
+                      vertico   → `vertico-buffer-mode'.
+                      helm      → `helm-display-function' (fzfa supplies
+                                  its own; only `helm' itself is required).
+                      ivy       → `ivy-posframe' if installed.
+                      icomplete → downgrades to `preview-centered'.
+
+  preview-centered  Preview posframe centered above the minibuffer;
+                    candidates stay in the minibuffer.  Default.
+
+  top-to-bottom     Candidate posframe on top and preview posframe
+                    directly below it, both horizontally centered on
+                    the parent frame; the combined block is vertically
+                    centered.  Candidate height tracks the frontend's
+                    declared candidate count so the frame is only as
+                    tall as it needs to be.
 
 Change via `setopt' or `customize' to auto-rewire the frontend routing
 while the mode is active — plain `setq' does not trigger the setter,
 in which case cycle `fzfa-posframe-mode' manually."
   :type '(choice
-          (const :tag "Centered above minibuffer" centered)
-          (const :tag "Side-by-side (frontend routes candidates left)"
-                 side-by-side))
+          (const :tag "Side-by-side (left candidates, right preview)"
+                 side-by-side)
+          (const :tag "Preview posframe centered above minibuffer"
+                 preview-centered)
+          (const :tag "Candidates on top, preview below, block centered"
+                 top-to-bottom))
   :set (lambda (sym val)
          (set-default sym val)
          (when (bound-and-true-p fzfa-posframe-mode)
@@ -97,8 +113,9 @@ in which case cycle `fzfa-posframe-mode' manually."
   "Pixel gap between posframe edges and the surrounding frame edges.
 
 In `side-by-side' layout the gap is applied on the outside of each pane
-and between the two panes.  In `centered' layout it is applied between
-the posframe bottom and the minibuffer top."
+and between the two panes.  In `preview-centered' layout it is applied
+between the posframe bottom and the minibuffer top.  In `top-to-bottom'
+layout it is applied between the candidate and preview panes."
   :type 'integer
   :group 'fzfa)
 
@@ -108,11 +125,12 @@ the posframe bottom and the minibuffer top."
   :group 'fzfa)
 
 (defcustom fzfa-posframe-centered-width-ratio 0.80
-  "Fraction of the parent frame width used by the `centered' layout.
+  "Fraction of the parent frame width used by the centered-style layouts.
 
-Only consulted when `fzfa-posframe-layout' is `centered'.  The
-`side-by-side' layout auto-sizes each pane to half the frame width
-minus `fzfa-posframe-margin'."
+Consulted when `fzfa-posframe-layout' is `preview-centered' or
+`top-to-bottom' — both center their panes horizontally at this fraction
+of the parent frame width.  `side-by-side' auto-sizes each pane to half
+the frame width minus `fzfa-posframe-margin'."
   :type 'number
   :group 'fzfa)
 
@@ -234,6 +252,14 @@ buffer name cannot find the frame at teardown time.")
 finds a cached frame, which measured at ~5% of a session's wallclock.
 Comparing against a fresh `fzfa-posframe--pane-geometry' lets the fast
 path skip that entirely.")
+
+(defvar fzfa-posframe--vertico-poshandler nil
+  "Last poshandler that positioned `fzfa-posframe--vertico-frame'.
+
+Included in the fast-path cache-hit check so switching
+`fzfa-posframe-layout' between `side-by-side' and `top-to-bottom'
+triggers a fresh frame with the right position, instead of leaving the
+previous poshandler's placement in effect.")
 
 (defvar fzfa-posframe--saved-vertico-buffer-action nil
   "Saved value of `vertico-buffer-display-action' before mode enable.")
@@ -380,8 +406,9 @@ minibuffer top."
 (defun fzfa-posframe-poshandler-top-center (info)
   "Center a posframe horizontally and anchor to the top of the parent frame.
 
-INFO is the plist supplied by `posframe-show'.  Used by the `centered'
-layout when helm is the active frontend — helm's candidate window
+INFO is the plist supplied by `posframe-show'.  Used by the
+`preview-centered' layout when helm is the active frontend — helm's
+candidate window
 occupies the lower half of the frame, so anchoring above the minibuffer
 would drop the preview posframe on top of helm.  Top-anchoring keeps
 the two panes visually separated."
@@ -389,6 +416,61 @@ the two panes visually separated."
         (pw (plist-get info :posframe-width)))
     (cons (max 0 (/ (- fw pw) 2))
           fzfa-posframe-margin)))
+
+(defun fzfa-posframe--centered-stack-block-top (parent this-h)
+  "Return the Y of the top of the centered candidate+preview block.
+
+PARENT is the parent frame.  THIS-H is the current frame's pixel
+height (from the poshandler's INFO plist).  We recompute the OTHER
+frame's expected pixel height via `fzfa-posframe--pane-geometry' so
+the block stays symmetric even when the two frames have very
+different sizes."
+  (let* ((char-h (with-selected-frame parent (default-line-height)))
+         (cand-h (* (cdr (fzfa-posframe--pane-geometry parent 'candidate))
+                    char-h))
+         (prev-h (* (cdr (fzfa-posframe--pane-geometry parent 'preview))
+                    char-h))
+         (block-h (+ cand-h fzfa-posframe-margin prev-h))
+         (fh (frame-pixel-height parent)))
+    ;; Sanity: if this frame is neither cand-h nor prev-h (e.g. sizing
+    ;; drifted between measure and paint), fall back to a plain vertical
+    ;; center for the current frame.
+    (unless (or (= this-h cand-h) (= this-h prev-h))
+      (setq block-h (* 2 this-h)))
+    (max 0 (/ (- fh block-h) 2))))
+
+(defun fzfa-posframe-poshandler-centered-stack-top (info)
+  "Anchor a posframe as the TOP frame of a vertically-stacked centered pair.
+
+INFO is the plist supplied by `posframe-show'.  The block (this frame
++ margin + the sibling frame from `fzfa-posframe--pane-geometry') is
+vertically centered on the parent frame; horizontally centered too.
+Sibling can be shorter or taller than this frame — geometry is read
+per-purpose so the sizes need not match."
+  (let* ((fw (plist-get info :parent-frame-width))
+         (pw (plist-get info :posframe-width))
+         (ph (plist-get info :posframe-height))
+         (parent (plist-get info :parent-frame)))
+    (cons (max 0 (/ (- fw pw) 2))
+          (fzfa-posframe--centered-stack-block-top parent ph))))
+
+(defun fzfa-posframe-poshandler-centered-stack-bottom (info)
+  "Anchor a posframe as the BOTTOM frame of a vertically-stacked centered pair.
+
+Companion to `fzfa-posframe-poshandler-centered-stack-top' — the two
+frames need not share a size; the block is centered as a whole using
+per-purpose geometry."
+  (let* ((fw (plist-get info :parent-frame-width))
+         (pw (plist-get info :posframe-width))
+         (ph (plist-get info :posframe-height))
+         (parent (plist-get info :parent-frame))
+         (char-h (with-selected-frame parent (default-line-height)))
+         (cand-h (* (cdr (fzfa-posframe--pane-geometry parent 'candidate))
+                    char-h)))
+    (cons (max 0 (/ (- fw pw) 2))
+          (+ (fzfa-posframe--centered-stack-block-top parent ph)
+             cand-h
+             fzfa-posframe-margin))))
 
 (defun fzfa-posframe--top-frame ()
   "Return the top-level frame that should host our posframes.
@@ -457,30 +539,63 @@ none of the known minor modes are on."
 (defun fzfa-posframe--effective-layout ()
   "Return the layout to actually use given the active frontend.
 
-`side-by-side' is downgraded to `centered' under icomplete, whose inline
-rendering cannot be relocated to a buffer."
-  (if (and (eq fzfa-posframe-layout 'side-by-side)
+`side-by-side' and `top-to-bottom' both need the frontend to render
+its candidates into a buffer we can route into a posframe — icomplete
+does not, so both downgrade to `preview-centered' under icomplete."
+  (if (and (memq fzfa-posframe-layout '(side-by-side top-to-bottom))
            (eq (fzfa-posframe--active-frontend) 'icomplete))
-      'centered
+      'preview-centered
     fzfa-posframe-layout))
 
-(defun fzfa-posframe--pane-geometry (parent)
+(defcustom fzfa-posframe-centered-candidate-count-multiplier 1.0
+  "Height multiplier applied to the frontend's candidate count in `top-to-bottom'.
+
+The `top-to-bottom' layout sizes the candidate posframe to
+(COUNT × this) character rows, so it is only as tall as it needs to be
+for a reasonable number of candidates — instead of the fixed
+`fzfa-posframe-height-ratio' the preview pane uses.  Default 1.0 sizes
+the frame at exactly the frontend's declared visible count; bump
+above 1.0 if you want headroom, drop below 1.0 to trim tighter."
+  :type 'number
+  :group 'fzfa)
+
+(defun fzfa-posframe--frontend-candidate-count ()
+  "Best-guess visible-candidate count for the active frontend.
+
+Reads `vertico-count' / `ivy-height' / a sensible default for helm —
+whichever frontend is on decides how tall the candidate posframe
+should be in `top-to-bottom' layout."
+  (pcase (fzfa-posframe--active-frontend)
+    ('vertico (or (bound-and-true-p vertico-count) 10))
+    ('ivy     (or (bound-and-true-p ivy-height) 10))
+    ('helm    10)
+    (_        10)))
+
+(defun fzfa-posframe--pane-geometry (parent &optional purpose)
   "Return (WIDTH-CHARS . HEIGHT-CHARS) for a posframe pane inside PARENT frame.
 
-Sizing depends on `fzfa-posframe--effective-layout'."
+PURPOSE is `preview' or `candidate' (defaults to `preview').  Only the
+`top-to-bottom' layout uses PURPOSE to size the candidate pane against
+the frontend's own candidate count — every other layout gives both
+purposes the same geometry."
   (let* ((char-w (with-selected-frame parent (frame-char-width)))
          (char-h (with-selected-frame parent (default-line-height)))
          (fw     (frame-pixel-width parent))
          (fh     (frame-pixel-height parent))
          (margin fzfa-posframe-margin)
-         (ph     (round (* fh fzfa-posframe-height-ratio)))
-         (pw     (pcase (fzfa-posframe--effective-layout)
+         (layout (fzfa-posframe--effective-layout))
+         (pw     (pcase layout
                    ('side-by-side
                     (/ (max 0 (- fw (* 3 margin))) 2))
                    (_
-                    (round (* fw fzfa-posframe-centered-width-ratio))))))
+                    (round (* fw fzfa-posframe-centered-width-ratio)))))
+         (ph     (if (and (eq layout 'top-to-bottom) (eq purpose 'candidate))
+                     (round (* (fzfa-posframe--frontend-candidate-count)
+                               fzfa-posframe-centered-candidate-count-multiplier
+                               char-h))
+                   (round (* fh fzfa-posframe-height-ratio)))))
     (cons (max 20 (/ pw char-w))
-          (max 10 (/ ph char-h)))))
+          (max 3  (/ ph char-h)))))
 
 (defun fzfa-posframe--dismiss (&optional buffer)
   "Delete the preview posframe rendering BUFFER (or the tracked one).
@@ -506,8 +621,9 @@ Also drops the geometry cache so the next
 rebuilds from scratch."
   (when (frame-live-p fzfa-posframe--vertico-frame)
     (ignore-errors (delete-frame fzfa-posframe--vertico-frame)))
-  (setq fzfa-posframe--vertico-frame    nil
-        fzfa-posframe--vertico-geometry nil))
+  (setq fzfa-posframe--vertico-frame      nil
+        fzfa-posframe--vertico-geometry   nil
+        fzfa-posframe--vertico-poshandler nil))
 
 (defun fzfa-posframe--hide-vertico ()
   "Make the vertico posframe invisible but keep it in the cache.
@@ -535,16 +651,22 @@ X-server round-trips of `make-frame' and `set-frame-size' are skipped.
 Falls through to `posframe-show' when the frame is missing or the
 layout / geometry has changed."
   (let* ((parent (fzfa-posframe--top-frame))
-         (geom (fzfa-posframe--pane-geometry parent))
-         (poshandler (pcase (fzfa-posframe--effective-layout)
-                       ('side-by-side
-                        #'fzfa-posframe-poshandler-side-by-side-right)
-                       ('centered
-                        (if (eq (fzfa-posframe--active-frontend) 'helm)
-                            #'fzfa-posframe-poshandler-top-center
-                          #'fzfa-posframe-poshandler-above-minibuffer))
-                       (_
-                        #'fzfa-posframe-poshandler-above-minibuffer))))
+         (geom (fzfa-posframe--pane-geometry parent 'preview))
+         (poshandler
+          (pcase (fzfa-posframe--effective-layout)
+            ('side-by-side
+             #'fzfa-posframe-poshandler-side-by-side-right)
+            ('preview-centered
+             (if (eq (fzfa-posframe--active-frontend) 'helm)
+                 #'fzfa-posframe-poshandler-top-center
+               #'fzfa-posframe-poshandler-above-minibuffer))
+            ('top-to-bottom
+             ;; Preview sits below the candidate frame as the bottom of
+             ;; the stacked pair — treats both frames as one unit and
+             ;; centers that unit on the parent frame.
+             #'fzfa-posframe-poshandler-centered-stack-bottom)
+            (_
+             #'fzfa-posframe-poshandler-above-minibuffer))))
     (cond
      ;; Fast path: reuse the cached child frame.
      ((and (frame-live-p fzfa-posframe--preview-frame)
@@ -612,10 +734,14 @@ window, so run it inside the posframe's window."
         (ignore-errors (image-transform-fit-to-window))))))
 
 (defun fzfa-posframe--display-vertico-buffer (buffer _alist)
-  "Display action routing BUFFER (vertico's buffer) into a left posframe.
+  "Display action routing BUFFER (vertico's buffer) into a candidate posframe.
 
 Used as `vertico-buffer-display-action' when `fzfa-posframe-mode' is on,
-layout is `side-by-side', and the active frontend is vertico.
+layout is `side-by-side' or `top-to-bottom', and the active frontend is
+vertico.  The poshandler is picked from
+`fzfa-posframe--effective-layout' — `side-by-side' anchors to the left
+pane; `top-to-bottom' anchors as the top of a vertically-stacked pair
+whose combined block is centered on the parent frame.
 
 Posframe marks its window dedicated to the buffer it was shown with;
 `vertico-buffer' immediately swaps that window's buffer to the real
@@ -623,19 +749,30 @@ completion buffer, which errors on a dedicated window.  Undedicate
 before returning so the swap succeeds; `vertico-buffer' re-dedicates
 after the swap.
 
-Fast path: when a cached left-pane frame is still alive with the same
-parent and geometry, swap its window's buffer instead of tearing the
-frame down and rebuilding — `posframe-show' unconditionally re-runs
-`set-frame-size' on reuse, which measured at ~5% of session wallclock.
-Falls through to a full teardown + `posframe-show' when the parent or
-geometry differ."
+Fast path: when a cached candidate frame is alive with matching
+parent, geometry, and poshandler, only `set-window-buffer' fires.
+Falls through to a full teardown + `posframe-show' when any of those
+differ (e.g. after the user toggled the layout)."
   (let* ((parent (fzfa-posframe--top-frame))
-         (geom (fzfa-posframe--pane-geometry parent)))
+         (geom (fzfa-posframe--pane-geometry parent 'candidate))
+         (preview-enabled (and (boundp 'fzfa-preview-delay)
+                               fzfa-preview-delay))
+         (poshandler
+          (pcase (fzfa-posframe--effective-layout)
+            ('top-to-bottom
+             (if preview-enabled
+                 ;; Preview also fires, so treat candidate+preview as a
+                 ;; vertically stacked pair centered together.
+                 #'fzfa-posframe-poshandler-centered-stack-top
+               ;; No preview will fire — full frame-center is fine.
+               #'posframe-poshandler-frame-center))
+            (_ #'fzfa-posframe-poshandler-side-by-side-left))))
     (cond
      ;; Fast path: reuse the cached child frame.
      ((and (frame-live-p fzfa-posframe--vertico-frame)
            (eq (frame-parent fzfa-posframe--vertico-frame) parent)
-           (equal fzfa-posframe--vertico-geometry geom))
+           (equal fzfa-posframe--vertico-geometry geom)
+           (eq fzfa-posframe--vertico-poshandler poshandler))
       (let ((win (frame-root-window fzfa-posframe--vertico-frame)))
         (set-window-dedicated-p win nil)
         (set-window-buffer win buffer)
@@ -650,7 +787,7 @@ geometry differ."
                       (posframe-show
                        buffer
                        :parent-frame          parent
-                       :poshandler            #'fzfa-posframe-poshandler-side-by-side-left
+                       :poshandler            poshandler
                        :width                 (car geom)
                        :height                (cdr geom)
                        :accept-focus          nil
@@ -662,8 +799,9 @@ geometry differ."
         (fzfa-posframe--reparent frame parent)
         (fzfa-posframe--restore-locals buffer snapshot)
         (set-window-dedicated-p win nil)
-        (setq fzfa-posframe--vertico-frame    frame
-              fzfa-posframe--vertico-geometry geom)
+        (setq fzfa-posframe--vertico-frame      frame
+              fzfa-posframe--vertico-geometry   geom
+              fzfa-posframe--vertico-poshandler poshandler)
         win)))))
 
 (defun fzfa-posframe--preview-show-advice (orig-fn buffer &optional pos)
@@ -968,7 +1106,8 @@ the race window."
 Independent of `fzfa-posframe-layout' — helm's preview handler runs
 through helm's persistent-action machinery, which only auto-fires on
 selection movement when `fzfa-helm-want-follow' is non-nil.  Without
-this override, `centered' layout + helm shows no preview at all.
+this override, `preview-centered' layout + helm shows no preview at
+all.
 
 Also attaches `fzfa-posframe--helm-cancel-stranded-follow-timer' to
 `helm-cleanup-hook' — forcing `:follow 1' makes the well-known
@@ -1076,17 +1215,34 @@ ivy keeps its default display"))
 (defun fzfa-posframe--install-frontend-routing ()
   "Dispatch candidate-pane routing to the active frontend.
 
-No-op unless `fzfa-posframe-layout' is `side-by-side'.  Icomplete has no
-buffer-mode equivalent, so its case is skipped — `--effective-layout'
-downgrades to `centered' at render time."
-  (when (eq fzfa-posframe-layout 'side-by-side)
-    (pcase (fzfa-posframe--active-frontend)
-      ('vertico   (fzfa-posframe--install-vertico-routing))
-      ('helm      (fzfa-posframe--install-helm-routing))
-      ('ivy       (fzfa-posframe--install-ivy-routing))
-      ('icomplete
-       (message "fzfa-posframe: icomplete cannot render candidates \
-in a posframe; using centered layout")))))
+Layouts that route candidates to a posframe:
+
+  side-by-side   Vertico / helm / ivy — candidates go to the left pane.
+  top-to-bottom  Vertico only — candidates stacked above the preview
+                 with the combined block centered on the parent frame
+                 (helm / ivy are left as-is for now; wiring their
+                 display-functions to a stack-top poshandler would need
+                 per-frontend work not yet done here).
+
+`preview-centered' does not route candidates (they stay inline in the
+minibuffer), so it is a no-op.  Icomplete has no buffer-mode
+equivalent — `--effective-layout' downgrades to `preview-centered' at
+render time."
+  (pcase fzfa-posframe-layout
+    ('side-by-side
+     (pcase (fzfa-posframe--active-frontend)
+       ('vertico   (fzfa-posframe--install-vertico-routing))
+       ('helm      (fzfa-posframe--install-helm-routing))
+       ('ivy       (fzfa-posframe--install-ivy-routing))
+       ('icomplete
+        (message "fzfa-posframe: icomplete cannot render candidates \
+in a posframe; using preview-centered layout"))))
+    ('top-to-bottom
+     (pcase (fzfa-posframe--active-frontend)
+       ('vertico   (fzfa-posframe--install-vertico-routing))
+       ('icomplete
+        (message "fzfa-posframe: icomplete cannot render candidates \
+in a posframe; using preview-centered layout"))))))
 
 (defun fzfa-posframe--uninstall-frontend-routing ()
   "Undo any candidate-pane routing installed by mode-on."
@@ -1212,7 +1368,10 @@ When enabled:
     vertico   → `vertico-buffer-mode' via vertico-multiform.
     helm      → fzfa's own `helm-display-function' (only `helm' needed).
     ivy       → `ivy-posframe' (MELPA) if installed.
-    icomplete → downgrades to `centered' layout.
+    icomplete → downgrades to `preview-centered' layout.
+- When layout is `top-to-bottom' and vertico is active, candidates
+  route into a centered posframe on top; the preview posframe sits
+  directly below, and the combined block is vertically centered.
 
 All installed state is restored on disable."
   :global t
