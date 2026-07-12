@@ -148,17 +148,24 @@ Nil (default) suppresses the header-line."
   :group 'fzfa)
 
 (defcustom fzfa-posframe-vertico-categories
-  '(fzfa-buffer fzfa-file fzfa-grep fzfa-location fzfa-multi)
+  '(fzfa-multi "\\`fzfa-")
   "Completion categories that auto-enable `vertico-buffer-mode'.
 
 Consulted in `side-by-side' layout when the active frontend is vertico.
-Each symbol is merged into `vertico-multiform-categories' so vertico
-renders inside a buffer during those completion sessions — that buffer
-is what fzfa routes into the left posframe.  When an entry for the
-category already exists (e.g. the columns-mode entry `fzfa-vertico'
-adds for `fzfa-multi'), `vertico-buffer-mode' is appended to it so
-both settings fire together."
-  :type '(repeat symbol)
+Each entry is merged into `vertico-multiform-categories' so vertico
+renders inside a buffer during matching completion sessions — that
+buffer is what fzfa routes into the left posframe.
+
+Entries are matched by `vertico-multiform--lookup': a SYMBOL matches
+the category exactly; a STRING is treated as a regex tested against
+the category's symbol name.  Order matters — earlier entries win — so
+specific symbol overrides should come before general regex catch-alls.
+
+Default puts `fzfa-multi' first (it needs an extra column-max override
+to fit the narrower posframe) followed by the regex catch-all
+\"\\\\`fzfa-\", which covers every other `fzfa-*' category so any new
+fzfa command works without touching this list."
+  :type '(repeat (choice symbol string))
   :group 'fzfa)
 
 (defcustom fzfa-posframe-embark-categories
@@ -713,7 +720,7 @@ existing entry (e.g. the `fzfa-vertico-columns-mode' entry
 This function collapses all entries for CAT into a single entry with
 the union of settings, then re-pushes that combined entry at the head
 of the list."
-  (let* ((matching (cl-remove-if-not (lambda (e) (eq (car e) cat))
+  (let* ((matching (cl-remove-if-not (lambda (e) (equal (car e) cat))
                                      vertico-multiform-categories))
          (existing (car matching))
          (existing-settings (mapcan (lambda (e) (copy-sequence (cdr e)))
@@ -723,7 +730,7 @@ of the list."
                     :test #'equal :from-end t)))
     (setq vertico-multiform-categories
           (cons (cons cat combined)
-                (cl-remove-if (lambda (e) (eq (car e) cat))
+                (cl-remove-if (lambda (e) (equal (car e) cat))
                               vertico-multiform-categories)))
     existing))
 
@@ -734,7 +741,7 @@ ORIGINAL is the entry that existed before the merge (or nil if we
 created the entry from scratch)."
   (when (boundp 'vertico-multiform-categories)
     (setq vertico-multiform-categories
-          (cl-remove-if (lambda (e) (eq (car e) cat))
+          (cl-remove-if (lambda (e) (equal (car e) cat))
                         vertico-multiform-categories))
     (when original
       (push original vertico-multiform-categories))))
@@ -761,8 +768,12 @@ side-by-side falls back to inline vertico"))
     (setq vertico-buffer-display-action
           '(fzfa-posframe--display-vertico-buffer))
     (fzfa--ensure-setup)
-    (dolist (cat fzfa-posframe-vertico-categories)
-      (unless (assq cat fzfa-posframe--installed-vertico-categories)
+    ;; Iterate reverse so the FIRST entry in `fzfa-posframe-vertico-categories'
+    ;; lands at the HEAD of `vertico-multiform-categories' after all pushes.
+    ;; `vertico-multiform--lookup' returns the first match, so specific
+    ;; symbol overrides must precede the regex catch-all in the alist.
+    (dolist (cat (reverse fzfa-posframe-vertico-categories))
+      (unless (assoc cat fzfa-posframe--installed-vertico-categories)
         (let* ((base '(vertico-buffer-mode))
                ;; `fzfa-multi' additionally gets a column-max override:
                ;; the columns default was tuned for the full-width
@@ -787,7 +798,7 @@ side-by-side falls back to inline vertico"))
     ;; `vertico-buffer's own restore hook swaps the outer buffer back into
     ;; the pane when the nested completion exits.
     (dolist (cat fzfa-posframe-embark-categories)
-      (unless (assq cat fzfa-posframe--installed-vertico-categories)
+      (unless (assoc cat fzfa-posframe--installed-vertico-categories)
         (push (cons cat (fzfa-posframe--multiform-merge
                          cat '(vertico-buffer-mode)))
               fzfa-posframe--installed-vertico-categories)))
