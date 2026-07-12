@@ -112,6 +112,13 @@ jobs:
           repository: tumashu/ivy-posframe
           path: ivy-posframe
 
+      # media-thumbnail is optional for video previews; checked out so
+      # `fzfa-media-thumbnail.el' declarations are verified strictly.
+      - uses: actions/checkout@v4
+        with:
+          repository: jojojames/media-thumbnail
+          path: media-thumbnail
+
       - uses: jcs090218/setup-emacs@master
         with:
           version: ${{ matrix.emacs-version }}

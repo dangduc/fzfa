@@ -30,7 +30,8 @@
 
 (require 'fzfa)
 
-(declare-function media-thumbnail-generate-async "media-thumbnail" (file &rest args))
+(declare-function media-thumbnail-generate-async "media-thumbnail"
+                  (file &key size ignore-aspect-ratio callback))
 (declare-function media-thumbnail-get-cache-path "media-thumbnail" (file))
 (defvar media-thumbnail-video-exts)
 
