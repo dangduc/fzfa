@@ -84,7 +84,8 @@ percentages costs no extra subprocess per hover."
   "Shared buffer used for the \"install media-thumbnail\" placeholder.")
 
 (declare-function fzfa-posframe--top-frame "fzfa-posframe" ())
-(declare-function fzfa-posframe--pane-geometry "fzfa-posframe" (parent))
+(declare-function fzfa-posframe--pane-geometry "fzfa-posframe"
+                  (parent &optional purpose))
 
 (defun fzfa-media-thumbnail--pane-pixels ()
   "Return the preview pane's (WIDTH . HEIGHT) in pixels, or nil.
