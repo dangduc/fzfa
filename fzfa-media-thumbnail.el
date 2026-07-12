@@ -33,6 +33,11 @@
 (declare-function media-thumbnail-generate-async "media-thumbnail"
                   (file &key size ignore-aspect-ratio callback))
 (declare-function media-thumbnail-get-cache-path "media-thumbnail" (file))
+;; `cl-defun' with `&key' — `declare-function' arity check counts
+;; keyword args wrong (sees each `:kw VAL' as two separate args).  Pass
+;; `t' for the arglist to skip arity validation while still letting
+;; `check-declare' confirm the function lives in `media-thumbnail'.
+(declare-function media-thumbnail-preview-buffer "media-thumbnail" t)
 (defvar media-thumbnail-video-exts)
 
 (defcustom fzfa-media-thumbnail-video-exts
@@ -55,6 +60,21 @@ when `fzfa-posframe-mode' is active — this value is only consulted when
 that measurement is unavailable (e.g. no graphical display, or the
 posframe extension isn't loaded)."
   :type 'integer
+  :group 'fzfa)
+
+(defcustom fzfa-media-thumbnail-show-metadata t
+  "Non-nil to prepend a one-line video-metadata header above the thumbnail.
+
+The header shows basename, resolution, duration, codec, and file
+size when the underlying `ffprobe' returns them.  Requires
+`media-thumbnail-ffprobe-executable' on PATH — when ffprobe is
+unavailable the header degrades to just the basename, and setting
+this to nil skips even that (image-only preview).
+
+Reads the same cached metadata as `media-thumbnail's own seek
+chain, so enabling this on a session that already probed
+percentages costs no extra subprocess per hover."
+  :type 'boolean
   :group 'fzfa)
 
 (defvar fzfa-media-thumbnail--preview-buffer " *fzfa-media-thumbnail*"
@@ -136,30 +156,24 @@ pane can be measured."
       (setq-local buffer-read-only t))
     buf))
 
-(defun fzfa-media-thumbnail--image-buffer (cache-path)
-  "Return the shared preview buffer populated with CACHE-PATH's image.
+(defun fzfa-media-thumbnail--image-buffer (path cache-path)
+  "Return the shared preview buffer populated with PATH's thumbnail.
 
-CACHE-PATH is the JPEG produced by ffmpeg.  We ask
-`create-image' for `:max-width' and `:max-height' equal to the pane's
-pixel dimensions so Emacs downscales any oversized JPEG to fit — a
-guard for cached files that were generated for a different pane size
-(user resized the frame, or another package populated the cache with a
-larger thumbnail)."
-  (let* ((buf (get-buffer-create fzfa-media-thumbnail--preview-buffer))
-         (pane (fzfa-media-thumbnail--pane-pixels))
-         (spec (if pane
-                   (create-image cache-path 'jpeg nil
-                                 :max-width (car pane)
-                                 :max-height (cdr pane)
-                                 :ascent 'center)
-                 (create-image cache-path 'jpeg nil :ascent 'center)))
-         (inhibit-read-only t))
-    (with-current-buffer buf
-      (erase-buffer)
-      (insert-image spec)
-      (goto-char (point-min))
-      (setq-local buffer-read-only t))
-    buf))
+Thin wrapper over `media-thumbnail-preview-buffer' that supplies
+the posframe pane's pixel dimensions as scaling constraints, pins
+the shared buffer name, and forwards
+`fzfa-media-thumbnail-show-metadata' as the header policy.
+
+All formatting / image-insertion machinery lives upstream — this
+extension owns only the fzfa-specific dispatch and geometry
+adaptation."
+  (let ((pane (fzfa-media-thumbnail--pane-pixels)))
+    (media-thumbnail-preview-buffer
+     path cache-path
+     :buffer fzfa-media-thumbnail--preview-buffer
+     :max-width (and pane (car pane))
+     :max-height (and pane (cdr pane))
+     :header fzfa-media-thumbnail-show-metadata)))
 
 (defun fzfa-media-thumbnail--still-hovering-p (path session)
   "Return non-nil when SESSION's candidate resolves to PATH."
@@ -169,17 +183,14 @@ larger thumbnail)."
 (defun fzfa-media-thumbnail--make-callback (path origin-win session)
   "Return a `media-thumbnail-generate-async' callback for PATH.
 
-ORIGIN-WIN is the fzfa origin window; SESSION is the fzfa session at
-dispatch time.  The sentinel only refreshes when the user is still
-hovering PATH (iOS cell-reuse pattern), so a stale generation doesn't
-stomp on a preview the user has moved off."
+ORIGIN-WIN is used only as a liveness gate — SESSION is what determines
+whether the user is still hovering PATH."
   (lambda (_file cache-path success-p)
     (when (and success-p
                (fzfa-media-thumbnail--still-hovering-p path session)
                (window-live-p origin-win))
-      (let ((buf (fzfa-media-thumbnail--image-buffer cache-path)))
-        (with-selected-window origin-win
-          (fzfa-preview-show buf))))))
+      (fzfa-preview-show
+       (fzfa-media-thumbnail--image-buffer path cache-path)))))
 
 (defun fzfa-media-thumbnail--dispatch (path session)
   "Return a preview buffer for PATH when it names a video file.
@@ -201,7 +212,7 @@ is still on PATH when it lands."
             (size (fzfa-media-thumbnail--target-size)))
         (cond
          ((file-exists-p cache-path)
-          (fzfa-media-thumbnail--image-buffer cache-path))
+          (fzfa-media-thumbnail--image-buffer path cache-path))
          (t
           (media-thumbnail-generate-async
            path
