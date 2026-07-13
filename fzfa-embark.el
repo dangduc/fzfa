@@ -105,8 +105,24 @@
 ;; the target directly into the fzf minibuffer.
 
 (defun fzfa--embark-resolve (type target)
-  "Embark transformer: return (TYPE . ABSOLUTE-PATH) for TARGET."
-  (cons type (fzfa-resolve-candidate target (fzfa--current-session))))
+  "Embark transformer: return (EFFECTIVE-TYPE . RESOLVED) for TARGET.
+
+Promotes multi-source candidates to their per-source `:category'
+so embark's keymap lookup finds category-specific keymaps (e.g.
+`fzfa-replay-session' for a `fzfa-replay-any' pick) instead of
+the generic `fzfa-multi'.  Falls back to TYPE when the source
+declares no per-source category or when the multi lookup fails.
+
+Also resolves TARGET to an absolute path via
+`fzfa-resolve-candidate' — path-shaped sources (`:resolve-paths')
+still get their built-in / third-party actions receiving the
+expanded path with no per-action wiring."
+  (let* ((session (fzfa--current-session))
+         (source (and session (fzfa-session-source-of session target)))
+         (per-source-cat (and source (plist-get source :category)))
+         (effective-type (or per-source-cat type))
+         (resolved (fzfa-resolve-candidate target session)))
+    (cons effective-type resolved)))
 
 (defun fzfa-embark-grep-this-file (file)
   "Grep within FILE via `fzfa-grep-current-file'.
