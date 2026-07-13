@@ -717,11 +717,14 @@ no size change is needed."
 (defun fzfa-posframe--restore-vertico-minibuffer-soon ()
   "Schedule a Vertico minibuffer sizing restore after pending redisplay.
 
-Only runs for `preview-centered' — that's the layout where
-`posframe-show' provokes the collapse.  `side-by-side' places the
-preview beside the mini and `top-to-bottom' stacks it above the
-candidate frame (not the mini), so neither is affected."
-  (when (eq (fzfa-posframe--effective-layout) 'preview-centered)
+Gated on both the layout and the frontend:
+
+- Layout must be `preview-centered' — the only layout that anchors the
+  preview above the mini.
+- `vertico-mode' must be active — the collapse is a Vertico-specific
+  interaction with `posframe-show'."
+  (when (and (eq (fzfa-posframe--effective-layout) 'preview-centered)
+             (bound-and-true-p vertico-mode))
     (when-let* ((win (active-minibuffer-window))
                 ((window-live-p win)))
       (run-at-time 0 nil
