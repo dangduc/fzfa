@@ -2848,7 +2848,8 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
                    :initial-input initial-input
                    :resolve-paths resolve-paths
                    :display display
-                   :preview preview)))
+                   :preview preview
+                   :apply apply)))
      ((eq (car-safe fzfa--multi-mode) :inject)
       ;; One-shot consume: mutate the outer action's `let' cell so the
       ;; rest of the caller's body (and any nested fzfa calls) run with
