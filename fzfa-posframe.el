@@ -674,18 +674,20 @@ Vertico computed for the current candidate set.
 TARGET-WIN and TARGET-DEPTH pin the restore to the specific fzfa
 minibuffer captured at schedule time — the deferred tick bails if the
 user has entered a nested read since (a different mini is now active,
-or `minibuffer-depth' has grown)."
-  (when-let* ((win (active-minibuffer-window))
-              ((window-live-p win))
-              ((eq win target-win))
-              ((= (minibuffer-depth) target-depth)))
-    (with-selected-window win
-      (when (and (bound-and-true-p vertico-mode)
-                 (fboundp 'vertico--resize-window))
-        (vertico--resize-window
-         (min (or (bound-and-true-p vertico-count) 10)
-              (max 0 (or (bound-and-true-p vertico--total) 0))))))
-    (fzfa-posframe--reposition-preview-above-mini win)))
+or `minibuffer-depth' has grown).  Re-checks `vertico-mode' before
+touching window state so a toggle between schedule and fire skips the
+work entirely."
+  (when (bound-and-true-p vertico-mode)
+    (when-let* ((win (active-minibuffer-window))
+                ((window-live-p win))
+                ((eq win target-win))
+                ((= (minibuffer-depth) target-depth)))
+      (with-selected-window win
+        (when (fboundp 'vertico--resize-window)
+          (vertico--resize-window
+           (min (or (bound-and-true-p vertico-count) 10)
+                (max 0 (or (bound-and-true-p vertico--total) 0))))))
+      (fzfa-posframe--reposition-preview-above-mini win))))
 
 (defun fzfa-posframe--reposition-preview-above-mini (mb-win)
   "Move the preview posframe to sit above MB-WIN's actual pixel height.
@@ -729,6 +731,45 @@ Gated on both the layout and the frontend:
                 ((window-live-p win)))
       (run-at-time 0 nil
                    #'fzfa-posframe--restore-vertico-minibuffer
+                   win (minibuffer-depth)))))
+
+(defun fzfa-posframe--restore-icomplete-minibuffer (target-win target-depth)
+  "Restore icomplete's minibuffer height after a posframe preview update.
+
+Same collapse-mode as the Vertico case: `posframe-show' and child-frame
+redisplay re-run minibuffer window fitting outside icomplete's own
+`icomplete-exhibit' context.  Emacs's mini-window auto-fit treats the
+freshly-triggered redisplay tick as needing a single line and shrinks
+the mini-window under `icomplete-vertical-mode', even though
+`icomplete-overlay's `after-string' still carries the full candidate
+block.  Re-applying `fzfa--icomplete-fit-mini-window' restores the
+height to fit that `after-string'.
+
+TARGET-WIN and TARGET-DEPTH pin the restore to the specific fzfa
+minibuffer captured at schedule time — the deferred tick bails if the
+user has entered a nested read since (a different mini is now active,
+or `minibuffer-depth' has grown).  Re-checks `icomplete-mode' before
+touching window state so a toggle between schedule and fire skips the
+work entirely."
+  (when (bound-and-true-p icomplete-mode)
+    (when-let* ((win (active-minibuffer-window))
+                ((window-live-p win))
+                ((eq win target-win))
+                ((= (minibuffer-depth) target-depth)))
+      (with-selected-window win
+        (fzfa--icomplete-fit-mini-window))
+      (fzfa-posframe--reposition-preview-above-mini win))))
+
+(defun fzfa-posframe--restore-icomplete-minibuffer-soon ()
+  "Schedule an icomplete minibuffer sizing restore after pending redisplay.
+
+Gated on layout + frontend, same as the Vertico companion."
+  (when (and (eq (fzfa-posframe--effective-layout) 'preview-centered)
+             (bound-and-true-p icomplete-mode))
+    (when-let* ((win (active-minibuffer-window))
+                ((window-live-p win)))
+      (run-at-time 0 nil
+                   #'fzfa-posframe--restore-icomplete-minibuffer
                    win (minibuffer-depth)))))
 
 (defun fzfa-posframe--show (buffer)
@@ -917,6 +958,7 @@ are on a TTY, or BUFFER is not live."
           (goto-char (if (markerp pos) (marker-position pos) pos)))))
     (fzfa-posframe--show buffer)
     (fzfa-posframe--restore-vertico-minibuffer-soon)
+    (fzfa-posframe--restore-icomplete-minibuffer-soon)
     (let ((win (get-buffer-window buffer t)))
       (when (and win (window-live-p win))
         (with-selected-window win
