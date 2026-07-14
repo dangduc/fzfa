@@ -4148,25 +4148,34 @@ Per-source plist keys:
                         (ivy-pre-prompt-function
                          (when (and (bound-and-true-p ivy-mode) wants-decoration)
                            (lambda ()
-                             (or (funcall
-                                  fzfa-prompt-function
-                                  (funcall
-                                   prompt-fn-args
-                                   (list :index (fzfa--frontend-index)
-                                         :filtered
-                                         (cl-loop for s across sources
-                                                  sum (fzfa-source-filtered s))
-                                         :total
-                                         (cl-loop for s across sources
-                                                  sum (fzfa-source-total s))
-                                         :narrow-name
-                                         (and multi-p narrow-idx
-                                              (or (plist-get
-                                                   (aref specs-v
-                                                         narrow-idx)
-                                                   :name)
-                                                  "?")))))
-                                 "")))))
+                             ;; Ivy's `ivy--insert-prompt' always renders
+                             ;; the base PROMPT next to (or after) our
+                             ;; pre-prompt string.  Passing `:prompt ""'
+                             ;; keeps our stats line from carrying the
+                             ;; same PROMPT again — otherwise the user
+                             ;; sees e.g. `browse: DIR N/[F](T) browse:'.
+                             ;; Under other frontends the stats overlay
+                             ;; REPLACES the prompt, so `prompt-fn-args'
+                             ;; keeps `:prompt' intact for them.
+                             (let ((args (funcall
+                                          prompt-fn-args
+                                          (list :index (fzfa--frontend-index)
+                                                :filtered
+                                                (cl-loop for s across sources
+                                                         sum (fzfa-source-filtered s))
+                                                :total
+                                                (cl-loop for s across sources
+                                                         sum (fzfa-source-total s))
+                                                :narrow-name
+                                                (and multi-p narrow-idx
+                                                     (or (plist-get
+                                                          (aref specs-v
+                                                                narrow-idx)
+                                                          :name)
+                                                         "?"))))))
+                               (setq args (plist-put args :prompt ""))
+                               (or (funcall fzfa-prompt-function args)
+                                   ""))))))
                     (completing-read
                      prompt
                      (lambda (str _pred action)
