@@ -3532,8 +3532,15 @@ Per-source plist keys:
          ;; `fzfa-multi-read''s own conventions.
          (s0           (aref specs-v 0))
          (require-match (if multi-p t
-                          (or (plist-get s0 :require-match)
-                              (and (plist-get s0 :candidates) t))))
+                          ;; Honor an explicit nil — `(or nil …)' would
+                          ;; treat "unset" and "explicitly nil" the
+                          ;; same and force `t' for `:candidates'
+                          ;; sources, which breaks callers (e.g.
+                          ;; `fzfa-browse-files') that need free-form
+                          ;; input against a static list.
+                          (if (plist-member s0 :require-match)
+                              (plist-get s0 :require-match)
+                            (and (plist-get s0 :candidates) t))))
          (default-val   (and (not multi-p) (plist-get s0 :default)))
          ;; `:initial-input' is read off the narrow-target spec (or
          ;; source 0 when widened / at N=1) regardless of multi-p so
