@@ -415,6 +415,28 @@ See consult's `consult--tofu-encode' for the same trick.")
 
 ;;; `completion-styles'
 
+(defun fzfa--ensure-category-override (category)
+  "Register a `(styles fzfa)' override for CATEGORY if not already set.
+
+Called from `fzfa-completing-read' on every invocation so any fzfa
+category (built-in or caller-defined) gets pinned to fzfa's
+passthrough style without maintaining a hardcoded list.  Skips
+categories the user has explicitly overridden (respects
+customization) and any category already registered by an
+extension (fzfa-chrome-history, fzfa-mail, etc.).
+
+Rationale: without an override, `completion--nth-completion' falls
+through to the user's global `completion-styles' (fussy,
+orderless, ...) for our category, and those styles then drive
+fzfa's pre-scored collection through basic/PCM machinery that
+expects a different shape — visible as
+`(wrong-type-argument listp 0)' in the debugger.  Fzfa's own
+passthrough returns non-nil for its collection, so once it's the
+first style tried, `seq-some' short-circuits on it every time."
+  (when (and category (symbolp category)
+             (not (assq category completion-category-overrides)))
+    (push `(,category (styles fzfa)) completion-category-overrides)))
+
 (defun fzfa-try-completion (string _table _pred _point)
   "Try-completion for the fzfa completion style.
 
@@ -2822,6 +2844,7 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
     (setq category (if command 'fzfa-file 'fzfa-misc)))
   (when (eq require-match 'auto)
     (setq require-match (and candidates t)))
+  (fzfa--ensure-category-override category)
   (when-let* ((slot-dir (plist-get
                          (fzfa--resolve-action-slot category current-prefix-arg)
                          :directory)))
@@ -3497,6 +3520,14 @@ Per-source plist keys:
       (user-error "Fzfa--read does not yet support helm-mode")))
   (cl-assert (> (length sources) 0) nil
              "fzfa--read: SOURCES must contain at least one source")
+  ;; Pin fzfa's style for every source's category so timer callbacks /
+  ;; out-of-band completion calls (which don't inherit our
+  ;; `let'-bound `completion-styles') still route through fzfa's
+  ;; passthrough.  `fzfa-completing-read' also calls this, but
+  ;; `fzfa-multi-read' and `fzfa-replay' reach `fzfa--read' directly.
+  (dolist (spec sources)
+    (fzfa--ensure-category-override (plist-get spec :category)))
+  (fzfa--ensure-category-override 'fzfa-multi)
   ;; Bind here so every caller (including `fzfa-replay', which doesn't
   ;; go through the shim wrappers) routes candidates through fzfa's
   ;; passthrough style.  Without this, the user's default completion
