@@ -1125,22 +1125,38 @@ side-by-side falls back to inline vertico"))
     (vertico-multiform-mode -1))
   (setq fzfa-posframe--enabled-vertico-multiform nil))
 
+(defun fzfa-posframe--helm-poshandler ()
+  "Return the poshandler helm's posframe should use for the active layout.
+
+`side-by-side' anchors helm as the left pane; `top-to-bottom' anchors
+helm as the top of the vertically stacked pair (preview sits below).
+Falls back to side-by-side for unknown layouts."
+  (pcase (fzfa-posframe--effective-layout)
+    ('top-to-bottom
+     (if (and (boundp 'fzfa-preview-delay) fzfa-preview-delay)
+         #'fzfa-posframe-poshandler-centered-stack-top
+       #'posframe-poshandler-frame-center))
+    (_ #'fzfa-posframe-poshandler-side-by-side-left)))
+
 (defun fzfa-posframe--helm-show (buffer)
-  "Show BUFFER in the fzfa left posframe; return the posframe window.
+  "Show BUFFER in the fzfa posframe anchored per layout; return the window.
 
 Shared render path for both `helm-display-function' and the
 `display-buffer-alist' action — the former hands us a buffer name and
 does not care about the return value, the latter is a display action
 function that must return a window."
   (let* ((parent (fzfa-posframe--top-frame))
-         (geom (fzfa-posframe--pane-geometry parent))
+         ;; `candidate' purpose so `top-to-bottom' sizes helm against the
+         ;; frontend row count rather than the preview-height ratio
+         ;; (matches the ivy top-to-bottom path).
+         (geom (fzfa-posframe--pane-geometry parent 'candidate))
          (buf (if (bufferp buffer) buffer (get-buffer-create buffer)))
          (snapshot (fzfa-posframe--capture-locals buf))
          (frame (fzfa-posframe--with-top-frame parent
                   (posframe-show
                    buf
                    :parent-frame          parent
-                   :poshandler            #'fzfa-posframe-poshandler-side-by-side-left
+                   :poshandler            (fzfa-posframe--helm-poshandler)
                    :width                 (car geom)
                    :height                (cdr geom)
                    :accept-focus          nil
@@ -1430,6 +1446,7 @@ in a posframe; using preview-centered layout"))))
     ('top-to-bottom
      (pcase (fzfa-posframe--active-frontend)
        ('vertico   (fzfa-posframe--install-vertico-routing))
+       ('helm      (fzfa-posframe--install-helm-routing))
        ('ivy       (fzfa-posframe--install-ivy-routing))
        ('icomplete
         (message "fzfa-posframe: icomplete cannot render candidates \
