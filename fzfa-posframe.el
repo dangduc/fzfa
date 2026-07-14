@@ -628,11 +628,16 @@ should be in `top-to-bottom' layout."
 PURPOSE is `preview' or `candidate' (defaults to `preview').  Only the
 `top-to-bottom' layout uses PURPOSE to size the candidate pane against
 the frontend's own candidate count — every other layout gives both
-purposes the same geometry."
+purposes the same geometry.
+
+Ratio-based heights compute against `fzfa-posframe--parent-content-height'
+\(frame minus minibuffer strip) rather than raw `frame-pixel-height', so
+the resulting pane doesn't extend into the bottom band Emacs reserves
+for the minibuffer and echo area."
   (let* ((char-w (with-selected-frame parent (frame-char-width)))
          (char-h (with-selected-frame parent (default-line-height)))
          (fw     (frame-pixel-width parent))
-         (fh     (frame-pixel-height parent))
+         (fh     (fzfa-posframe--parent-content-height parent))
          (margin fzfa-posframe-margin)
          (layout (fzfa-posframe--effective-layout))
          (pw     (pcase layout

@@ -1687,6 +1687,8 @@ FILTERED and TOTAL are integer candidate counts, comma-formatted."
 of DIR (when a narrow is active).
 `:candidates' sources return nil, so the bare PROMPT shows with no
 stats overlay — sync, in-memory pools don't surface meaningful totals.
+Callers that want a dir-aware prompt over `:candidates' (e.g.,
+`fzfa-browse-files') let-bind their own `fzfa-prompt-function'.
 
 DATA is the plist documented at `fzfa-prompt-function'."
   (pcase (plist-get data :source-kind)
@@ -3644,8 +3646,15 @@ Per-source plist keys:
                            (t :candidates))
                      :prompt prompt
                      :directory
+                     ;; Set for single-source pickers whenever the
+                     ;; source has a working dir — includes
+                     ;; `:candidates' pickers that opt in by passing
+                     ;; `:directory' (e.g., `fzfa-browse-files' under
+                     ;; its sync path).  Multi keeps nil (each source
+                     ;; has its own dir).
                      (and (not multi-p)
-                          (plist-get s0 :command)
+                          (or (plist-get s0 :command)
+                              (plist-get s0 :directory))
                           (let ((d (or (plist-get s0 :directory)
                                        default-directory)))
                             (and d (abbreviate-file-name
@@ -4531,6 +4540,7 @@ limit.  Set higher if you want a deeper resume ring."
     fzfa-replay-from-file
     fzfa-replay-any
     fzfa-replay
+    fzfa-browse-files
     helm-maybe-exit-minibuffer
     matcha-me-mx)
   "Commands whose `fzfa--read' invocations are NOT captured for replay."

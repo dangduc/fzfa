@@ -1227,6 +1227,285 @@ buffer list for the others."
                            :preview #'preview-tab)))
         (switch-tab result)))))
 
+;;; Browse files (directory-navigating file picker)
+
+(defvar fzfa-browse-files--outermost-dir nil
+  "Non-nil while an outermost `fzfa-browse-files' invocation is in flight.
+Bound to the initial directory by the first call; recursive
+descents (dir → dir) leave it untouched so the whole loop counts
+as one browse for the caller's mental model.")
+
+(defun fzfa-browse-files--parent (dir)
+  "Return DIR's parent directory as a slash-terminated path."
+  (file-name-as-directory
+   (file-name-directory (directory-file-name dir))))
+
+(defvar fzfa-browse-files--parent-nav-requested nil
+  "Set by `fzfa-browse-files--parent-nav' when DEL requests parent nav.
+`fzfa-browse-files--pick' reads this in its `quit' handler to
+distinguish the parent-nav abort from a user C-g abort.")
+
+(defun fzfa-browse-files--filter ()
+  "Return the user's typed filter, ignoring frontend-injected candidates.
+
+Under ivy the minibuffer buffer contains the candidate list too, so
+`minibuffer-contents-no-properties' overreports.  `ivy-text' holds
+just the user's typed line — gate on `ivy-mode' (the symbol may be
+bound with a stale value under other frontends).
+
+Under vertico / icomplete / helm the user's input lives in the
+minibuffer buffer directly; take everything from
+`minibuffer-prompt-end' to the next newline (or `point-max').  Do
+NOT use `helm-pattern' — helm updates it lazily on its own hooks
+so it lags user keystrokes by a tick, and a DEL fired between the
+keystroke and the update would misread the filter as empty."
+  (cond
+   ((and (bound-and-true-p ivy-mode) (boundp 'ivy-text)) ivy-text)
+   (t
+    (let* ((beg (minibuffer-prompt-end))
+           (end (save-excursion
+                  (goto-char beg)
+                  (if (search-forward "\n" nil t) (1- (point))
+                    (point-max)))))
+      (buffer-substring-no-properties beg end)))))
+
+(defun fzfa-browse-files--parent-nav ()
+  "DEL handler in the browse picker.
+
+Empty filter → set the parent-nav flag and `abort-recursive-edit'
+so `completing-read' unwinds cleanly; the outer `--pick' catches
+the quit and dispatches back to `--loop' for a parent recursion.
+Non-empty filter → default backward delete."
+  (interactive)
+  (if (string-empty-p (fzfa-browse-files--filter))
+      (progn
+        (setq fzfa-browse-files--parent-nav-requested t)
+        (abort-recursive-edit))
+    (call-interactively #'delete-backward-char)))
+
+(defun fzfa-browse-files--install-parent-nav-key ()
+  "Bind backspace to `fzfa-browse-files--parent-nav' in the browse minibuffer.
+Installs via a per-instance child of `current-local-map' so the
+frontend's shared keymap isn't mutated.  Uses `[remap
+delete-backward-char]' (plus `[remap ivy-backward-delete-char]'
+for ivy's own remap) so our binding wins over ivy's DEL remap
+regardless of resolution order."
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map (current-local-map))
+    (define-key map (kbd "DEL") #'fzfa-browse-files--parent-nav)
+    (define-key map [remap delete-backward-char]
+                #'fzfa-browse-files--parent-nav)
+    (define-key map [remap ivy-backward-delete-char]
+                #'fzfa-browse-files--parent-nav)
+    (use-local-map map)))
+
+(defun fzfa-browse-files--entries (dir)
+  "Return the browse candidates for DIR: `../', `./', then DIR's entries.
+
+Directory entries get a `/' suffix (matching `ls -p`).  Symlinks
+inherit the target's kind — a symlink to a directory gets `/'.
+Read synchronously via `directory-files-and-attributes' — one
+syscall + stat per entry, no shell fork.  Sub-millisecond for
+typical browse dirs; browsing multi-thousand-entry dirs is
+uncommon enough that we keep the simpler single-code-path here."
+  (append '("../" "./")
+          (delq nil
+                (mapcar
+                 (lambda (item)
+                   (let ((name (car item))
+                         (type (file-attribute-type (cdr item))))
+                     (unless (or (equal name ".") (equal name ".."))
+                       (cond
+                        ((eq type t) (concat name "/"))
+                        ((stringp type)
+                         (if (file-directory-p
+                              (expand-file-name name dir))
+                             (concat name "/")
+                           name))
+                        (t name)))))
+                 (directory-files-and-attributes dir nil nil t)))))
+
+(defconst fzfa-browse-files--prompt-label "browse: "
+  "Fixed label rendered by `fzfa-browse-files--format-prompt'.
+
+Baked into the formatter rather than passed through fzfa's
+`:prompt' plumbing: under ivy, fzfa's pre-prompt code strips
+`:prompt' to avoid double-rendering it against ivy's own trailing
+prompt insertion.  Passing an empty `:prompt' to
+`fzfa-completing-read' makes ivy insert nothing extra, and the
+label sits where we want it — between the counts and the DIR.")
+
+(defun fzfa-browse-files--format-prompt (data)
+  "Prompt formatter for `fzfa-browse-files'.
+
+Renders \"IDX/[FILTERED](TOTAL) browse: DIR\" so DIR sits
+immediately before the cursor — the user sees the current path
+as the input line's prefix, matching helm/vertico find-file
+conventions.  The label is hardcoded (see
+`fzfa-browse-files--prompt-label')."
+  (concat
+   (fzfa--format-stats "" (plist-get data :index)
+                       (plist-get data :filtered)
+                       (plist-get data :total))
+   fzfa-browse-files--prompt-label
+   (plist-get data :directory)))
+
+(defun fzfa-browse-files--completing-read-prompt (dir)
+  "Return the `:prompt' string to pass to `fzfa-completing-read' for DIR.
+
+Ivy → empty: ivy inserts <pre-prompt><head><tail> at the top of
+the minibuffer, so an empty prompt makes ivy add nothing after
+our formatter output — cursor lands right after DIR.
+
+Vertico / icomplete → single space: fzfa's stats overlay needs a
+non-empty range to anchor its `display' property; a lone space
+gets replaced by the formatter output and the cursor sits at
+`minibuffer-prompt-end' (visually right after DIR).
+
+Helm → \"browse: DIR\" bakeform: helm doesn't use fzfa's overlay
+\(prompt is set once via `helm :prompt' and stays static), so we
+inline the label + dir into the prompt itself.  Counts don't
+appear (helm shows candidate counts in its mode line already)."
+  (cond
+   ((bound-and-true-p ivy-mode) "")
+   ((bound-and-true-p helm-mode)
+    (concat fzfa-browse-files--prompt-label
+            (abbreviate-file-name dir)))
+   (t " ")))
+
+(defvar helm-map)
+
+(defun fzfa-browse-files--helm-map ()
+  "Return a copy of `helm-map' with our parent-nav DEL bindings.
+
+Helm sets its minibuffer keymap via `read-from-minibuffer''s keymap
+argument (using the dynamically-scoped `helm-map'), and its own setup
+does not surface through `minibuffer-with-setup-hook' the way
+`fzfa--read' does — so our `--install-parent-nav-key' hook doesn't
+reliably win under helm.  Let-bind `helm-map' to a pre-augmented copy
+around the `fzfa-completing-read' call so the bindings are baked in
+before helm reads the keymap."
+  (let ((m (copy-keymap helm-map)))
+    (define-key m (kbd "DEL") #'fzfa-browse-files--parent-nav)
+    (define-key m [remap delete-backward-char]
+                #'fzfa-browse-files--parent-nav)
+    (define-key m [remap helm-delete-minibuffer-contents]
+                #'fzfa-browse-files--parent-nav)
+    m))
+
+(defun fzfa-browse-files--pick (dir)
+  "Show the browse picker anchored at DIR; return the chosen entry.
+
+Returns the selection string on normal exit, `:parent' when the
+DEL handler requested parent nav, or re-signals `quit' when the
+user aborted."
+  (setq fzfa-browse-files--parent-nav-requested nil)
+  (let ((result
+         (condition-case _
+             ;; `:append' so our hook runs LAST — under fido-mode /
+             ;; icomplete-fido-mode, `icomplete--fido-mode-setup' does
+             ;; a late `(use-local-map (make-composed-keymap
+             ;; icomplete-fido-mode-map ...))' that composes fido's
+             ;; DEL binding on top of the local map.  Running after it
+             ;; keeps our binding on top.
+             (minibuffer-with-setup-hook
+                 (:append #'fzfa-browse-files--install-parent-nav-key)
+               (let* ((fzfa-prompt-function
+                       #'fzfa-browse-files--format-prompt)
+                      ;; Force `this-command' so nested picker
+                      ;; invocations (each --pick opens a fresh
+                      ;; minibuffer) capture `fzfa-browse-files' as
+                      ;; their `entry-command'.  Otherwise every
+                      ;; subdir-nav gets whatever key the user pressed
+                      ;; (vertico-directory-enter, icomplete-fido-ret,
+                      ;; ...) as entry-command — bypassing
+                      ;; `fzfa-sessions-exclude-commands' and
+                      ;; polluting the replay ring with sessions that
+                      ;; call frontend-exit commands at replay time
+                      ;; and error with `(no-catch exit nil)'.
+                      (this-command 'fzfa-browse-files)
+                      (real-this-command 'fzfa-browse-files)
+                      ;; Under helm-mode, layer DEL onto a copy of
+                      ;; `helm-map' so helm's `:keymap' argument sees
+                      ;; our bindings.
+                      (helm-map (if (and (bound-and-true-p helm-mode)
+                                         (boundp 'helm-map))
+                                    (fzfa-browse-files--helm-map)
+                                  (bound-and-true-p helm-map))))
+                 (fzfa-completing-read
+                  :candidates (fzfa-browse-files--entries dir)
+                  :directory dir
+                  :prompt (fzfa-browse-files--completing-read-prompt dir)
+                  :category 'fzfa-file
+                  :resolve-paths nil
+                  :require-match nil)))
+           ;; Under vertico/icomplete, `abort-recursive-edit' from our
+           ;; DEL handler signals `quit' — catch and inspect the flag.
+           ;; Helm swallows the quit internally and returns nil, so we
+           ;; also check the flag on the normal return below.
+           (quit :fzfa-browse-files-quit))))
+    (cond
+     (fzfa-browse-files--parent-nav-requested :parent)
+     ((eq result :fzfa-browse-files-quit) (signal 'quit nil))
+     (t result))))
+
+(defun fzfa-browse-files--dispatch (dir entry)
+  "Dispatch ENTRY (from the picker) relative to DIR.
+
+`../' recurses into the parent, `./' opens DIR as dired, an entry
+suffixed with `/' recurses into that subdirectory, and everything
+else is passed to `find-file' (creates the file if it doesn't
+exist, matching C-x C-f semantics)."
+  (cond
+   ((string= entry "../")
+    (fzfa-browse-files--loop (fzfa-browse-files--parent dir)))
+   ((string= entry "./")
+    (dired dir))
+   ((string-suffix-p "/" entry)
+    (fzfa-browse-files--loop (expand-file-name entry dir)))
+   (t
+    (find-file (expand-file-name entry dir)))))
+
+(defun fzfa-browse-files--loop (dir)
+  "Pick from DIR; dispatch or recurse per the choice.
+
+DEL-on-empty in the picker returns `:parent' via
+`abort-recursive-edit' + `fzfa-browse-files--parent-nav-requested'
+— that branch recurses into the parent (equivalent to picking
+`../') without needing frontend-specific bindings."
+  (let ((result (fzfa-browse-files--pick dir)))
+    (cond
+     ((eq result :parent)
+      (fzfa-browse-files--loop (fzfa-browse-files--parent dir)))
+     ((null result) nil)
+     (t (fzfa-browse-files--dispatch dir result)))))
+
+;;;###autoload
+(defun fzfa-browse-files (&optional dir)
+  "Browse DIR (default `default-directory') via fzfa; open the pick.
+
+The picker loops: selecting a subdirectory recurses into it,
+selecting a file opens it via `find-file'.  Also:
+- `../' recurses into the parent (also bound to `DEL' on empty
+  filter).
+- `./' opens the current directory as dired.
+- Hidden files are included (matches C-x C-f).
+
+Excluded from the replay ring per-recursion to avoid dedup-key
+pollution.  Every dispatch call inside the loop counts as one
+fzfa session; excluding at the command level keeps browsing out
+of memory / on-disk replay entirely."
+  (interactive)
+  (let* ((outermost-p (null fzfa-browse-files--outermost-dir))
+         (dir (file-name-as-directory
+               (expand-file-name (or dir default-directory))))
+         (fzfa-browse-files--outermost-dir
+          (or fzfa-browse-files--outermost-dir dir)))
+    (unwind-protect
+        (fzfa-browse-files--loop dir)
+      (when outermost-p
+        (setq fzfa-browse-files--outermost-dir nil)))))
+
 (provide 'fzfa-emacs)
 
 ;; Local Variables:
