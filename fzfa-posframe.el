@@ -441,6 +441,28 @@ the two panes visually separated."
     (cons (max 0 (/ (- fw pw) 2))
           fzfa-posframe-margin)))
 
+(defun fzfa-posframe--parent-content-height (parent)
+  "Return PARENT's usable vertical pixel height for centered posframes.
+
+Subtracts the minibuffer window's pixel height (and its mode line
+above, when present) from the total frame height so poshandlers
+don't extend into the bottom strip Emacs uses for the minibuffer
+and echo area.  Falls back to full frame height when no minibuffer
+window can be located (rare — happens when called outside an
+active session)."
+  (let* ((fh (frame-pixel-height parent))
+         (mb-win (or (minibuffer-window parent)
+                     (active-minibuffer-window)))
+         (mbh (if (and mb-win (window-live-p mb-win))
+                  (window-pixel-height mb-win)
+                0))
+         (above (and mb-win (window-live-p mb-win)
+                     (ignore-errors (window-in-direction 'above mb-win))))
+         (mlh (if (and above (window-live-p above))
+                  (window-mode-line-height above)
+                0)))
+    (max 0 (- fh mbh mlh))))
+
 (defun fzfa-posframe--centered-stack-block-top (parent this-h)
   "Return the Y of the top of the centered candidate+preview block.
 
@@ -448,14 +470,19 @@ PARENT is the parent frame.  THIS-H is the current frame's pixel
 height (from the poshandler's INFO plist).  We recompute the OTHER
 frame's expected pixel height via `fzfa-posframe--pane-geometry' so
 the block stays symmetric even when the two frames have very
-different sizes."
+different sizes.
+
+Centering is against PARENT's content height (see
+`fzfa-posframe--parent-content-height') rather than the raw frame
+pixel height — otherwise the stack extends into the bottom strip
+Emacs reserves for the minibuffer / echo area and clips messages."
   (let* ((char-h (with-selected-frame parent (default-line-height)))
          (cand-h (* (cdr (fzfa-posframe--pane-geometry parent 'candidate))
                     char-h))
          (prev-h (* (cdr (fzfa-posframe--pane-geometry parent 'preview))
                     char-h))
          (block-h (+ cand-h fzfa-posframe-margin prev-h))
-         (fh (frame-pixel-height parent)))
+         (fh (fzfa-posframe--parent-content-height parent)))
     ;; Sanity: if this frame is neither cand-h nor prev-h (e.g. sizing
     ;; drifted between measure and paint), fall back to a plain vertical
     ;; center for the current frame.
@@ -1273,31 +1300,55 @@ helm-follow / helm-cleanup timer race far more likely to bite."
                  #'fzfa-posframe--helm-persistent-action-guard))
 
 
+(defun fzfa-posframe--ivy-poshandler ()
+  "Return the poshandler ivy-posframe should use for the active layout.
+
+`side-by-side' anchors ivy's posframe as the left pane;
+`top-to-bottom' anchors it as the top of the vertically stacked pair
+\(preview sits below).  Falls back to side-by-side for unknown layouts."
+  (pcase (fzfa-posframe--effective-layout)
+    ('top-to-bottom
+     (if (and (boundp 'fzfa-preview-delay) fzfa-preview-delay)
+         ;; Preview will fire — treat candidate + preview as a stacked
+         ;; pair centered together (matches the vertico path in
+         ;; `fzfa-posframe--display-vertico-buffer').
+         #'fzfa-posframe-poshandler-centered-stack-top
+       #'posframe-poshandler-frame-center))
+    (_ #'fzfa-posframe-poshandler-side-by-side-left)))
+
 (defun fzfa-posframe--ivy-display (str)
-  "Display STR via `ivy-posframe--display' anchored in the left pane.
+  "Display STR via `ivy-posframe--display' anchored per active layout.
 
 Registered as the sole entry in `ivy-posframe-display-functions-alist'
-while `fzfa-posframe-mode' is active with `side-by-side' layout."
-  (ivy-posframe--display str #'fzfa-posframe-poshandler-side-by-side-left))
+while `fzfa-posframe-mode' is active with `side-by-side' or
+`top-to-bottom' layout."
+  (ivy-posframe--display str (fzfa-posframe--ivy-poshandler)))
 
 (defun fzfa-posframe--ivy-size ()
   "Return the size plist ivy-posframe should use for its posframe.
 
-Sized to match the fzfa left pane geometry, recomputed on every call so
-frame resizes are picked up without cycling the mode."
+Sized to match the fzfa candidate pane geometry (purpose `candidate' so
+`top-to-bottom' picks the frontend-driven row count instead of the
+preview-height ratio), recomputed on every call so frame resizes are
+picked up without cycling the mode."
   (let* ((parent (fzfa-posframe--top-frame))
-         (geom (fzfa-posframe--pane-geometry parent)))
+         (geom (fzfa-posframe--pane-geometry parent 'candidate)))
     (list :width      (car geom)
           :height     (cdr geom)
           :min-width  (car geom)
           :min-height (cdr geom))))
 
 (defun fzfa-posframe--install-ivy-routing ()
-  "Enable `ivy-posframe-mode' and pin its posframe to the left pane.
+  "Enable `ivy-posframe-mode' and pin its posframe to the layout's pane.
 
-Also raises `ivy-height' to the pane's row count so ivy renders enough
-candidates to fill the posframe — ivy's default of 10 lines otherwise
-leaves the bottom half of the pane empty regardless of posframe size.
+Under `side-by-side' layout the candidate pane fills half the frame,
+so `ivy-height' is raised to that pane's row count — ivy's default of
+10 lines otherwise leaves the bottom half of the posframe empty
+regardless of posframe size.  Under `top-to-bottom' the direction
+reverses: the pane is sized against the user's `ivy-height' (via
+`fzfa-posframe--ivy-size' passing `'candidate' to
+`fzfa-posframe--pane-geometry'), so no override is needed and doing
+one would produce a huge child frame.
 
 Saves the pre-mode values of `ivy-posframe-display-functions-alist',
 `ivy-posframe-size-function', and `ivy-height' so disable can restore
@@ -1319,11 +1370,12 @@ ivy keeps its default display"))
     (setq ivy-posframe-display-functions-alist
           '((t . fzfa-posframe--ivy-display))
           ivy-posframe-size-function
-          #'fzfa-posframe--ivy-size
-          ivy-height
-          (max (or fzfa-posframe--saved-ivy-height 10)
-               (cdr (fzfa-posframe--pane-geometry
-                     (fzfa-posframe--top-frame)))))
+          #'fzfa-posframe--ivy-size)
+    (when (eq (fzfa-posframe--effective-layout) 'side-by-side)
+      (setq ivy-height
+            (max (or fzfa-posframe--saved-ivy-height 10)
+                 (cdr (fzfa-posframe--pane-geometry
+                       (fzfa-posframe--top-frame))))))
     (unless (bound-and-true-p ivy-posframe-mode)
       (ivy-posframe-mode 1)
       (setq fzfa-posframe--enabled-ivy-posframe t)))))
@@ -1378,6 +1430,7 @@ in a posframe; using preview-centered layout"))))
     ('top-to-bottom
      (pcase (fzfa-posframe--active-frontend)
        ('vertico   (fzfa-posframe--install-vertico-routing))
+       ('ivy       (fzfa-posframe--install-ivy-routing))
        ('icomplete
         (message "fzfa-posframe: icomplete cannot render candidates \
 in a posframe; using preview-centered layout"))))))
@@ -1493,6 +1546,51 @@ Idempotent."
 
 ;;; Mode
 
+(defvar posframe-mouse-banish-function)
+
+(defvar fzfa-posframe--saved-mouse-banish-function 'unset
+  "Snapshot of `posframe-mouse-banish-function' before mode enable.")
+
+(defun fzfa-posframe--install-mouse-banish-suppression ()
+  "Disable posframe's mouse-banish so the OS cursor stays where the user put it.
+
+`posframe-show' calls `posframe-mouse-banish-function' to move the
+cursor OUT of the child frame region, which fires on every
+candidate redraw.  Under macOS this is actively harmful — when a
+native permission popup (mic, files, network) appears mid-session,
+each ivy keystroke redraws the posframe and the cursor snaps away
+from the `Allow' button.  Suppression stays in effect while
+`fzfa-posframe-mode' is on; disable restores the saved function."
+  (when (eq fzfa-posframe--saved-mouse-banish-function 'unset)
+    (setq fzfa-posframe--saved-mouse-banish-function
+          (bound-and-true-p posframe-mouse-banish-function)))
+  (setq posframe-mouse-banish-function #'ignore))
+
+(defun fzfa-posframe--uninstall-mouse-banish-suppression ()
+  "Restore `posframe-mouse-banish-function' to its pre-mode value."
+  (unless (eq fzfa-posframe--saved-mouse-banish-function 'unset)
+    (when (boundp 'posframe-mouse-banish-function)
+      (setq posframe-mouse-banish-function
+            fzfa-posframe--saved-mouse-banish-function))
+    (setq fzfa-posframe--saved-mouse-banish-function 'unset)))
+
+(defun fzfa-posframe--ivy-hidehandler-around (orig frame)
+  "Suppress ivy-posframe's autohide when we're inside a fzfa session.
+
+`ivy-posframe-hidehandler' returns non-nil (→ hide the candidate
+posframe) when the current buffer isn't a minibuffer.  Clicking or
+scrolling the preview child frame changes `current-buffer' to the
+preview buffer, tripping that check on the post-command-hook that
+runs the hidehandler — candidate posframe disappears mid-session.
+
+Return nil for fzfa sessions so the candidate posframe stays put
+regardless of where the user's mouse focus wandered; forward to
+ORIG for non-fzfa sessions so unrelated ivy-posframe use keeps
+its normal auto-hide behavior."
+  (if (fzfa-posframe--in-fzfa-session-p)
+      nil
+    (funcall orig frame)))
+
 ;;;###autoload
 (define-minor-mode fzfa-posframe-mode
   "Global minor mode routing fzfa's preview (and optionally its
@@ -1510,6 +1608,10 @@ When enabled:
 - When layout is `top-to-bottom' and vertico is active, candidates
   route into a centered posframe on top; the preview posframe sits
   directly below, and the combined block is vertically centered.
+- Posframe's mouse-banish is suppressed so macOS permission popups
+  and other native dialogs stay clickable.
+- Ivy-posframe's autohide is short-circuited inside fzfa sessions
+  so clicking / scrolling the preview doesn't dismiss candidates.
 
 All installed state is restored on disable."
   :global t
@@ -1518,11 +1620,15 @@ All installed state is restored on disable."
    ((not fzfa-posframe-mode)
     (advice-remove 'fzfa-preview-show
                    #'fzfa-posframe--preview-show-advice)
+    (when (fboundp 'ivy-posframe-hidehandler)
+      (advice-remove 'ivy-posframe-hidehandler
+                     #'fzfa-posframe--ivy-hidehandler-around))
     (remove-hook 'minibuffer-exit-hook
                  #'fzfa-posframe--minibuffer-exit)
     (fzfa-posframe--uninstall-frontend-routing)
     (fzfa-posframe--uninstall-embark-actions-routing)
     (fzfa-posframe--uninstall-helm-preview-follow)
+    (fzfa-posframe--uninstall-mouse-banish-suppression)
     (fzfa-posframe--dismiss)
     (fzfa-posframe--dismiss-vertico)
     (fzfa-posframe--dismiss-helm))
@@ -1533,6 +1639,10 @@ All installed state is restored on disable."
     (setq fzfa-posframe-mode nil)
     (user-error "`fzfa-posframe-mode' requires the `posframe' package"))
    (t
+    (fzfa-posframe--install-mouse-banish-suppression)
+    (with-eval-after-load 'ivy-posframe
+      (advice-add 'ivy-posframe-hidehandler :around
+                  #'fzfa-posframe--ivy-hidehandler-around))
     (advice-add 'fzfa-preview-show :around
                 #'fzfa-posframe--preview-show-advice)
     (add-hook 'minibuffer-exit-hook
