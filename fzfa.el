@@ -1592,6 +1592,16 @@ naturally.  Covers initial entry and backspace-to-empty alike."
       (setq-local vertico-count-format nil))
     (when (boundp 'icomplete-matches-format)
       (setq-local icomplete-matches-format nil)))
+  ;; Pin fzfa's passthrough completion-style buffer-locally.  The
+  ;; call-site let-binding around `completing-read' unwinds by the
+  ;; time timer callbacks (preview idle-timer, icomplete's
+  ;; `icomplete-exhibit', poll timer) fire, so those callbacks would
+  ;; drive completion with the user's global styles (fussy, orderless,
+  ;; etc.) against fzfa's passthrough table and blow up with
+  ;; `(wrong-type-argument listp 0)' from the basic/PCM machinery.
+  ;; A setq-local wins over the dynamic scope permanently for this
+  ;; minibuffer.
+  (setq-local completion-styles '(fzfa))
   (fzfa--minibuffer-install-apply-key)
   (fzfa--minibuffer-install-preview-key)
   (when (bound-and-true-p icomplete-mode)
