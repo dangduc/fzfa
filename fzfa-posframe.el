@@ -687,6 +687,19 @@ survives, only the vertico temp buffer is swapped in via
   (when (frame-live-p fzfa-posframe--vertico-frame)
     (make-frame-invisible fzfa-posframe--vertico-frame)))
 
+(defun fzfa-posframe--hide-preview ()
+  "Make the preview posframe invisible but keep it in the cache.
+
+Called on minibuffer exit so the next fzfa session hits the fast
+path in `fzfa-posframe--show' — the frame survives, only the
+previewed buffer is swapped in via `set-window-buffer'.  Prevents
+the destroy/recreate flash when a picker loop (e.g.,
+`fzfa-browse-files' navigating between directories) closes and
+reopens the minibuffer in quick succession.  Full deletion still
+happens on mode disable via `fzfa-posframe--dismiss'."
+  (when (frame-live-p fzfa-posframe--preview-frame)
+    (make-frame-invisible fzfa-posframe--preview-frame)))
+
 (defun fzfa-posframe--restore-vertico-minibuffer (target-win target-depth)
   "Restore Vertico's minibuffer height after a posframe preview update.
 
@@ -1003,9 +1016,14 @@ then reaches `(delete-frame nil)' at line 4351 and errors with
 \"Attempt to delete the sole visible or iconified frame\".  Orphan
 sweep for the helm posframe lives in the mode-disable path.
 
-Hides — rather than deletes — the vertico posframe so its cache
-survives across sessions.  The full teardown lives on mode disable."
-  (fzfa-posframe--dismiss)
+Hides — rather than deletes — both the vertico and preview posframes
+so their caches survive across sessions.  Prevents the flash when a
+picker loop (e.g., `fzfa-browse-files' navigating dirs) closes and
+reopens the minibuffer.  The next fzfa session hits the fast path in
+`fzfa-posframe--show' / `--display-vertico-buffer' and swaps the buffer
+via `set-window-buffer' instead of rebuilding the frame.  Full
+teardown lives on mode disable."
+  (fzfa-posframe--hide-preview)
   (fzfa-posframe--hide-vertico))
 
 ;;; Frontend-specific routing
