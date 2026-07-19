@@ -4798,9 +4798,7 @@ inner sources receive auto-derived keys from their own :name."
                                (when (fboundp 'marginalia-annotate-buffer)
                                  (marginalia-annotate-buffer c))))
                             ((memq cat '(fzfa-file file))
-                             (lambda (c)
-                               (when (fboundp 'marginalia-annotate-file)
-                                 (marginalia-annotate-file c)))))))
+                             #'fzfa--annotate-file))))
                      ;; Wrap a single source in a list so `append'
                      ;; below treats single and nested cases uniformly.
                      ;; The :action closure captures each source's own
@@ -5050,6 +5048,17 @@ render."
         (fzf-native-fuzzy            fzfa-fuzzy))
     (apply orig-fn args)))
 
+(defun fzfa--annotate-file (cand)
+  "Marginalia file annotator; skip when `default-directory' is remote.
+
+Wraps `marginalia-annotate-file' with a `file-remote-p' short
+circuit so annotating a flood of file candidates under a TRAMP
+`default-directory' does not fire a `file-attributes' round-trip
+per visible candidate."
+  (unless (file-remote-p default-directory)
+    (when (fboundp 'marginalia-annotate-file)
+      (marginalia-annotate-file cand))))
+
 (defun fzfa--ensure-setup ()
   "Install fzfa's registrations exactly once.
 
@@ -5082,7 +5091,7 @@ render."
             #'fzfa--multi-default-action))
 
     (with-eval-after-load 'marginalia
-      (dolist (entry '((fzfa-file     marginalia-annotate-file     none)
+      (dolist (entry '((fzfa-file     fzfa--annotate-file          none)
                        (fzfa-buffer   marginalia-annotate-buffer   none)
                        (fzfa-bookmark marginalia-annotate-bookmark none)
                        (fzfa-theme    marginalia-annotate-theme    none)
