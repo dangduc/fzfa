@@ -2636,6 +2636,20 @@ skip the rewrite.  Used by `fzfa-tramp' to make sources spawn
 transparently against TRAMP paths.  Local sources should leave
 this nil so the spawn hot path stays a single nil test.")
 
+(defcustom fzfa-validate-remote-executables nil
+  "Whether to run `executable-find' against a remote `default-directory'.
+
+When nil (default), the executable-existence check in
+`fzfa-completing-read' is skipped for TRAMP paths — the tool is
+assumed to exist on the remote host, and any real absence surfaces
+as a spawn failure.  When non-nil, `executable-find' is invoked
+with a non-nil REMOTE arg so the check hits the remote host's
+exec-path.  That check is TRAMP-aware but costs a shell round-trip
+over the connection at the start of every remote fzfa session, so
+it is off by default."
+  :type 'boolean
+  :group 'fzfa)
+
 (defun fzfa--spawn (cmd dir)
   "Start a `fzf-native' async handle for CMD in DIR.
 
@@ -2882,8 +2896,13 @@ The prompt overlay shows: DIR IDX/[FILTERED](TOTAL)
       (when d (setq directory d))))
   (unless (or skip-executable-check candidates)
     (when-let* ((prog (and command (car (split-string command nil t)))))
-      (unless (executable-find prog)
-        (user-error "%s not found in exec-path" prog))))
+      (let ((remote (file-remote-p default-directory)))
+        ;; For remote paths, `executable-find' with a non-nil REMOTE
+        ;; arg is TRAMP-aware but costs a round-trip; skip unless
+        ;; `fzfa-validate-remote-executables' opts in.
+        (when (or (not remote) fzfa-validate-remote-executables)
+          (unless (executable-find prog remote)
+            (user-error "%s not found in exec-path" prog))))))
   (let ((prompt (or prompt
                     (when command
                       (concat (car (split-string command nil t)) ": "))
