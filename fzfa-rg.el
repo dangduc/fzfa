@@ -33,11 +33,15 @@ Run from `default-directory'; stdout lines become file candidates."
   :group 'fzfa)
 
 (defcustom fzfa-rg-command
-  "rg --line-number --no-heading --with-filename %s ''"
+  "rg --line-number --no-heading --with-filename %s '' ."
   "Shell command used by `fzfa-rg' for content search.
 
 A `%s' placeholder is filled with the max-columns flag derived from
-`fzfa-max-line-length'.  Output must be FILE:LINE:CONTENT."
+`fzfa-max-line-length'.  Output must be FILE:LINE:CONTENT.
+
+The trailing `.' explicitly tells rg to search the current directory
+— without it, rg reads from stdin when stdin isn't a tty, which
+breaks non-interactive invocations (e.g. spawned over ssh)."
   :type 'string
   :group 'fzfa)
 
