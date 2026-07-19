@@ -288,7 +288,7 @@ SPECS is a list of source plists.  CANDIDATES is an alist of
               (nreverse lines))))
       (should (equal candidates '("1:first" "3:third"))))))
 
-;;; fzfa-tramp (ssh-hosts via :extract)
+;;; fzfa-ssh (ssh-hosts via :extract)
 
 (defun fzfa-test--extract (cmd)
   "Run CMD under the multi `:extract' mode and return the captured plist.
@@ -302,7 +302,7 @@ Returns nil if CMD completes without invoking `completing-read'."
 (defmacro fzfa-test--with-ssh-config (content &rest body)
   "Run BODY with a temp file containing CONTENT as the ssh config.
 
-Mocks `expand-file-name' so `fzfa-tramp' reads the temp file."
+Mocks `expand-file-name' so `fzfa-ssh' reads the temp file."
   (declare (indent 1))
   `(let ((tmpfile (make-temp-file "fzfa-test-ssh-config")))
      (unwind-protect
@@ -313,32 +313,32 @@ Mocks `expand-file-name' so `fzfa-tramp' reads the temp file."
              ,@body))
        (delete-file tmpfile))))
 
-(ert-deftest fzfa-tramp-hosts-basic ()
+(ert-deftest fzfa-ssh-hosts-basic ()
   "Parses plain Host entries from ~/.ssh/config."
   (fzfa-test--with-ssh-config
       "Host foo\n  HostName foo.example.com\nHost bar\n"
-    (let ((args (fzfa-test--extract #'fzfa-tramp)))
+    (let ((args (fzfa-test--extract #'fzfa-ssh)))
       (should (equal (plist-get args :candidates) '("foo" "bar"))))))
 
-(ert-deftest fzfa-tramp-hosts-skips-wildcards ()
+(ert-deftest fzfa-ssh-hosts-skips-wildcards ()
   "Wildcard Host patterns (*, ?, !) are excluded."
   (fzfa-test--with-ssh-config
       "Host *\nHost prod\nHost *.internal\nHost dev\n"
-    (let ((args (fzfa-test--extract #'fzfa-tramp)))
+    (let ((args (fzfa-test--extract #'fzfa-ssh)))
       (should (equal (plist-get args :candidates) '("prod" "dev"))))))
 
-(ert-deftest fzfa-tramp-hosts-multiple-on-one-line ()
+(ert-deftest fzfa-ssh-hosts-multiple-on-one-line ()
   "Multiple hosts on a single Host line are each returned."
   (fzfa-test--with-ssh-config
       "Host alpha beta gamma\n"
-    (let ((args (fzfa-test--extract #'fzfa-tramp)))
+    (let ((args (fzfa-test--extract #'fzfa-ssh)))
       (should (equal (plist-get args :candidates)
                      '("alpha" "beta" "gamma"))))))
 
-(ert-deftest fzfa-tramp-missing-config ()
+(ert-deftest fzfa-ssh-missing-config ()
   "Signals a `user-error' when ~/.ssh/config does not exist."
   (cl-letf (((symbol-function 'file-readable-p) (lambda (_) nil)))
-    (should-error (fzfa-test--extract #'fzfa-tramp)
+    (should-error (fzfa-test--extract #'fzfa-ssh)
                   :type 'user-error)))
 
 ;;; fzfa-swiper-all (SOURCE encoding via :extract)

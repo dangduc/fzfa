@@ -289,7 +289,8 @@ through `call-interactively'."
        ("s" "Spotlight"       fzfa-spotlight)
        ("S" "Spotlight Apps"  fzfa-spotlight-apps)
        ("m" "Spotlight Audio" fzfa-spotlight-audio)
-       ("t" "Tramp"           fzfa-tramp)])
+       ("t" "Tramp"           fzfa-tramp)
+       ("T" "SSH"             fzfa-ssh)])
 
 (setq fzfa-transient---shell
       ["Shell / Make"

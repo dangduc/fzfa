@@ -27,7 +27,9 @@
 ;; handshake — acceptable for interactive use.
 ;;
 ;; Commands:
-;;   `fzfa-tramp'   Connect to a host from ~/.ssh/config
+;;   `fzfa-ssh'     Pick a host from ~/.ssh/config and visit /ssh:HOST:.
+;;   `fzfa-tramp'   Pick a host from ~/.ssh/config and open the browse
+;;                  picker on it (via `fzfa-browse-files').
 
 ;;; Code:
 
@@ -43,6 +45,7 @@
 (declare-function tramp-file-name-host "tramp" t t)
 (declare-function tramp-file-name-port "tramp" t t)
 (declare-function tramp-file-name-localname "tramp" t t)
+(declare-function fzfa-browse-files "fzfa-emacs" (&optional dir))
 
 (defcustom fzfa-tramp-safe-local-dir "/"
   "Local directory handed to `fzf-native-async-start' for ssh-wrapped calls.
@@ -89,27 +92,43 @@ methods and local paths pass through unchanged."
                 fzfa-tramp-safe-local-dir)
         (cons cmd dir)))))
 
+(defun fzfa-tramp--ssh-hosts ()
+  "Return the list of non-wildcard `Host' entries from ~/.ssh/config."
+  (let ((config (expand-file-name "~/.ssh/config"))
+        hosts)
+    (when (file-readable-p config)
+      (with-temp-buffer
+        (insert-file-contents config)
+        (while (re-search-forward
+                "^[Hh]ost[[:space:]]+\\(.+\\)" nil t)
+          (dolist (host (split-string (match-string 1)))
+            (unless (string-match-p "[*?!]" host)
+              (push host hosts))))))
+    (nreverse hosts)))
+
+(defun fzfa-tramp--pick-host ()
+  "Pick an SSH host from ~/.ssh/config; return the TRAMP root `/ssh:HOST:'.
+
+Signals `user-error' when the config is missing or has no hosts."
+  (when-let* ((hosts (or (fzfa-tramp--ssh-hosts)
+                         (user-error "No SSH hosts in ~/.ssh/config")))
+              (host (fzfa-completing-read
+                     :candidates hosts :prompt "ssh: ")))
+    (concat "/ssh:" host ":")))
+
+;;;###autoload
+(defun fzfa-ssh ()
+  "Pick a host from ~/.ssh/config and visit `/ssh:HOST:' as a directory."
+  (interactive)
+  (when-let* ((path (fzfa-tramp--pick-host)))
+    (fzfa-visit-file path)))
+
 ;;;###autoload
 (defun fzfa-tramp ()
-  "Connect to a remote host via TRAMP, with hosts from ~/.ssh/config."
+  "Pick a host from ~/.ssh/config and open `fzfa-browse-files' rooted there."
   (interactive)
-  (cl-labels ((ssh-hosts ()
-                (let ((config (expand-file-name "~/.ssh/config"))
-                      hosts)
-                  (when (file-readable-p config)
-                    (with-temp-buffer
-                      (insert-file-contents config)
-                      (while (re-search-forward
-                              "^[Hh]ost[[:space:]]+\\(.+\\)" nil t)
-                        (dolist (host (split-string (match-string 1)))
-                          (unless (string-match-p "[*?!]" host)
-                            (push host hosts))))))
-                  (nreverse hosts))))
-    (when-let* ((hosts (or (ssh-hosts)
-                           (user-error "No SSH hosts in ~/.ssh/config")))
-                (host (fzfa-completing-read
-                       :candidates hosts :prompt "ssh: ")))
-      (fzfa-visit-file (concat "/ssh:" host ":")))))
+  (when-let* ((path (fzfa-tramp--pick-host)))
+    (fzfa-browse-files path)))
 
 ;;;###autoload
 (defun fzfa-tramp-setup ()
@@ -117,4 +136,9 @@ methods and local paths pass through unchanged."
   (setq fzfa-source-spawn-transform-function #'fzfa-tramp--transform))
 
 (provide 'fzfa-tramp)
+
+;; Local Variables:
+;; package-lint-main-file: "fzfa.el"
+;; End:
+
 ;;; fzfa-tramp.el ends here
