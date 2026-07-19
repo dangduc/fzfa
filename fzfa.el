@@ -296,6 +296,7 @@ Read at session start; changing it does not affect running sessions."
     (safari    . "Safari bookmarks + history (macOS)")
     (shell     . "Shell command + history")
     (spotlight . "macOS Spotlight (mdfind)")
+    (tramp     . "TRAMP support")
     (transient . "Transient menus")
     (ugrep     . "ugrep")
     (vc        . "vc.el")
@@ -2627,6 +2628,25 @@ post-cycle frontend sync (e.g. updating `helm-pattern' under helm)."
     (setf (fzfa-source-display-state source) to)
     (fzfa-source--display-apply source initial-char)))
 
+(defvar fzfa-source-spawn-transform-function nil
+  "Function called with (CMD DIR) before each source shell-handle spawn.
+
+Return a cons (NEW-CMD . NEW-DIR) to rewrite the pair, or nil to
+skip the rewrite.  Used by `fzfa-tramp' to make sources spawn
+transparently against TRAMP paths.  Local sources should leave
+this nil so the spawn hot path stays a single nil test.")
+
+(defun fzfa--spawn (cmd dir)
+  "Start a `fzf-native' async handle for CMD in DIR.
+
+Applies `fzfa-source-spawn-transform-function' first so extensions
+can rewrite CMD/DIR before the shell fork."
+  (let ((pair (or (and fzfa-source-spawn-transform-function
+                       (funcall fzfa-source-spawn-transform-function
+                                cmd dir))
+                  (cons cmd dir))))
+    (fzf-native-async-start (car pair) (cdr pair))))
+
 (defun fzfa-source--restart (source new-cmd refresh-fn)
   "Restart SOURCE's producer with NEW-CMD.
 
@@ -2668,8 +2688,7 @@ Updates CURRENT-CMD, LAST-GEN, and LAST-RESTART-TIME unconditionally."
           (fzfa-source-last-restart-time source) (float-time))
     (when (and new-cmd (not (string-empty-p new-cmd)))
       (setf (fzfa-source-handle source)
-            (fzf-native-async-start
-             new-cmd (fzfa-source-directory source))))
+            (fzfa--spawn new-cmd (fzfa-source-directory source))))
     (funcall refresh-fn))))
 
 (defun fzfa-source--debounce-restart (source new-cmd refresh-fn)
@@ -4113,8 +4132,7 @@ Per-source plist keys:
         (when cmd
           (setf (fzfa-source-current-cmd src) cmd
                 (fzfa-source-handle src)
-                (fzf-native-async-start
-                 cmd (fzfa-source-directory src))))))
+                (fzfa--spawn cmd (fzfa-source-directory src))))))
     (unwind-protect
         (progn
           (setq timer

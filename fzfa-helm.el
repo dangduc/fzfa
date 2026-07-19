@@ -434,7 +434,7 @@ and `fzfa-helm--read' (batch with bulk-stop)."
     ;; Pre-arm: start the initial handle and mark `current-cmd' so the
     ;; first `:candidates' tick doesn't trigger a debounced restart.
     (setf (fzfa-source-handle source)
-          (fzf-native-async-start command dir)
+          (fzfa--spawn command dir)
           (fzfa-source-current-cmd source) command)
     (setq timer
           (run-with-timer
@@ -1103,7 +1103,7 @@ for fuzzy-multi-source UX."
                            (setq stopped t)
                            (fzfa-source--stop source)))))
                  (setf (fzfa-source-handle source)
-                       (fzf-native-async-start cmd dir)
+                       (fzfa--spawn cmd dir)
                        ;; Seed `current-cmd' so the first `:candidates'
                        ;; tick's CMD-change check sees the source as
                        ;; already running its initial cmd — mirrors
