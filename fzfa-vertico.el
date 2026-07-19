@@ -898,6 +898,18 @@ who use other completion UIs.  Otherwise, when
              (locate-library "vertico"))
     (require 'vertico nil t)
     (require 'vertico-multiform nil t)
+    ;; Preload vertico's optional display-mode extensions so
+    ;; `vertico-multiform--setup' can resolve bare symbols like
+    ;; `indexed', `grid', `flat', `unobtrusive', `reverse', `buffer' in
+    ;; the user's `vertico-multiform-commands' / `vertico-multiform-
+    ;; categories'.  vertico-multiform uses `intern-soft' + `fboundp'
+    ;; to look up `vertico-<sym>-mode', which needs the extension's
+    ;; autoload actually loaded — autoloads.el defines it but nothing
+    ;; forces load until we do here.  Silent (`nil t') for extensions
+    ;; not shipped by the user's vertico version.
+    (dolist (ext '(vertico-indexed vertico-grid vertico-flat
+                   vertico-unobtrusive vertico-reverse vertico-buffer))
+      (require ext nil t))
     (dolist (cat fzfa-vertico-multiform-categories)
       (let ((entry (list cat 'fzfa-vertico-columns-mode)))
         (cl-pushnew entry vertico-multiform-categories :test #'equal)))
