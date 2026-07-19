@@ -11,8 +11,8 @@
 ;;; Commentary:
 
 ;; Emacs-internal sources for fzfa: recent files, buffers, the kill
-;; ring, bookmarks, themes, TRAMP hosts, and current-buffer /
-;; all-buffer line search.
+;; ring, bookmarks, themes, and current-buffer / all-buffer line
+;; search.
 ;;
 ;; Loaded automatically when `emacs' is in `fzfa-extensions' and
 ;; `fzfa-setup' has been called.  No setup function is registered —
@@ -25,7 +25,6 @@
 ;;   `fzfa-bookmark'                 Jump to a bookmark
 ;;   `fzfa-theme'                    Enable a theme with live preview
 ;;   `fzfa-font'                     Pick a font family with live preview
-;;   `fzfa-tramp'                    Connect to a host from ~/.ssh/config
 ;;   `fzfa-man'                      Pick a man page and open it
 ;;   `fzfa-swiper'                   Search lines of the current buffer
 ;;   `fzfa-swiper-all'               Search lines across all open buffers
@@ -310,28 +309,6 @@ funcalls `man'."
                   :category 'fzfa-man)))
     (when (string-match "\\`\\([^ (]+\\)" r)
       (man (match-string 1 r)))))
-
-;;;###autoload
-(defun fzfa-tramp ()
-  "Connect to a remote host via TRAMP, with hosts from ~/.ssh/config."
-  (interactive)
-  (cl-labels ((ssh-hosts ()
-                (let ((config (expand-file-name "~/.ssh/config"))
-                      hosts)
-                  (when (file-readable-p config)
-                    (with-temp-buffer
-                      (insert-file-contents config)
-                      (while (re-search-forward
-                              "^[Hh]ost[[:space:]]+\\(.+\\)" nil t)
-                        (dolist (host (split-string (match-string 1)))
-                          (unless (string-match-p "[*?!]" host)
-                            (push host hosts))))))
-                  (nreverse hosts))))
-    (when-let* ((hosts (or (ssh-hosts)
-                           (user-error "No SSH hosts in ~/.ssh/config")))
-                (host (fzfa-completing-read
-                       :candidates hosts :prompt "ssh: ")))
-      (fzfa-visit-file (concat "/ssh:" host ":")))))
 
 ;;;###autoload
 (defun fzfa-swiper ()

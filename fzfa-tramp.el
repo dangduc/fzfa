@@ -11,22 +11,27 @@
 
 ;;; Commentary:
 
-;; Makes fzfa sources spawn transparently against TRAMP `ssh' paths.
+;; TRAMP support for fzfa.
 ;;
-;; For a TRAMP `ssh'-method `default-directory', the shell command is
-;; wrapped as `ssh HOST 'cd LOCALNAME && CMD'' and fzf-native is
-;; handed a safe local chdir target.  The C-layer's fork+pipe+
-;; parallel-score pipeline is unchanged; the remote binary streams
-;; over ssh into the same pipe reader as a local process.
+;; Makes fzfa's shell sources spawn transparently against TRAMP `ssh'
+;; paths: for a TRAMP `ssh'-method `default-directory' the shell
+;; command is wrapped as `ssh HOST 'cd LOCALNAME && CMD'' and
+;; fzf-native is handed a safe local chdir target.  The C-layer's
+;; fork+pipe+parallel-score pipeline is unchanged; the remote binary
+;; streams over ssh into the same pipe reader as a local process.
 ;;
 ;; When `tramp-use-connection-share' is non-nil (Emacs 30 default on
 ;; non-Windows), TRAMP has already opened a ControlMaster socket for
 ;; the host, so the wrapped ssh call piggybacks on that socket with
 ;; no handshake.  With sharing off, each fzfa invocation pays one
 ;; handshake — acceptable for interactive use.
+;;
+;; Commands:
+;;   `fzfa-tramp'   Connect to a host from ~/.ssh/config
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'fzfa)
 
 (declare-function tramp-dissect-file-name "tramp" (name &optional nodefault))
@@ -83,6 +88,28 @@ methods and local paths pass through unchanged."
           (cons (fzfa-tramp--build-ssh-cmd vec cmd)
                 fzfa-tramp-safe-local-dir)
         (cons cmd dir)))))
+
+;;;###autoload
+(defun fzfa-tramp ()
+  "Connect to a remote host via TRAMP, with hosts from ~/.ssh/config."
+  (interactive)
+  (cl-labels ((ssh-hosts ()
+                (let ((config (expand-file-name "~/.ssh/config"))
+                      hosts)
+                  (when (file-readable-p config)
+                    (with-temp-buffer
+                      (insert-file-contents config)
+                      (while (re-search-forward
+                              "^[Hh]ost[[:space:]]+\\(.+\\)" nil t)
+                        (dolist (host (split-string (match-string 1)))
+                          (unless (string-match-p "[*?!]" host)
+                            (push host hosts))))))
+                  (nreverse hosts))))
+    (when-let* ((hosts (or (ssh-hosts)
+                           (user-error "No SSH hosts in ~/.ssh/config")))
+                (host (fzfa-completing-read
+                       :candidates hosts :prompt "ssh: ")))
+      (fzfa-visit-file (concat "/ssh:" host ":")))))
 
 ;;;###autoload
 (defun fzfa-tramp-setup ()

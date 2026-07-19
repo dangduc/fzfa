@@ -15,6 +15,7 @@
 (require 'fzfa)
 (require 'fzfa-loader)
 (require 'fzfa-emacs)
+(require 'fzfa-tramp)
 (require 'fzfa-hungry)
 (require 'fzfa-replay)
 (require 'fzfa-locate)
