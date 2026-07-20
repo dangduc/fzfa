@@ -208,6 +208,7 @@ through `call-interactively'."
 (defvar fzfa-transient---passwords-multi nil)
 (defvar fzfa-transient---info nil)
 (defvar fzfa-transient---replay nil)
+(defvar fzfa-transient---modify nil)
 
 ;;; Top-level column vectors
 
@@ -289,8 +290,13 @@ through `call-interactively'."
        ("s" "Spotlight"       fzfa-spotlight)
        ("S" "Spotlight Apps"  fzfa-spotlight-apps)
        ("m" "Spotlight Audio" fzfa-spotlight-audio)
-       ("t" "Tramp"           fzfa-tramp)
-       ("T" "SSH"             fzfa-ssh)])
+       ("a" "Apropos"         fzfa-apropos)])
+
+(setq fzfa-transient---modify
+      ["Modify"
+       ("t" "Font"       fzfa-font)
+       ("T" "Theme"      fzfa-theme)
+       ("m" "Minor Mode" fzfa-minor-mode-menu)])
 
 (setq fzfa-transient---shell
       ["Shell / Make"
@@ -442,11 +448,14 @@ through `call-interactively'."
 
 (setq fzfa-transient---find-files
       ["Find Files"
-       ("f" "Find (smart)" fzfa-smart-find)
-       ("F" "Find »"      fzfa-transient-find)
+       ("f" "Browse"       fzfa-browse-files)
+       ("F" "Find (smart)" fzfa-smart-find)
+       ("s" "Search »"     fzfa-transient-find)
        ("b" "Buffer"       fzfa-buffer)
        ("r" "Recent File"  fzfa-recent-file)
-       ("a" "FFAP menu"    fzfa-ffap-menu)])
+       ("a" "FFAP menu"    fzfa-ffap-menu)
+       ("t" "Tramp"        fzfa-tramp)
+       ("S" "SSH"          fzfa-ssh)])
 
 (setq fzfa-transient---grep
       ["Grep"
@@ -467,11 +476,9 @@ through `call-interactively'."
       ["Emacs"
        ("B" "Bookmark"          fzfa-bookmark)
        ("y" "Yank Pop"          fzfa-yank-pop)
-       ("T" "Theme"             fzfa-theme)
-       ("t" "Font"              fzfa-font)
+       ("T" "Modify »"          fzfa-transient-modify)
        ("x" "M-x"               fzfa-M-x)
        ("X" "M-x (mode)"        fzfa-M-x-for-buffer)
-       ("s" "Symbol (apropos)"  fzfa-apropos)
        ("k" "Key (descbinds)"   fzfa-descbinds)
        (";" "Complex Command"   fzfa-complex-command)
        ("h" "History"           fzfa-history)
@@ -602,6 +609,11 @@ through `call-interactively'."
 (fzfa-transient-define-prefix fzfa-transient-replay
     "Replay saved sessions."
   fzfa-transient---replay)
+
+;;;###autoload (autoload 'fzfa-transient-modify "fzfa-transient" nil t)
+(fzfa-transient-define-prefix fzfa-transient-modify
+    "Modify Emacs (font, theme)."
+  fzfa-transient---modify)
 
 ;;; Top-level entry points
 
