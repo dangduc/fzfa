@@ -442,7 +442,7 @@ and `fzfa-helm--read' (batch with bulk-stop)."
            (lambda ()
              (when (and helm-alive-p (not stopped))
                (let* ((h (fzfa-source-handle source))
-                      (gen (and h (fzf-native-async-generation h))))
+                      (gen (and h (fzfa--poll-generation h))))
                  (when (and gen (> gen (fzfa-source-last-gen source)))
                    (setf (fzfa-source-last-gen source) gen)
                    (helm-force-update)))))))
@@ -473,8 +473,8 @@ and `fzfa-helm--read' (batch with bulk-stop)."
                                (fzfa-source-command source))))
                   (when (not (equal cmd (fzfa-source-current-cmd source)))
                     (fzfa-source--debounce-restart source cmd refresh-fn))
-                  (when-let* ((h (fzfa-source-handle source)))
-                    (fzf-native-async-candidates h filter limit)))))
+                  (when (fzfa-source-handle source)
+                    (fzfa--source-async-candidates source filter limit)))))
             :match-dynamic t
             :nohighlight t
             :candidate-number-limit limit
@@ -1141,9 +1141,8 @@ for fuzzy-multi-source UX."
                                 (fzfa-source--debounce-restart
                                  source split-cmd refresh-fn))
                               (let ((r (while-no-input
-                                         (fzf-native-async-candidates
-                                          (fzfa-source-handle source)
-                                          filter limit))))
+                                         (fzfa--source-async-candidates
+                                          source filter limit))))
                                 (cond
                                  ((eq r t)
                                   (when-let* ((tm (fzfa-source-retry-timer
