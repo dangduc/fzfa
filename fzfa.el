@@ -5083,25 +5083,21 @@ Elements are Emacs regexps matched via `string-match-p'."
 
 Extends `file-remote-p' with regexp matches against
 `fzfa-remote-regexps' so fzfa can skip synchronous stat calls
-on network mounts Emacs itself does not recognize."
-  (or (file-remote-p path)
-      (and (stringp path)
-           (cl-some (lambda (re) (string-match-p re path))
-                    fzfa-remote-regexps))))
+on network mounts Emacs itself does not recognize.  Relative
+PATH is resolved against `default-directory' first."
+  (when (stringp path)
+    (let ((abs (if (file-name-absolute-p path)
+                   path
+                 (expand-file-name path))))
+      (or (file-remote-p abs)
+          (cl-some (lambda (re) (string-match-p re abs))
+                   fzfa-remote-regexps)))))
 
 (defun fzfa--annotate-file (cand)
-  "Marginalia file annotator; skip when CAND is on a remote/slow FS.
-
-Wraps `marginalia-annotate-file' with a `fzfa-file-remote-p'
-short circuit so annotating a flood of file candidates whose
-paths point at a slow filesystem does not fire a `file-attributes'
-round-trip per visible candidate.  The check is on CAND (not
-`default-directory') so a mixed list — e.g. `recentf-list' entries
-that reach across local and network paths — still annotates the
-local ones."
-  (unless (fzfa-file-remote-p cand)
-    (when (fboundp 'marginalia-annotate-file)
-      (marginalia-annotate-file cand))))
+  "Marginalia file annotator; skip when CAND is on a remote/slow FS."
+  (when (and (fboundp 'marginalia-annotate-file)
+             (not (fzfa-file-remote-p cand)))
+    (marginalia-annotate-file cand)))
 
 (defun fzfa--ensure-setup ()
   "Install fzfa's registrations exactly once.
