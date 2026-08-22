@@ -5067,14 +5067,39 @@ render."
         (fzf-native-fuzzy            fzfa-fuzzy))
     (apply orig-fn args)))
 
-(defun fzfa--annotate-file (cand)
-  "Marginalia file annotator; skip when `default-directory' is remote.
+(defcustom fzfa-remote-regexps '("\\`/Volumes/")
+  "Regexps for paths treated as remote by `fzfa-file-remote-p'.
 
-Wraps `marginalia-annotate-file' with a `file-remote-p' short
-circuit so annotating a flood of file candidates under a TRAMP
-`default-directory' does not fire a `file-attributes' round-trip
-per visible candidate."
-  (unless (file-remote-p default-directory)
+Extends `file-remote-p' with pattern matches so transparently
+mounted network filesystems invisible to Emacs's own remote-file
+detection (SMB, NFS, AFP, sshfs, iCloud Drive) also short-circuit.
+
+Elements are Emacs regexps matched via `string-match-p'."
+  :type '(repeat regexp)
+  :group 'fzfa)
+
+(defun fzfa-file-remote-p (path)
+  "Return non-nil if PATH is on a remote or slow filesystem.
+
+Extends `file-remote-p' with regexp matches against
+`fzfa-remote-regexps' so fzfa can skip synchronous stat calls
+on network mounts Emacs itself does not recognize."
+  (or (file-remote-p path)
+      (and (stringp path)
+           (cl-some (lambda (re) (string-match-p re path))
+                    fzfa-remote-regexps))))
+
+(defun fzfa--annotate-file (cand)
+  "Marginalia file annotator; skip when CAND is on a remote/slow FS.
+
+Wraps `marginalia-annotate-file' with a `fzfa-file-remote-p'
+short circuit so annotating a flood of file candidates whose
+paths point at a slow filesystem does not fire a `file-attributes'
+round-trip per visible candidate.  The check is on CAND (not
+`default-directory') so a mixed list — e.g. `recentf-list' entries
+that reach across local and network paths — still annotates the
+local ones."
+  (unless (fzfa-file-remote-p cand)
     (when (fboundp 'marginalia-annotate-file)
       (marginalia-annotate-file cand))))
 
