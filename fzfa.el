@@ -96,7 +96,8 @@
                   (handle query &optional limit))
 (declare-function fzf-native-async-snapshot "ext:fzf-native-module"
                   (handle &optional request-id))
-(declare-function fzf-native-async-status "ext:fzf-native-module" (handle))
+(declare-function fzf-native-async-status "ext:fzf-native-module"
+                  (handle &optional request-id))
 (declare-function fzf-native-highlight-all "ext:fzf-native-module"
                   (collection query))
 (declare-function fzf-native-highlight-one "ext:fzf-native-module" (cand query))
@@ -2552,6 +2553,50 @@ to eager-start via `fzf-native-async-start' or to defer."
      :preview-cell nil
      :source-name nil)))
 
+(defun fzfa--async-safe-query (query)
+  "Return QUERY with raw-byte chars removed.
+A query yanked from a buffer Emacs could not fully decode carries
+raw-byte chars (the #x3FFF00 range); the module boundary cannot
+encode those and `fzf-native-async-submit' signals
+`wrong-type-argument' (dangduc/fzf-native#39 KK2-2).  Stripping them
+keeps the rest of the query matchable."
+  (if (string-match-p "[^\x00-\x10FFFF]" query)
+      (replace-regexp-in-string "[^\x00-\x10FFFF]+" "" query)
+    query))
+
+(defun fzfa--async-submit (handle query limit)
+  "Submit QUERY on HANDLE; return its request id, or nil if refused.
+Newer fzf-native modules signal on a failed submit (stopped handle,
+unencodable query) instead of returning nil; either way the caller
+sees nil and must not snapshot -- a nil request id reads as
+\"latest\", which may be another query's result
+\(dangduc/fzf-native#39 JO-2)."
+  (condition-case _err
+      (fzf-native-async-submit handle (fzfa--async-safe-query query) limit)
+    (error
+     (fzfa--log "async submit refused: %S" _err)
+     nil)))
+
+(defvar fzfa--async-failed-producers nil
+  "Handles whose producer failure has been reported this session.")
+
+(defun fzfa--async-note-producer-failure (handle snap)
+  "Report HANDLE's dead producer once, per SNAP's producer fields.
+A producer that died (command not found, killed) still completes its
+request with :error nil, so an empty final result would silently
+render as \"no matches\" (dangduc/fzf-native#39 JO2-2)."
+  (let ((err (plist-get snap :producer-error))
+        (exit (plist-get snap :producer-exit-status)))
+    (when (and (null (plist-get snap :candidates))
+               (or err (and (integerp exit) (> exit 0)))
+               (not (memq handle fzfa--async-failed-producers)))
+      (push handle fzfa--async-failed-producers)
+      (fzfa--log "async producer failed: exit=%S err=%S" exit err)
+      (funcall (if (minibufferp) #'minibuffer-message #'message)
+               "fzfa: source command failed%s"
+               (if err (format ": %s" err)
+                 (format " (exit %s)" exit))))))
+
 (defun fzfa--source-async-candidates (src filter limit)
   "Return the last completed candidate list for FILTER on SRC's handle.
 
@@ -2565,9 +2610,10 @@ snapshot.  Legacy API: `fzf-native-async-candidates', which does the
 same submit-then-copy internally but without request ownership."
   (let ((h (fzfa-source-handle src)))
     (if (fzfa--session-api-p)
-        (let ((rid (fzf-native-async-submit h filter limit)))
-          (setf (fzfa-source-request-id src) (or rid 0))
-          (plist-get (fzf-native-async-snapshot h rid) :candidates))
+        (let ((rid (fzfa--async-submit h filter limit)))
+          (when rid
+            (setf (fzfa-source-request-id src) rid)
+            (plist-get (fzf-native-async-snapshot h rid) :candidates)))
       (fzf-native-async-candidates h filter limit))))
 
 (defun fzfa--source-async-out (src query limit)
@@ -2598,19 +2644,24 @@ with finality inferred by `fzfa--final-p' and counts fetched
 separately via `fzf-native-async-stats'."
   (let ((h (fzfa-source-handle src)))
     (if (fzfa--session-api-p)
-        (let* ((rid (fzf-native-async-submit h query limit))
-               (snap (progn
-                       (setf (fzfa-source-request-id src) (or rid 0))
-                       (while-no-input
-                         (fzf-native-async-snapshot h rid)))))
-          (cond
-           ((eq snap t) t)
-           ((and (eq (plist-get snap :state) 'complete)
-                 (not (plist-get snap :stale)))
-            (list 'final (plist-get snap :candidates)
-                  (plist-get snap :filtered)
-                  (plist-get snap :total)))
-           (t (cons 'pending (plist-get snap :total)))))
+        (let ((rid (fzfa--async-submit h query limit)))
+          (if (null rid)
+              ;; Refused submit: no request to poll, keep the prior
+              ;; display rather than snapshotting "latest" (which may
+              ;; be another query's result).
+              (cons 'pending nil)
+            (setf (fzfa-source-request-id src) rid)
+            (let ((snap (while-no-input
+                          (fzf-native-async-snapshot h rid))))
+              (cond
+               ((eq snap t) t)
+               ((and (eq (plist-get snap :state) 'complete)
+                     (not (plist-get snap :stale)))
+                (fzfa--async-note-producer-failure h snap)
+                (list 'final (plist-get snap :candidates)
+                      (plist-get snap :filtered)
+                      (plist-get snap :total)))
+               (t (cons 'pending (plist-get snap :total)))))))
       (let ((out (while-no-input
                    (fzf-native-async-candidates h query limit))))
         (cond
