@@ -24,13 +24,14 @@ jobs:
         with:
           path: fzf-async
 
-      # PR1 depends on the request-aware session ABI in the paired native PR.
-      # Pin the exact reviewed native source and artifacts instead of silently
-      # exercising the legacy fallback against fzf-native's default branch.
+      # This change depends on the request-aware session ABI in the paired
+      # native PR.  Pin the exact reviewed source and artifacts.
+      # Do not silently exercise the legacy fallback against fzf-native's
+      # default branch.
       - uses: actions/checkout@v4
         with:
           repository: fastducduc/fzf-native
-          ref: 7e4a7904346a158055d70cae6bf72022a8f38f8a
+          ref: e6a1b0e03651d6615530bf8430ba2783cb1789ce
           path: fzf-native
 
       # Optional Elisp deps that fzfa forward-declares from.  Checked
