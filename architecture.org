@@ -85,6 +85,11 @@ A nonpublishing terminal state releases ownership.  The same key can then
 create a replacement request.  Submit and matcher failures remain terminal for
 that key.  A redraw does not retry them silently.
 
+Frontend code must cancel through =fzfa-source--stop=.  It revokes the local
+epoch before it stops the native handle.  A raw =fzf-native-async-stop= behind
+fzfa is not an atomic frontend operation.  Fzfa detects a quiet raw stop at the
+next native liveness check.  Caller advice must not return stale native values.
+
 Producer failure is reported independently.  A producer can fail after it
 emits a useful partial candidate set.
 

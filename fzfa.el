@@ -2717,8 +2717,10 @@ only while the caller may safely publish its result."
 (defun fzfa--source-request-live-p (src handle request-id epoch)
   "Return non-nil when SRC still owns a live native request.
 
-The local ownership tuple cannot observe a direct low-level stop of HANDLE.
-Check native liveness after a callback from a native boundary.  Then check the
+Frontend cancellation must use `fzfa-source--stop'.  It increments EPOCH
+before it stops the native handle.  A direct `fzf-native-async-stop' can bypass
+that gateway.  This check recovers when an unmodified native liveness read
+reports the stop.  Advice must not return a stale native result.  Check the
 tuple again so Lisp reentry cannot validate a replacement request."
   (and (fzfa--source-request-owned-p src handle request-id epoch)
        ;; Unit tests and third-party shims use symbolic stand-ins for opaque
@@ -2846,23 +2848,24 @@ next refresh rebuilds it under the new policy."
                     (fzfa--bridge-defcustoms
                      #'fzf-native-async-snapshot handle request-id))))
     (cond
-     ;; Snapshot construction can call `fzf-native-highlight-fn'.  That user
-     ;; hook may restart or stop SRC before control returns here.
-     ((not (fzfa--source-request-live-p
-            src handle request-id request-epoch))
-      (fzfa--source-discard-dead-request
-       src handle request-id request-epoch))
      ((eq snapshot t) t)
+     ((null snapshot)
+      ;; A direct raw stop can land between complete status and snapshot.
+      ;; This recovery call does not affect the normal publication path.
+      (if (fzfa--source-request-live-p
+           src handle request-id request-epoch)
+          (cons 'pending nil)
+        (fzfa--source-discard-dead-request
+         src handle request-id request-epoch)))
      ((not (equal materialization-key
                   (fzfa--source-materialization-key
                    (plist-get snapshot :snapshot-generation))))
       t)
-     ((not (fzfa--source-request-live-p
-            src handle request-id request-epoch))
-      (fzfa--source-discard-dead-request
-       src handle request-id request-epoch))
      ((and (eq (plist-get snapshot :state) 'complete)
            (not (plist-get snapshot :stale)))
+      ;; Snapshot construction can call `fzf-native-highlight-fn'.  Producer
+      ;; failure reporting can also call user Lisp.  One later liveness check
+      ;; covers both boundaries before this function publishes the result.
       (fzfa--async-note-producer-failure handle snapshot)
       (if (not (fzfa--source-request-live-p
                 src handle request-id request-epoch))
@@ -2878,6 +2881,9 @@ next refresh rebuilds it under the new policy."
                 materialization-key
                 (fzfa-source-request-output src) output)
           output)))
+     ((not (fzfa--source-request-owned-p
+            src handle request-id request-epoch))
+      t)
      (t
       (setf (fzfa-source-request-snapshot-generation src) nil
             (fzfa-source-request-materialization-key src) nil
@@ -2972,7 +2978,15 @@ generation appears.  Legacy modules retain the combined API path."
                   (fzfa--source-discard-dead-request
                    src handle request-id request-epoch))
                  ((eq status t) t)
-                 ((null status) (cons 'pending nil))
+                 ((null status)
+                  ;; A live session returns a status plist for a submitted
+                  ;; request.  Nil means that another caller stopped this
+                  ;; native handle behind the local ownership tuple.
+                  (if (fzfa--source-request-live-p
+                       src handle request-id request-epoch)
+                      (cons 'pending nil)
+                    (fzfa--source-discard-dead-request
+                     src handle request-id request-epoch)))
                  ((eq (plist-get status :state) 'failed)
                   (fzfa--source-terminal-request-output
                    src handle request-id request-epoch status))

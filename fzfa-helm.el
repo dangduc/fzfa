@@ -254,6 +254,17 @@ the stable result buffer with the active minibuffer buffer."
   (when-let* ((result-buffer (fzfa-helm--current-session-buffer)))
     (cons result-buffer (fzfa-helm--active-minibuffer-buffer))))
 
+(defun fzfa-helm--sync-owned-pattern (owner-p)
+  "Copy minibuffer text to `helm-pattern' while OWNER-P remains true.
+
+Both display mutation and `minibuffer-contents' are Lisp callback boundaries.
+A nested Helm can take ownership at either boundary."
+  (when (and (funcall owner-p) helm-alive-p)
+    (let ((pattern (minibuffer-contents)))
+      (when (and (funcall owner-p) helm-alive-p)
+        (setq helm-pattern pattern)
+        t))))
+
 ;;; Stats display helpers
 
 (defun fzfa-helm--async-stats-suffix (handle)
@@ -486,20 +497,12 @@ and `fzfa-helm--read' (batch with bulk-stop)."
          (display-cycle
           (lambda ()
             (interactive)
-            (fzfa-source--display-cycle source initial-char)
-            ;; Sync `helm-pattern' to the post-mutation
-            ;; minibuffer-contents.  Otherwise post-command-hook's
-            ;; `helm-check-minibuffer-input' would see the mutation
-            ;; as a pattern change and fire `helm-update' — which
-            ;; erases the helm-buffer and re-renders the entire
-            ;; candidate list, even though the filter portion (and
-            ;; therefore the candidates) is unchanged.  Real CMD
-            ;; edits in compact/full happen via `self-insert-command'
-            ;; and DO trigger the natural helm-update path because
-            ;; `helm-pattern' is stale by the time post-command-hook
-            ;; runs.
-            (when helm-alive-p
-              (setq helm-pattern (minibuffer-contents)))))
+            (when (funcall owner-p)
+              (fzfa-source--display-cycle source initial-char)
+              ;; Keep the post-command hook from treating display-only
+              ;; mutation as a new filter.  The helper rechecks ownership
+              ;; after each callback boundary.
+              (fzfa-helm--sync-owned-pattern owner-p))))
          (stop
           (lambda ()
             ;; Revoke frontend use on the first call, but retry each physical
@@ -734,7 +737,7 @@ producers use the shared fetch protocol; async delivery triggers
             (interactive)
             (when (funcall owner-p)
               (fzfa-source--display-cycle source initial-char)
-              (setq helm-pattern (minibuffer-contents)))))
+              (fzfa-helm--sync-owned-pattern owner-p))))
          (stop
           (lambda ()
             (setq active nil)
@@ -1668,19 +1671,21 @@ for fuzzy-multi-source UX."
                (force-hidden-leaving
                 (lambda (before after)
                   (dolist (lname (or before '()))
-                    (unless (member lname (or after '()))
+                    (when (and (funcall helm-owner-p)
+                               (not (member lname (or after '()))))
                       (when-let* ((idx (cl-position lname source-names
                                                     :test #'equal))
                                   (src (aref sources-v idx)))
                         (fzfa-source--display-force-hidden
                          src fzfa-separator))))
-                  (when (and (or before after)
+                  (when (and (funcall helm-owner-p)
+                             (or before after)
                              (not (equal before after))
                              helm-alive-p)
                     ;; Buffer was mutated by `force-hidden' → sync
                     ;; `helm-pattern' so the next `:candidates' tick
                     ;; sees the post-extract text.
-                    (setq helm-pattern (minibuffer-contents)))))
+                    (fzfa-helm--sync-owned-pattern helm-owner-p))))
                (narrow-fn
                 (lambda ()
                   (interactive)
@@ -1742,8 +1747,7 @@ for fuzzy-multi-source UX."
                              (src (and idx (aref sources-v idx))))
                         (when src
                           (fzfa-source--display-cycle src fzfa-separator)
-                          (when (and (funcall helm-owner-p) helm-alive-p)
-                            (setq helm-pattern (minibuffer-contents))))))
+                          (fzfa-helm--sync-owned-pattern helm-owner-p))))
                      (t (call-interactively #'self-insert-command))))))
                ;; Layer the narrow + display bindings onto a fresh
                ;; COPY of `helm-map' so the user's helm-map
