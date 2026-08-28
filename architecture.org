@@ -78,11 +78,15 @@ category, and reuse the same passthrough completion style.
     on change, schedule an idle-timer frontend exhibit
 #+end_src
 
-The request key lives in =fzfa-source=.  One changed key creates one native
-request, and every later status or snapshot names that request ID.  A submit or
-matcher failure is a terminal value for that key rather than work that redraw
-can silently retry.  Producer failure is reported independently, because a
-producer can fail after emitting a useful partial candidate set.
+The request key lives in =fzfa-source=.  Each key owns at most one active native
+request.  Every later status or snapshot names that request ID.
+
+A nonpublishing terminal state releases ownership.  The same key can then
+create a replacement request.  Submit and matcher failures remain terminal for
+that key.  A redraw does not retry them silently.
+
+Producer failure is reported independently.  A producer can fail after it
+emits a useful partial candidate set.
 
 The child producer, native reader, scoring coordinator, and process-wide
 workers run outside Elisp.  Elisp runs on its main thread and never waits for

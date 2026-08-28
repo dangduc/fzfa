@@ -1684,39 +1684,45 @@ for fuzzy-multi-source UX."
                (narrow-fn
                 (lambda ()
                   (interactive)
-                  (let* ((sources-v-local (vconcat sources))
-                         ;; KEY:NAME pairs separated by two spaces, with
-                         ;; the prefix-widen marker at the end, faced
-                         ;; via `fzfa--format-narrow-hint' — same
-                         ;; rendering the vertico narrow menu uses.
-                         (hint (concat
-                                (fzfa--format-narrow-hint
-                                 sources-v-local nil nil
-                                 fzfa-multi-narrow-key)
-                                " "))
-                         (source-keys
-                          (cl-loop for src in sources
-                                   for i from 0
-                                   when (plist-get src :narrow)
-                                   collect (cons (plist-get src :narrow)
-                                                 (aref source-names i))))
-                         (c (read-char hint))
-                         (key (string c))
-                         (target (cdr (assoc key source-keys
-                                             #'equal)))
-                         (before (and narrowed-name (list narrowed-name))))
-                    (cond
-                     (target
-                      (helm-set-source-filter (list target))
-                      (setq narrowed-name target)
-                      (funcall force-hidden-leaving
-                               before (list target)))
-                     ((equal key fzfa-multi-narrow-key)
-                      (helm-set-source-filter nil)
-                      (setq narrowed-name nil)
-                      (funcall force-hidden-leaving before nil))
-                     (t (message "fzfa: no source bound to narrow key %S"
-                                 key))))))
+                  (when (funcall helm-owner-p)
+                    (let* ((sources-v-local (vconcat sources))
+                           ;; KEY:NAME pairs separated by two spaces, with
+                           ;; the prefix-widen marker at the end, faced
+                           ;; via `fzfa--format-narrow-hint' — same
+                           ;; rendering the vertico narrow menu uses.
+                           (hint (concat
+                                  (fzfa--format-narrow-hint
+                                   sources-v-local nil nil
+                                   fzfa-multi-narrow-key)
+                                  " "))
+                           (source-keys
+                            (cl-loop for src in sources
+                                     for i from 0
+                                     when (plist-get src :narrow)
+                                     collect (cons (plist-get src :narrow)
+                                                   (aref source-names i))))
+                           (c (read-char hint))
+                           (key (string c))
+                           (target (cdr (assoc key source-keys
+                                               #'equal)))
+                           (before (and narrowed-name (list narrowed-name))))
+                      ;; `read-char' is an event-loop boundary.  A recursive
+                      ;; Helm can take ownership while the menu waits.
+                      (when (funcall helm-owner-p)
+                        (cond
+                         (target
+                          (helm-set-source-filter (list target))
+                          (when (funcall helm-owner-p)
+                            (setq narrowed-name target)
+                            (funcall force-hidden-leaving
+                                     before (list target))))
+                         ((equal key fzfa-multi-narrow-key)
+                          (helm-set-source-filter nil)
+                          (when (funcall helm-owner-p)
+                            (setq narrowed-name nil)
+                            (funcall force-hidden-leaving before nil)))
+                         (t (message "fzfa: no source bound to narrow key %S"
+                                     key))))))))
                ;; `>'-cycle handler — fires only when narrowed to a
                ;; single source.  Helm activates a source's `:keymap'
                ;; only while the cursor is on that source's candidate
@@ -1728,16 +1734,17 @@ for fuzzy-multi-source UX."
                (narrow-display-cycle
                 (lambda ()
                   (interactive)
-                  (cond
-                   (narrowed-name
-                    (let* ((idx (cl-position narrowed-name source-names
-                                             :test #'equal))
-                           (src (and idx (aref sources-v idx))))
-                      (when src
-                        (fzfa-source--display-cycle src fzfa-separator)
-                        (when helm-alive-p
-                          (setq helm-pattern (minibuffer-contents))))))
-                   (t (call-interactively #'self-insert-command)))))
+                  (when (funcall helm-owner-p)
+                    (cond
+                     (narrowed-name
+                      (let* ((idx (cl-position narrowed-name source-names
+                                               :test #'equal))
+                             (src (and idx (aref sources-v idx))))
+                        (when src
+                          (fzfa-source--display-cycle src fzfa-separator)
+                          (when (and (funcall helm-owner-p) helm-alive-p)
+                            (setq helm-pattern (minibuffer-contents))))))
+                     (t (call-interactively #'self-insert-command))))))
                ;; Layer the narrow + display bindings onto a fresh
                ;; COPY of `helm-map' so the user's helm-map
                ;; customizations (TAB → persistent-action, etc.) are
