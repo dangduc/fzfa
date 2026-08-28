@@ -148,6 +148,17 @@ jobs:
             -l fzf-native -f fzf-native-load-dyn -l fzfa \
             --eval '(unless (and (fboundp (quote fzf-native-session-abi-version)) (= (fzf-native-session-abi-version) fzf-native-session-abi-required) (fzfa--session-api-p)) (error "paired fzf-native session ABI is unavailable"))'
 
+      - name: Require explicit Windows batch-only contract
+        if: runner.os == 'Windows'
+        shell: bash
+        working-directory: fzf-async
+        run: |
+          emacs -Q --batch -L ../fzf-native -L . \
+            -l fzf-native -f fzf-native-load-dyn -l fzfa \
+            --eval '(unless (> (car (fzf-native-score "alpha" "alp")) 0) (error "paired fzf-native batch scorer is unavailable"))' \
+            --eval '(when (fzfa--command-api-p) (error "Windows artifact unexpectedly advertises the POSIX session API"))' \
+            --eval '(condition-case nil (progn (fzfa--spawn "echo alpha" default-directory) (error "batch-only command source did not fail")) (user-error nil))'
+
       - name: Compile
         shell: bash
         working-directory: fzf-async

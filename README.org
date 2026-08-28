@@ -145,6 +145,11 @@ returned — suitable for in-memory lists.  ~fzfa~ runs the shell
 command in a background process and incrementally refreshes the
 completion UI as candidates arrive and are scored.
 
+The persistent shell-command session API is available on macOS, Linux, and
+FreeBSD.  The bundled Windows module provides batch scoring, so fzfa
+~:candidates~ sources work there, but streamed ~:command~ sources signal a
+clear ~user-error~ before a session starts.
+
 Large-pool latency and memory depend on candidate length, query shape, match
 density, host hardware, and the configured result limit.  Benchmark the
 producer and matcher with the workload you intend to use; the comparison below
@@ -1714,6 +1719,10 @@ that the first token of ~:command~ is present in ~exec-path~ (via
 alias, or has already been validated by the caller.
 ~fzfa-shell-command~ skips the check because the user's shell
 resolves aliases and builtins that ~executable-find~ cannot see.
+Streamed ~:command~ sources require the persistent fzf-native session API,
+which is currently available on macOS, Linux, and FreeBSD.  On Windows, use
+a list or producer through ~:candidates~; the native batch scorer remains
+available there.
 
 For ~:candidates~ sources the picker splits its minibuffer input via
 ~fzfa-separator~ into ~(CMD . FILTER)~ when the producer is a 2-arg

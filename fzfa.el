@@ -1880,6 +1880,18 @@ the snapshot's `:state' / `:stale' fields instead of the
               fzf-native-session-abi-required)
          (error nil))))
 
+(defun fzfa--command-api-p ()
+  "Non-nil when fzf-native can run a persistent shell-command source.
+
+The bundled Windows module currently provides batch scoring only.  Keep
+`:candidates' sources available there, but reject `:command' sources before
+an internal call can fail with an undefined native function."
+  (and (fboundp 'fzf-native-async-start)
+       (fboundp 'fzf-native-async-stop)
+       (fboundp 'fzf-native-async-generation)
+       (fboundp 'fzf-native-async-candidates)
+       (fboundp 'fzf-native-async-stats)))
+
 (defun fzfa--poll-generation (h)
   "Return handle H's refresh generation for poll-tick comparison.
 
@@ -3013,6 +3025,12 @@ it is off by default."
 
 Applies `fzfa-source-spawn-transform-function' first so extensions
 can rewrite CMD/DIR before the shell fork."
+  (unless (fzfa--command-api-p)
+    (user-error
+     (concat "fzfa: command sources require fzf-native's persistent-session "
+             "API, which is unavailable on %s; :candidates sources remain "
+             "supported")
+     system-type))
   (let ((pair (or (and fzfa-source-spawn-transform-function
                        (funcall fzfa-source-spawn-transform-function
                                 cmd dir))

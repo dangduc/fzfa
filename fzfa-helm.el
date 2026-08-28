@@ -183,6 +183,22 @@ before the idle delay elapses -> timer fires post-cleanup ->
     (cancel-timer helm--execute-persistent-action-timer)
     (setq helm--execute-persistent-action-timer nil)))
 
+(defun fzfa-helm--cleanup-call (label function &rest args)
+  "Call FUNCTION with ARGS during teardown and log an error under LABEL.
+
+Cleanup is best-effort: one failing hook, preview handler, or native stop must
+not prevent the remaining session resources from being released."
+  ;; `fzfa--log' compiles away unless debugging was enabled at load time.
+  (ignore label)
+  (condition-case err
+      (apply function args)
+    ((error quit)
+     (ignore err)
+     (ignore-errors
+       (fzfa--log "Helm cleanup %s failed: %s"
+                  label (error-message-string err)))
+     nil)))
+
 (defvar helm-alive-p)
 (defvar helm-pattern)
 (defvar helm-completion-style)
@@ -1002,6 +1018,10 @@ for fuzzy-multi-source UX."
          ;; `fzfa--preview-session' to this cell so dispatches see the
          ;; per-source state.  Built lazily inside the source loop.
          (preview-cells (make-vector n-sources nil))
+         ;; Mark a cell before its :setup call.  On exceptional unwind this
+         ;; lets cleanup close a setup handler that failed after partial work,
+         ;; without dispatching :exit to cells that were never entered.
+         (preview-active (make-vector n-sources nil))
          (any-preview nil)
          ;; Tracks which source the winning action fired from — for
          ;; broadcasting `:return' on cleanup: the winning source's
@@ -1024,8 +1044,9 @@ for fuzzy-multi-source UX."
          (first-cands-shown nil)
          ;; Per-source state collected during source construction.
          (handles nil)   ; reversed: list of fzf-native handles (async only)
-         (stops nil)     ; reversed: list of 0-arg stop closures (async only)
+         (stops nil)     ; reversed: one 0-arg stop closure per source
          poll-timer
+         helm-entered
          ;; Most recent user filter, updated by `update-last-query'
          ;; (below) on each `helm-after-update-hook' tick.  Read by
          ;; the replay-snapshot block in the unwind-protect cleanup
@@ -1121,16 +1142,13 @@ for fuzzy-multi-source UX."
                          (unless stopped
                            (setq stopped t)
                            (fzfa-source--stop source)))))
-                 (setf (fzfa-source-handle source)
-                       (fzfa--spawn cmd dir)
-                       ;; Seed `current-cmd' so the first `:candidates'
+                 (setf ;; Seed `current-cmd' so the first `:candidates'
                        ;; tick's CMD-change check sees the source as
                        ;; already running its initial cmd — mirrors
                        ;; the single-source helm and multi-source
                        ;; completing-read paths.
                        (fzfa-source-current-cmd source) cmd)
                  (aset sources-v i source)
-                 (push (fzfa-source-handle source) handles)
                  (push stop stops)
                  (apply #'helm-make-source name 'helm-source-sync
                         :keymap (let ((map (make-sparse-keymap)))
@@ -1243,6 +1261,7 @@ for fuzzy-multi-source UX."
                       (sync-stop
                        (lambda () (fzfa-source--stop source))))
                  (aset sources-v i source)
+                 (push sync-stop stops)
                  (apply #'helm-make-source name 'helm-source-sync
                         :keymap (let ((map (make-sparse-keymap)))
                                   (set-keymap-parent map helm-map)
@@ -1459,46 +1478,55 @@ for fuzzy-multi-source UX."
                          ;; gets pushed off-screen and the user has to
                          ;; scroll up to see which source they're on.
                          (recenter 1)))))))))))
-    ;; Single shared polling timer over all async handles.  Throttled to
-    ;; one `helm-force-update' per `fzfa-input-throttle' to amortize the
-    ;; cost of recomputing every source's `:candidates'.  Also skipped
-    ;; when input is pending — typing always trumps streamed-candidate
-    ;; refreshes.
-    (when handles
-      (setq poll-timer
-            (run-with-timer
-             0 fzfa-refresh-delay
-             (fzfa--make-poll-fn
-              sources-v
-              (lambda () helm-alive-p)
-              #'helm-force-update
-              (lambda () first-cands-shown)))))
-    ;; Per-source preview `:setup' broadcast.  Each cell captures the
-    ;; ORIGIN window/buffer/`default-directory' (the user's selected
-    ;; window before helm activated), then dispatches `:setup' under its
-    ;; own session binding so per-source state stashed via
-    ;; `fzfa-preview-put' lands in this cell's cdr.
-    (when any-preview
-      (dotimes (i n-sources)
-        (when-let* ((cell (aref preview-cells i)))
-          (let ((fzfa--preview-session cell)
-                ;; Prefer the source's own `:directory' — that is the root
-                ;; the search command ran under and the base against which
-                ;; its candidate strings are expanded.  Falling back to the
-                ;; ambient `default-directory' works only when the two agree
-                ;; (typical first fzfa invocation from a project root); once
-                ;; the user has visited a file into a different directory
-                ;; and re-invokes fzfa, the two diverge and `:file-preview'
-                ;; expands candidates against the wrong base — every
-                ;; preview then fails `file-readable-p' and silently no-ops.
-                (src-dir (or (plist-get (nth i sources) :directory)
-                             default-directory)))
-            (fzfa-preview-put :origin-window (selected-window))
-            (fzfa-preview-put :origin-buffer (window-buffer (selected-window)))
-            (fzfa-preview-put :default-directory src-dir)
-            (fzfa--preview-call :setup nil)))))
     (unwind-protect
-        (let* (;; Narrow-by-source: press `fzfa-multi-narrow-key',
+        (progn
+          ;; Source construction above is deliberately inert.  Start every
+          ;; shell handle only after entering the protected region so a later
+          ;; spawn, timer, preview setup, or Helm failure cannot leak an
+          ;; earlier source.
+          (dotimes (i n-sources)
+            (let* ((source (aref sources-v i))
+                   (cmd (plist-get (nth i sources) :command)))
+              (when cmd
+                (setf (fzfa-source-handle source)
+                      (fzfa--spawn cmd (fzfa-source-directory source)))
+                (push (fzfa-source-handle source) handles))))
+          ;; Single shared polling timer over all async handles.  Throttled to
+          ;; one `helm-force-update' per `fzfa-input-throttle' to amortize the
+          ;; cost of recomputing every source's `:candidates'.  Also skipped
+          ;; when input is pending — typing always trumps streamed-candidate
+          ;; refreshes.
+          (when handles
+            (setq poll-timer
+                  (run-with-timer
+                   0 fzfa-refresh-delay
+                   (fzfa--make-poll-fn
+                    sources-v
+                    (lambda () helm-alive-p)
+                    #'helm-force-update
+                    (lambda () first-cands-shown)))))
+          ;; Per-source preview `:setup' broadcast.  Each cell captures the
+          ;; ORIGIN window/buffer/`default-directory' (the user's selected
+          ;; window before helm activated), then dispatches `:setup' under its
+          ;; own session binding so per-source state stashed via
+          ;; `fzfa-preview-put' lands in this cell's cdr.
+          (when any-preview
+            (dotimes (i n-sources)
+              (when-let* ((cell (aref preview-cells i)))
+                (aset preview-active i 'starting)
+                (let ((fzfa--preview-session cell)
+                      ;; Prefer the source's own `:directory' — that is the
+                      ;; root the search command ran under and the base against
+                      ;; which its candidate strings are expanded.
+                      (src-dir (or (plist-get (nth i sources) :directory)
+                                   default-directory)))
+                  (fzfa-preview-put :origin-window (selected-window))
+                  (fzfa-preview-put :origin-buffer
+                                    (window-buffer (selected-window)))
+                  (fzfa-preview-put :default-directory src-dir)
+                  (fzfa--preview-call :setup nil)
+                  (aset preview-active i 'active)))))
+          (let* (;; Narrow-by-source: press `fzfa-multi-narrow-key',
                ;; then the source's `:narrow' key, to filter helm to
                ;; that source only.  Press the prefix again to widen.
                ;; Routes via `helm-set-source-filter' — helm's
@@ -1655,6 +1683,7 @@ for fuzzy-multi-source UX."
           (add-hook 'helm-move-selection-after-hook move-marker)
           (when restore-narrow
             (add-hook 'helm-after-update-hook restore-narrow))
+          (setq helm-entered t)
           (helm :sources helm-sources
                 :prompt (or prompt
                             (and (not multi-p)
@@ -1667,45 +1696,59 @@ for fuzzy-multi-source UX."
                 ;; vertico / ivy paths.
                 :input (plist-get (nth (or narrow-idx 0) sources)
                                   :initial-input)
-                :buffer (if multi-p "*helm fzfa multi*" "*helm fzfa*")))
-      (remove-hook 'helm-after-update-hook jump-fn)
-      (remove-hook 'helm-after-update-hook update-last-query)
-      (remove-hook 'helm-after-update-hook snap-fn)
-      (remove-hook 'helm-move-selection-after-hook move-marker)
+                :buffer (if multi-p "*helm fzfa multi*" "*helm fzfa*"))))
+      ;; Release resources first.  Every cleanup call is isolated so one
+      ;; broken source or hook cannot strand the remaining handles or timers.
+      (when poll-timer
+        (fzfa-helm--cleanup-call "poll timer" #'cancel-timer poll-timer)
+        (setq poll-timer nil))
+      (dolist (stop stops)
+        (fzfa-helm--cleanup-call "source" stop))
+      (fzfa-helm--cleanup-call
+       "after-update jump hook" #'remove-hook
+       'helm-after-update-hook jump-fn)
+      (fzfa-helm--cleanup-call
+       "after-update query hook" #'remove-hook
+       'helm-after-update-hook update-last-query)
+      (fzfa-helm--cleanup-call
+       "after-update snap hook" #'remove-hook
+       'helm-after-update-hook snap-fn)
+      (fzfa-helm--cleanup-call
+       "move-selection hook" #'remove-hook
+       'helm-move-selection-after-hook move-marker)
       (when restore-narrow
-        (remove-hook 'helm-after-update-hook restore-narrow))
-      ;; Snapshot for `fzfa-replay' BEFORE async producers stop —
-      ;; `current-cmd' / `display-state' (set by `>'-edits) are
-      ;; preserved by `--stop' but kept here for symmetry with the
-      ;; vertico / ivy capture site.  Translate `narrowed-name' back
-      ;; to its source index for the session-level `:narrow-idx'.
-      (fzfa--sessions-push
-       sources sources-v
-       (or prompt (and (not multi-p) (plist-get s0 :prompt))
-           "fzf-multi: ")
-       (and narrowed-name
-            (cl-position narrowed-name source-names :test #'equal))
-       last-query entry-command)
-      (when poll-timer (cancel-timer poll-timer))
-      ;; Bulk-stop async producers; idempotent — :cleanup may have
-      ;; already fired on normal helm exit.
-      (mapc #'funcall stops)
+        (fzfa-helm--cleanup-call
+         "restore-narrow hook" #'remove-hook
+         'helm-after-update-hook restore-narrow))
+      ;; `fzfa-source--stop' retains current-cmd and display-state, so replay
+      ;; can safely snapshot after teardown-critical resources are released.
+      (when helm-entered
+        (fzfa-helm--cleanup-call
+         "session snapshot" #'fzfa--sessions-push
+         sources sources-v
+         (or prompt (and (not multi-p) (plist-get s0 :prompt))
+             "fzf-multi: ")
+         (and narrowed-name
+              (cl-position narrowed-name source-names :test #'equal))
+         last-query entry-command))
       ;; Per-source preview `:exit' + `:return' broadcast.  The winning
-      ;; source's cell receives the RAW CAND (`result-cand', not the
-      ;; action's return value `result' — they can differ, see comment
-      ;; on `result-cand' in the outer let*); every other cell receives
-      ;; nil (interpreted as "aborted from this source's perspective").
-      ;; Mirrors `fzfa--multi-build-router' broadcast semantics.
+      ;; source's cell receives the raw candidate; every other active cell
+      ;; receives nil.  Isolate each dispatch so one handler cannot prevent
+      ;; the remaining preview sessions from closing.
       (when any-preview
         (dotimes (i n-sources)
-          (when-let* ((cell (aref preview-cells i)))
+          (when-let* ((state (aref preview-active i))
+                      (cell (aref preview-cells i)))
             (let ((fzfa--preview-session cell))
-              (fzfa--preview-call :exit nil)
-              (fzfa--preview-return (if (eql i result-src-idx)
-                                        result-cand
-                                      nil)
-                                    nil)))))
-      (fzfa-helm--cancel-stranded-follow-timer))
+              (fzfa-helm--cleanup-call
+               (format "preview %d exit" i) #'fzfa--preview-call :exit nil)
+              (when (eq state 'active)
+                (fzfa-helm--cleanup-call
+                 (format "preview %d return" i) #'fzfa--preview-return
+                 (if (eql i result-src-idx) result-cand nil) nil)))
+            (aset preview-active i nil))))
+      (fzfa-helm--cleanup-call
+       "stranded follow timer" #'fzfa-helm--cancel-stranded-follow-timer))
     result))
 
 (provide 'fzfa-helm)
