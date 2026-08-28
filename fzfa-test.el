@@ -1380,7 +1380,9 @@ even when their extension is excluded from `fzfa-extensions'."
   (let* ((default-directory "/tmp/")
          (src (fzfa-make-source :command "ls"))
          (calls 0))
-    (setf (fzfa-source-handle src) 'fake-handle)
+    (setf (fzfa-source-handle src) 'fake-handle
+          (fzfa-source-last-async-output src)
+          '(final ("old") 1 1))
     (cl-letf (((symbol-function 'fzf-native-async-submit)
                (lambda (_handle _query _limit)
                  (if (= (cl-incf calls) 1) 71
@@ -1392,6 +1394,7 @@ even when their extension is excluded from `fzfa-extensions'."
                      '(failed "refused" nil)))
       (should (= (fzfa-source-request-id src) 0))
       (should (fzfa-source-request-signature src))
+      (should-not (fzfa-source-last-async-output src))
       ;; The same failed signature is terminal and does not retry.
       (should (equal (fzfa--source-submit src "new" 10)
                      '(failed "refused" nil)))
@@ -1576,6 +1579,43 @@ even when their extension is excluded from `fzfa-extensions'."
       (should (equal (fzfa-source-last-result runtime-source)
                      '("last-good")))
       (should-not (fzfa-source-retry-timer runtime-source)))))
+
+(ert-deftest fzfa-helm-single-source-stop-retries-private-timer ()
+  "A private Helm timer error must not hide or strand its native source."
+  (require 'fzfa-helm)
+  (let ((helm-alive-p t)
+        (helm-pattern "")
+        (helm-map (make-sparse-keymap))
+        (cancel-calls 0)
+        (stop-calls 0)
+        (stopped nil))
+    (cl-letf (((symbol-function 'fzfa--spawn)
+               (lambda (&rest _) 'helm-handle))
+              ((symbol-function 'helm-make-source)
+               (lambda (_name _class &rest args) args))
+              ((symbol-function 'run-with-timer)
+               (lambda (&rest _) 'helm-poll-timer))
+              ((symbol-function 'cancel-timer)
+               (lambda (_timer)
+                 (cl-incf cancel-calls)
+                 (when (= cancel-calls 1)
+                   (error "injected Helm timer failure"))))
+              ((symbol-function 'fzf-native-async-stop)
+               (lambda (handle)
+                 (cl-incf stop-calls)
+                 (push handle stopped)
+                 (when (= stop-calls 1)
+                   (error "injected native stop failure")))))
+      (pcase-let ((`(,_source . ,stop)
+                   (fzfa-helm--async-source-and-stop
+                    "test" "printf x" "/tmp/" #'identity 10)))
+        (funcall stop)
+        (should (= cancel-calls 2))
+        (should (= stop-calls 2))
+        (should (equal stopped '(helm-handle helm-handle)))
+        (funcall stop)
+        (should (= cancel-calls 2))
+        (should (= stop-calls 2))))))
 
 (ert-deftest fzfa-helm-multi-source-preserves-last-result-on-failure ()
   "A terminal matcher failure must not blank a Helm multi source."
@@ -1796,10 +1836,144 @@ even when their extension is excluded from `fzfa-extensions'."
         '((:name "one" :command "printf one" :action identity)
           (:name "two" :command "printf two" :action identity))
         :prompt "fault: "))
-      (should (= (length stopped) 2))
-      (should (equal (sort (mapcar #'symbol-name stopped) #'string-lessp)
-                     '("cleanup-handle-1" "cleanup-handle-2")))
+      (should (= (length stopped) 3))
+      ;; Helm owns stop closures in reverse construction order, so handle 2
+      ;; receives the injected failure and the bounded retry.
+      (should (= (cl-count 'cleanup-handle-1 stopped) 1))
+      (should (= (cl-count 'cleanup-handle-2 stopped) 2))
       (should (equal cancelled '(cleanup-poll-timer))))))
+
+(ert-deftest fzfa-core-partial-start-stops-earlier-handle ()
+  "A failure starting source N must stop live sources 0 through N-1."
+  (let ((spawned 0)
+        (stopped 0)
+        (snapshots 0)
+        (fzfa-preview-functions nil)
+        (fzfa-prompt-function (lambda (_data) nil)))
+    (cl-letf (((symbol-function 'fzfa--ensure-category-override) #'ignore)
+              ((symbol-function 'fzfa--default-dir)
+               (lambda () default-directory))
+              ((symbol-function 'fzfa--spawn)
+               (lambda (&rest _)
+                 (cl-incf spawned)
+                 (if (= spawned 1)
+                     'first-handle
+                   (error "injected second spawn failure"))))
+              ((symbol-function 'fzf-native-async-stop)
+               (lambda (_handle) (cl-incf stopped)))
+              ((symbol-function 'fzfa--sessions-push)
+               (lambda (&rest _) (cl-incf snapshots))))
+      (should-error
+       (fzfa--read
+        '((:name "first" :command "producer-a" :action identity)
+          (:name "second" :command "producer-b" :action identity))
+        :prompt "fault: "))
+      (should (= spawned 2))
+      (should (= stopped 1))
+      (should (= snapshots 0)))))
+
+(ert-deftest fzfa-core-cleanup-is-best-effort ()
+  "One stop failure must not strand other core sources."
+  (let ((next-handle 0)
+        (stopped nil)
+        (cancelled nil)
+        (snapshots 0)
+        (fzfa-preview-functions nil)
+        (fzfa-prompt-function (lambda (_data) nil)))
+    (cl-letf (((symbol-function 'fzfa--ensure-category-override) #'ignore)
+              ((symbol-function 'fzfa--default-dir)
+               (lambda () default-directory))
+              ((symbol-function 'fzfa--spawn)
+               (lambda (&rest _)
+                 (intern (format "core-handle-%d"
+                                 (cl-incf next-handle)))))
+              ((symbol-function 'fzf-native-async-stop)
+               (lambda (handle)
+                 (push handle stopped)
+                 (when (= (length stopped) 1)
+                   (error "injected first stop failure"))))
+              ((symbol-function 'run-with-timer)
+               (lambda (&rest _) 'core-poll-timer))
+              ((symbol-function 'cancel-timer)
+               (lambda (timer) (push timer cancelled)))
+              ((symbol-function 'sit-for) #'ignore)
+              ((symbol-function 'add-hook) #'ignore)
+              ((symbol-function 'remove-hook) #'ignore)
+              ((symbol-function 'completing-read)
+               (lambda (&rest _) (error "injected frontend failure")))
+              ((symbol-function 'fzfa--sessions-push)
+               (lambda (&rest _)
+                 (cl-incf snapshots))))
+      (should-error
+       (fzfa--read
+        '((:name "one" :command "producer-a" :action identity)
+          (:name "two" :command "producer-b" :action identity))
+        :prompt "fault: "))
+      (should (= (length stopped) 3))
+      (should (equal (sort (mapcar #'symbol-name stopped) #'string-lessp)
+                     '("core-handle-1" "core-handle-1"
+                       "core-handle-2")))
+      (should (equal cancelled '(core-poll-timer)))
+      (should (= snapshots 0)))))
+
+(ert-deftest fzfa-core-pre-setup-failure-does-not-record-replay ()
+  "A synchronous frontend failure before setup must not publish a session."
+  (let ((snapshots 0)
+        (fzfa-preview-functions nil)
+        (fzfa-prompt-function (lambda (_data) nil)))
+    (cl-letf (((symbol-function 'fzfa--ensure-category-override) #'ignore)
+              ((symbol-function 'fzfa--default-dir)
+               (lambda () default-directory))
+              ((symbol-function 'run-with-timer)
+               (lambda (&rest _) 'poll-timer))
+              ((symbol-function 'cancel-timer) #'ignore)
+              ((symbol-function 'sit-for) #'ignore)
+              ((symbol-function 'add-hook) #'ignore)
+              ((symbol-function 'remove-hook) #'ignore)
+              ((symbol-function 'completing-read)
+               (lambda (&rest _) (error "frontend did not open")))
+              ((symbol-function 'fzfa--sessions-push)
+               (lambda (&rest _) (cl-incf snapshots))))
+      (should-error
+       (fzfa--read
+        '((:name "static" :candidates ("a") :action identity))
+        :prompt "fault: "))
+      (should (= snapshots 0)))))
+
+(ert-deftest fzfa-command-edit-issues-one-producer-request ()
+  "One command edit must invoke a callback producer exactly once."
+  (let ((calls 0)
+        (inputs nil)
+        (fzfa-separator ?#)
+        (fzfa-preview-functions nil)
+        (fzfa-prompt-function (lambda (_data) nil)))
+    (cl-letf (((symbol-function 'fzfa--ensure-category-override) #'ignore)
+              ((symbol-function 'fzfa--default-dir)
+               (lambda () default-directory))
+              ((symbol-function 'fzfa--sessions-push) #'ignore)
+              ((symbol-function 'run-with-timer)
+               (lambda (&rest _) 'fake-timer))
+              ((symbol-function 'run-with-idle-timer)
+               (lambda (&rest _) 'fake-idle-timer))
+              ((symbol-function 'cancel-timer) #'ignore)
+              ((symbol-function 'sit-for) #'ignore)
+              ((symbol-function 'add-hook) #'ignore)
+              ((symbol-function 'remove-hook) #'ignore)
+              ((symbol-function 'completing-read)
+               (lambda (_prompt collection &rest _)
+                 (funcall collection "#new#" nil t)
+                 nil)))
+      (fzfa--read
+       `((:name "producer"
+          :candidates ,(lambda (input callback)
+                         (cl-incf calls)
+                         (push input inputs)
+                         (funcall callback (list input)))
+          :display full
+          :action identity))
+       :prompt "test: ")
+      (should (= calls 1))
+      (should (equal inputs '("new"))))))
 
 (ert-deftest fzfa-session-pending-total-uses-live-pool-boundary ()
   "A running request reports candidates collected now, not an older result."
@@ -1953,6 +2127,64 @@ even when their extension is excluded from `fzfa-extensions'."
       (should (= (fzfa-source-last-gen src) 1))
       (should (= (fzfa-source-request-id src) 18))
       (should (fzfa-source-request-signature src)))))
+
+(ert-deftest fzfa-session-poller-retries-refresh-before-commit ()
+  "A failed frontend refresh must not consume its generation edge."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls"))
+         (refreshes 0)
+         (fzfa-input-throttle 0)
+         poll)
+    (setf (fzfa-source-handle src) 'fake-handle
+          (fzfa-source-last-gen src) 0)
+    (cl-letf (((symbol-function 'fzfa--poll-generation)
+               (lambda (_handle) 7))
+              ((symbol-function 'input-pending-p) (lambda () nil)))
+      (setq poll
+            (fzfa--make-poll-fn
+             (vector src) (lambda () t)
+             (lambda ()
+               (cl-incf refreshes)
+               (when (= refreshes 1)
+                 (error "injected refresh failure")))
+             (lambda () nil)))
+      (should-error (funcall poll))
+      (should (= (fzfa-source-last-gen src) 0))
+      (funcall poll)
+      (should (= refreshes 2))
+      (should (= (fzfa-source-last-gen src) 7)))))
+
+(ert-deftest fzfa-multi-stable-async-redraw-reuses-tagged-output ()
+  "An unchanged final snapshot must not retag or rerank all candidates."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :spec '(:name "x" :command "fd")))
+         (output (list 'final '("alpha" "beta") 2 2))
+         (tags 0)
+         (ranks 0)
+         first second)
+    (cl-letf (((symbol-function 'fzfa--tag)
+               (lambda (candidate &rest _)
+                 (cl-incf tags)
+                 (concat candidate "#tag")))
+              ((symbol-function 'fzfa--multi-rank)
+               (lambda (&rest _)
+                 (cl-incf ranks)
+                 9)))
+      (setq first
+            (fzfa--multi-render-async-output
+             src output 0 (make-hash-table :test 'equal) nil "q")
+            second
+            (fzfa--multi-render-async-output
+             src output 0 (make-hash-table :test 'equal) nil "q"))
+      (should (eq first second))
+      (should (= tags 2))
+      (should (= ranks 1))
+      ;; A distinct output object represents a new publication even when its
+      ;; candidate contents happen to be equal.
+      (fzfa--multi-render-async-output
+       src (copy-tree output) 0 (make-hash-table :test 'equal) nil "q")
+      (should (= tags 4))
+      (should (= ranks 2)))))
 
 (ert-deftest fzfa-legacy-zero-result-freshness-uses-fzfa-policy ()
   "Legacy finality must use the same match options as candidate scoring."
@@ -2164,7 +2396,15 @@ even when their extension is excluded from `fzfa-extensions'."
    (eq (fzfa--candidates-kind (lambda (_input &optional callback)
                                 (when callback
                                   (funcall callback '("ok")))))
-       'producer)))
+       'producer))
+  (let (received)
+    (funcall
+     (fzfa--normalize-candidates
+      (lambda (&optional input callback)
+        (when callback
+          (funcall callback (list input)))))
+     "query" (lambda (candidates) (setq received candidates)))
+    (should (equal received '("query")))))
 
 (ert-deftest fzfa-command-source-rejects-batch-only-native-module-clearly ()
   "A batch-only platform must fail before calling an absent session entry."
@@ -2239,6 +2479,37 @@ even when their extension is excluded from `fzfa-extensions'."
          (initial (fzfa-source-prod-token src)))
     (fzfa-source--stop src)
     (should (> (fzfa-source-prod-token src) initial))))
+
+(ert-deftest fzfa-source-stop-is-failure-safe-and-retryable ()
+  "One stop call retries transient timer and native failures."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls"))
+         (cancel-calls 0)
+         (stop-calls 0)
+         (stopped nil))
+    (setf (fzfa-source-handle src) 'native-handle
+          (fzfa-source-restart-timer src) 'restart-timer)
+    (cl-letf (((symbol-function 'fzf-native-async-stop)
+               (lambda (handle)
+                 (cl-incf stop-calls)
+                 (push handle stopped)
+                 (when (= stop-calls 1)
+                   (error "injected native stop failure"))))
+              ((symbol-function 'cancel-timer)
+               (lambda (_timer)
+                 (cl-incf cancel-calls)
+                 (when (= cancel-calls 1)
+                   (error "injected timer failure")))))
+      (should (fzfa-source--stop src))
+      (should (= stop-calls 2))
+      (should (equal stopped '(native-handle native-handle)))
+      (should-not (fzfa-source-handle src))
+      (should (= cancel-calls 2))
+      (should-not (fzfa-source-restart-timer src))
+      ;; Later calls are inert for already-released resources.
+      (should (fzfa-source--stop src))
+      (should (= stop-calls 2))
+      (should (= cancel-calls 2)))))
 
 (ert-deftest fzfa-source-restart-producer-fires-callback ()
   "`fzfa-source--restart' on a producer source fires the producer and
@@ -2890,7 +3161,8 @@ would dedup to one — see `fzfa-sessions-push-dedups-by-key')."
   (let* ((fzfa--sessions nil)
          (fzfa-sessions-max 16)
          (src (fzfa-make-source :spec '(:name "x" :command "fd"))))
-    (setf (fzfa-source-command src) "fd --no-ignore"
+    (setf (fzfa-source-command src) "fd"
+          (fzfa-source-current-cmd src) "fd --no-ignore"
           (fzfa-source-display-state src) 'full)
     (fzfa--sessions-push '((:name "x" :command "fd"))
                          (vector src) "p: " 0 "needle" 'fzfa-fd)

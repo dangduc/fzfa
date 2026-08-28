@@ -427,7 +427,7 @@ and `fzfa-helm--read' (batch with bulk-stop)."
          (source (fzfa-make-source :command command
                                    :directory dir
                                    :display 'hidden))
-         (stopped nil)
+         (active t)
          (timer nil)
          (refresh-fn
           (lambda () (when helm-alive-p (helm-force-update))))
@@ -450,10 +450,24 @@ and `fzfa-helm--read' (batch with bulk-stop)."
               (setq helm-pattern (minibuffer-contents)))))
          (stop
           (lambda ()
-            (unless stopped
-              (setq stopped t)
-              (when timer (cancel-timer timer) (setq timer nil))
-              (fzfa-source--stop source)))))
+            ;; Revoke frontend use on the first call, but retry each physical
+            ;; resource in two bounded passes.  A transient timer-cancel error
+            ;; must not leave this otherwise unreachable timer running.
+            (setq active nil)
+            (cl-labels
+                ((stop-pass
+                  ()
+                  (let ((timer-ok
+                         (or (null timer)
+                             (when (fzfa--cleanup-call
+                                    "Helm poll timer" #'cancel-timer timer)
+                               (setq timer nil)
+                               t)))
+                        ;; Evaluate independently even when timer cleanup
+                        ;; failed; this is the process-owning resource.
+                        (source-ok (fzfa-source--stop source)))
+                    (and timer-ok source-ok))))
+              (or (stop-pass) (stop-pass))))))
     ;; Pre-arm: start the initial handle and mark `current-cmd' so the
     ;; first `:candidates' tick doesn't trigger a debounced restart.
     (setf (fzfa-source-handle source)
@@ -463,7 +477,7 @@ and `fzfa-helm--read' (batch with bulk-stop)."
           (run-with-timer
            0 fzfa-refresh-delay
            (lambda ()
-             (when (and helm-alive-p (not stopped))
+             (when (and helm-alive-p active)
                (let* ((h (fzfa-source-handle source))
                       (gen (and h (fzfa--poll-generation h))))
                  (when (and gen (> gen (fzfa-source-last-gen source)))
@@ -488,7 +502,7 @@ and `fzfa-helm--read' (batch with bulk-stop)."
                       map)
             :candidates
             (lambda ()
-              (unless stopped
+              (when active
                 (pcase-let* ((`(,cmd . ,filter)
                               (fzfa--split
                                (or helm-pattern "")
@@ -1133,15 +1147,14 @@ for fuzzy-multi-source UX."
                       (source (fzfa-make-source :command cmd
                                                 :directory dir
                                                 :display 'hidden))
-                      (stopped nil)
+                      (active t)
                       (refresh-fn
                        (lambda ()
                          (when helm-alive-p (helm-force-update))))
                       (stop
                        (lambda ()
-                         (unless stopped
-                           (setq stopped t)
-                           (fzfa-source--stop source)))))
+                         (setq active nil)
+                         (fzfa-source--stop source))))
                  (setf ;; Seed `current-cmd' so the first `:candidates'
                        ;; tick's CMD-change check sees the source as
                        ;; already running its initial cmd — mirrors
@@ -1164,7 +1177,7 @@ for fuzzy-multi-source UX."
                                    (fzfa-source-handle source))))
                         :candidates
                         (lambda ()
-                          (unless stopped
+                          (when active
                             (pcase-let* ((`(,split-cmd . ,filter)
                                           (fzfa--split
                                            (or helm-pattern "")
