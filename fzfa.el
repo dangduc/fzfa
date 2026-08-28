@@ -3663,7 +3663,15 @@ Returns non-nil iff a fetch was actually issued."
                      (setf (fzfa-source-snapshot source) value
                            (fzfa-source-total source) (length value))
                      (when (and (not sync-call) refresh-fn)
-                       (run-with-idle-timer 0 nil refresh-fn))))))
+                       (run-with-idle-timer
+                        0 nil
+                        (lambda (src token refresh)
+                          ;; Cleanup or a newer query can happen after this
+                          ;; callback validates TOKEN but before the idle
+                          ;; refresh runs.  Recheck at execution time too.
+                          (when (= token (fzfa-source-prod-token src))
+                            (funcall refresh)))
+                        source my-token refresh-fn))))))
       (setq sync-call nil))
     t))
 
