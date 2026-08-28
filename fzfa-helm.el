@@ -612,13 +612,7 @@ producers use the shared fetch protocol; async delivery triggers
 `helm-force-update' so helm re-reads the fresh snapshot."
   (fzfa-helm--ensure-loaded)
   (let* ((limit (or candidate-number-limit 10000))
-         (kind
-          (cond
-           ((listp items) 'list)
-           ((functionp items)
-            (if (>= (car (func-arity items)) 1)
-                'producer
-              'zero))))
+         (kind (fzfa--candidates-kind items))
          (producer-kind-p (eq kind 'producer))
          (initial-char fzfa-separator)
          ;; Per-source state (display-state machinery, producer state,
@@ -1234,7 +1228,8 @@ for fuzzy-multi-source UX."
                ;; or have other visible side effects.  Both synchronously and
                ;; asynchronously firing producers use the shared fetch
                ;; protocol and its token-based callback ownership.
-               (let* ((source (fzfa-make-source :directory directory
+               (let* ((kind (fzfa--candidates-kind cands))
+                      (source (fzfa-make-source :directory directory
                                                 ;; Populate `cands-fn'
                                                 ;; on the struct so the
                                                 ;; async branch's
@@ -1243,17 +1238,8 @@ for fuzzy-multi-source UX."
                                                 ;; `--normalize-candidates'
                                                 ;; handles all shapes.
                                                 :candidates
-                                                (and
-                                                 (functionp cands)
-                                                 (>= (car (func-arity cands)) 1)
-                                                 cands)))
-                      (kind
-                       (cond
-                        ((listp cands) 'list)
-                        ((functionp cands)
-                         (if (>= (car (func-arity cands)) 1)
-                             'producer
-                           'zero))))
+                                                (and (eq kind 'producer)
+                                                     cands)))
                       (sync-stop
                        (lambda () (fzfa-source--stop source))))
                  (aset sources-v i source)

@@ -2023,6 +2023,26 @@ even when their extension is excluded from `fzfa-extensions'."
                (lambda (cands) (setq got cands)))
       (should (equal got '("a" "b" "c"))))))
 
+(ert-deftest fzfa-candidates-kind-rejects-unsupported-function-arities ()
+  "Candidate functions must be callable with zero or two arguments."
+  (should-error
+   (fzfa--normalize-candidates (lambda (_input) '("bad"))))
+  (should-error
+   (fzfa--normalize-candidates
+    (lambda (_input _callback _extra) '("bad")))))
+
+(ert-deftest fzfa-candidates-kind-accepts-two-callable-producers ()
+  "Required and optional callbacks can implement the producer protocol."
+  (should
+   (eq (fzfa--candidates-kind (lambda (_input callback)
+                                (funcall callback '("ok"))))
+       'producer))
+  (should
+   (eq (fzfa--candidates-kind (lambda (_input &optional callback)
+                                (when callback
+                                  (funcall callback '("ok")))))
+       'producer)))
+
 (ert-deftest fzfa-source-directory-falls-back-to-default ()
   "Constructor falls back to `default-directory' when none provided."
   (let* ((default-directory "/tmp/")
