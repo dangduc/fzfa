@@ -2577,6 +2577,49 @@ even when their extension is excluded from `fzfa-extensions'."
       (kill-buffer nested))
     (should-not dispatched)))
 
+(defun fzfa-test--helm-preview-selection-owner-transfer (delay)
+  "Return preview dispatches when selection transfers ownership at DELAY."
+  (let ((fzfa-preview-delay delay)
+        (phase 'outer)
+        timer-work dispatched)
+    (cl-letf (((symbol-function 'fzfa-helm--current-session-token)
+               (lambda ()
+                 (if (eq phase 'outer)
+                     '(outer-buffer . outer-minibuffer)
+                   '(nested-buffer . nested-minibuffer))))
+              ((symbol-function 'helm-get-selection)
+               (lambda ()
+                 ;; Selection is Lisp-controlled and can enter nested Helm.
+                 (setq phase 'nested)
+                 "nested-candidate"))
+              ((symbol-function 'fzfa--preview-call)
+               (lambda (_event _fallback candidate)
+                 (push (list phase candidate) dispatched)))
+              ((symbol-function 'timerp)
+               (lambda (timer) (eq timer 'preview-timer)))
+              ((symbol-function 'run-with-idle-timer)
+               (lambda (_delay _repeat function &rest args)
+                 (setq timer-work (lambda () (apply function args)))
+                 'preview-timer)))
+      (let ((persistent-action
+             (fzfa-helm--make-debounced-preview-fn
+              '(outer-preview-session)
+              (lambda () (eq phase 'outer)))))
+        (funcall persistent-action "ignored")
+        (when timer-work
+          (funcall timer-work))))
+    (nreverse dispatched)))
+
+(ert-deftest fzfa-helm-preview-immediate-rechecks-owner-after-selection ()
+  "Immediate preview must fence ownership after reading the selection."
+  (require 'fzfa-helm)
+  (should-not (fzfa-test--helm-preview-selection-owner-transfer 0)))
+
+(ert-deftest fzfa-helm-preview-timer-rechecks-owner-after-selection ()
+  "Delayed preview must fence ownership after reading the selection."
+  (require 'fzfa-helm)
+  (should-not (fzfa-test--helm-preview-selection-owner-transfer 0.1)))
+
 (ert-deftest fzfa-helm-composed-producer-refreshes-only-its-owner ()
   "A public composable source must not redraw a nested Helm session."
   (require 'fzfa-helm)

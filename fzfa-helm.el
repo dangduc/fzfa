@@ -265,6 +265,15 @@ A nested Helm can take ownership at either boundary."
         (setq helm-pattern pattern)
         t))))
 
+(defun fzfa-helm--preview-owner-p (owner-token owner-p)
+  "Return non-nil when OWNER-TOKEN and OWNER-P still own preview dispatch.
+
+OWNER-P is a Lisp callback boundary.  Check the session token both before and
+after calling it so a nested Helm cannot take ownership during the check."
+  (and (equal owner-token (fzfa-helm--current-session-token))
+       (or (null owner-p) (funcall owner-p))
+       (equal owner-token (fzfa-helm--current-session-token))))
+
 ;;; Stats display helpers
 
 (defun fzfa-helm--async-stats-suffix (handle)
@@ -343,10 +352,9 @@ Helm cannot consume an outer session's preview timer or candidate."
           ;; Immediate path — no debounce.  Re-read current selection
           ;; for parity with the idle path, but only from the session that
           ;; invoked this persistent action.
-          (when-let* (((equal owner-token
-                               (fzfa-helm--current-session-token)))
-                      ((or (null owner-p) (funcall owner-p)))
-                      (cur (helm-get-selection)))
+          (when-let* (((fzfa-helm--preview-owner-p owner-token owner-p))
+                      (cur (helm-get-selection))
+                      ((fzfa-helm--preview-owner-p owner-token owner-p)))
             (unless (equal cur preview-last)
               (setq preview-last cur)
               (let ((fzfa--preview-session
@@ -358,10 +366,11 @@ Helm cannot consume an outer session's preview timer or candidate."
                  fzfa-preview-delay nil
                  (lambda ()
                    (setq preview-timer nil)
-                   (when-let* (((equal owner-token
-                                      (fzfa-helm--current-session-token)))
-                               ((or (null owner-p) (funcall owner-p)))
-                               (cur (helm-get-selection)))
+                   (when-let* (((fzfa-helm--preview-owner-p
+                                 owner-token owner-p))
+                               (cur (helm-get-selection))
+                               ((fzfa-helm--preview-owner-p
+                                 owner-token owner-p)))
                      (unless (equal cur preview-last)
                        (setq preview-last cur)
                        (let ((fzfa--preview-session
