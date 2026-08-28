@@ -20,6 +20,15 @@
 (require 'fzfa-replay)
 (require 'fzfa-locate)
 
+;; The Helm failure-path tests load fzfa-helm lazily.  Declare its dynamic
+;; variables here so lexical binding does not turn the test fixtures into
+;; unrelated lexical variables before that library is loaded.
+(defvar helm-alive-p)
+(defvar helm-pattern)
+(defvar helm-map)
+(defvar helm-after-update-hook)
+(defvar helm-move-selection-after-hook)
+
 ;;; fzfa-hungry--deduplicate-dirs
 
 (ert-deftest fzfa-hungry-deduplicate-dirs-no-overlap ()
@@ -57,6 +66,36 @@
 (ert-deftest fzfa-hungry-deduplicate-dirs-empty-input ()
   "Empty input returns nil."
   (should (null (fzfa-hungry--deduplicate-dirs '()))))
+
+;;; Remote file annotation
+
+(ert-deftest fzfa-annotate-file-skips-remote-candidate-under-local-directory ()
+  "An absolute TRAMP candidate must not reach Marginalia from a local cwd."
+  (let ((default-directory "/tmp/")
+        (calls nil))
+    (cl-letf (((symbol-function 'marginalia-annotate-file)
+               (lambda (cand) (push cand calls) "annotation")))
+      (should-not
+       (fzfa--annotate-file "/ssh:example.invalid:/srv/project/file.txt"))
+      (should-not calls))))
+
+(ert-deftest fzfa-annotate-file-skips-relative-candidate-under-remote-directory ()
+  "A relative candidate under a TRAMP cwd must not reach Marginalia."
+  (let ((default-directory "/ssh:example.invalid:/srv/project/")
+        (calls nil))
+    (cl-letf (((symbol-function 'marginalia-annotate-file)
+               (lambda (cand) (push cand calls) "annotation")))
+      (should-not (fzfa--annotate-file "file.txt"))
+      (should-not calls))))
+
+(ert-deftest fzfa-annotate-file-allows-local-candidate ()
+  "A local candidate still uses Marginalia's file annotator."
+  (let ((default-directory "/tmp/")
+        (calls nil))
+    (cl-letf (((symbol-function 'marginalia-annotate-file)
+               (lambda (cand) (push cand calls) "annotation")))
+      (should (equal (fzfa--annotate-file "file.txt") "annotation"))
+      (should (equal calls '("file.txt"))))))
 
 ;;; fzfa-candidate-directory / fzfa-resolve-candidate
 
@@ -201,6 +240,19 @@ SPECS is a list of source plists.  CANDIDATES is an alist of
     (should (equal (fzfa-resolve-candidate tagged s)
                    (expand-file-name clean "/root/")))))
 
+(ert-deftest fzfa-tofu-tagging-preserves-high-plane-candidate-suffixes ()
+  "U+100000 and U+10FFFF candidate data must survive a tag round trip."
+  (dolist (codepoint '(#x100000 #x10ffff))
+    (let* ((candidate (concat "file-" (string codepoint)))
+           (hash (make-hash-table :test 'equal))
+           (tagged (fzfa--tag candidate 7 hash t)))
+      (should-not (fzfa--tagged-p candidate))
+      (should (equal (fzfa--tofu-hide candidate) candidate))
+      (should (fzfa--tagged-p tagged))
+      (should (equal (fzfa--tofu-hide tagged) candidate))
+      ;; Retagging strips only our property-marked suffix, not candidate data.
+      (should (equal (fzfa--tag tagged 7 hash t) tagged)))))
+
 ;;;; fzfa-session-source-of
 
 (ert-deftest fzfa-session-source-of-basic ()
@@ -304,12 +356,17 @@ Returns nil if CMD completes without invoking `completing-read'."
 
 Mocks `expand-file-name' so `fzfa-ssh' reads the temp file."
   (declare (indent 1))
-  `(let ((tmpfile (make-temp-file "fzfa-test-ssh-config")))
+  `(let ((tmpfile (make-temp-file "fzfa-test-ssh-config"))
+         (original-expand-file-name (symbol-function 'expand-file-name)))
      (unwind-protect
          (progn
            (with-temp-file tmpfile (insert ,content))
            (cl-letf (((symbol-function 'expand-file-name)
-                      (lambda (&rest _) tmpfile)))
+                      (lambda (name &optional directory)
+                        (if (equal name "~/.ssh/config")
+                            tmpfile
+                          (funcall original-expand-file-name
+                                   name directory)))))
              ,@body))
        (delete-file tmpfile))))
 
@@ -1283,6 +1340,616 @@ even when their extension is excluded from `fzfa-extensions'."
          (src (fzfa-make-source :command "ls")))
     (should (eq (fzfa-source-display-state src) 'hidden))))
 
+(ert-deftest fzfa-source-request-state-defaults-empty ()
+  "A new source owns no native request identity."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls")))
+    (should (= (fzfa-source-request-id src) 0))
+    (should-not (fzfa-source-request-signature src))))
+
+(ert-deftest fzfa-source-submit-deduplicates-locally ()
+  "Equal renders submit once even when native would return a new ID."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls"))
+         (calls 0)
+         (fzfa-case-mode 'smart)
+         (fzfa-fuzzy t)
+         (fzf-native-filter-only-length nil)
+         (fzf-native-filter-only-logic 'or))
+    (setf (fzfa-source-handle src) 'fake-handle)
+    (cl-letf (((symbol-function 'fzf-native-async-submit)
+               (lambda (_handle _query _limit) (cl-incf calls))))
+      (should (= (fzfa--source-submit src "alpha" 20) 1))
+      (should (= (fzfa--source-submit src "alpha" 20) 1))
+      (should (= calls 1))
+      ;; LIMIT and matching options are part of request ownership.
+      (should (= (fzfa--source-submit src "alpha" 30) 2))
+      (let ((fzfa-case-mode 'respect))
+        (should (= (fzfa--source-submit src "alpha" 30) 3)))
+      (let ((fzfa-fuzzy nil))
+        (should (= (fzfa--source-submit src "alpha" 30) 4)))
+      (let ((fzf-native-filter-only-length 100))
+        (should (= (fzfa--source-submit src "alpha" 30) 5)))
+      (let ((fzf-native-filter-only-logic 'and))
+        (should (= (fzfa--source-submit src "alpha" 30) 6)))
+      (should (= calls 6)))))
+
+(ert-deftest fzfa-source-submit-refusal-clears-old-ownership ()
+  "A failed changed submit cannot poll the preceding query's request."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls"))
+         (calls 0))
+    (setf (fzfa-source-handle src) 'fake-handle)
+    (cl-letf (((symbol-function 'fzf-native-async-submit)
+               (lambda (_handle _query _limit)
+                 (if (= (cl-incf calls) 1) 71
+                   (error "refused"))))
+              ((symbol-function 'fzfa--log) #'ignore)
+              ((symbol-function 'message) #'ignore))
+      (should (= (fzfa--source-submit src "old" 10) 71))
+      (should (equal (fzfa--source-submit src "new" 10)
+                     '(failed "refused" nil)))
+      (should (= (fzfa-source-request-id src) 0))
+      (should (fzfa-source-request-signature src))
+      ;; The same failed signature is terminal and does not retry.
+      (should (equal (fzfa--source-submit src "new" 10)
+                     '(failed "refused" nil)))
+      (should (= calls 2)))))
+
+(ert-deftest fzfa-session-submit-failure-is-terminal-and-reported-once ()
+  "A rejected native submit is not converted into infinite pending retries."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls"))
+         (submits 0)
+         messages)
+    (setf (fzfa-source-handle src) 'fake-handle)
+    (cl-letf (((symbol-function 'fzfa--session-api-p) (lambda () t))
+              ((symbol-function 'fzf-native-async-submit)
+               (lambda (&rest _)
+                 (cl-incf submits)
+                 (error "native submit exploded")))
+              ((symbol-function 'fzfa--log) #'ignore)
+              ((symbol-function 'message)
+               (lambda (format-string &rest args)
+                 (push (apply #'format format-string args) messages))))
+      (should (equal (fzfa--source-async-out src "q" 10)
+                     '(failed "native submit exploded" nil)))
+      (should (equal (fzfa--source-async-out src "q" 10)
+                     '(failed "native submit exploded" nil)))
+      (should (= submits 1))
+      (should (= (length messages) 1)))))
+
+(ert-deftest fzfa-session-render-polls-without-resubmitting ()
+  "Stable final redraws use status and reuse one materialized result."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls"))
+         (submits 0)
+         (statuses 0)
+         (snapshots 0))
+    (setf (fzfa-source-handle src) 'fake-handle)
+    (cl-letf (((symbol-function 'fzf-native-async-submit)
+               (lambda (_handle _query _limit)
+                 (cl-incf submits)
+                 (+ 100 submits)))
+              ((symbol-function 'fzf-native-async-snapshot)
+               (lambda (_handle request-id)
+                 (cl-incf snapshots)
+                 (list :request-id request-id :state 'complete
+                       :snapshot-generation 7
+                       :stale nil :candidates '("alpha")
+                       :filtered 1 :total 3)))
+              ((symbol-function 'fzf-native-async-status)
+               (lambda (_handle request-id)
+                 (cl-incf statuses)
+                 (list :request-id request-id :state 'complete
+                       :snapshot-generation 7
+                       :stale nil :filtered 1 :total 3))))
+      (should (equal (fzfa--source-async-out src "a" 10)
+                     '(final ("alpha") 1 3)))
+      (should (equal (fzfa--source-async-out src "a" 10)
+                     '(final ("alpha") 1 3)))
+      (should (= submits 1))
+      (should (= statuses 2))
+      (should (= snapshots 1)))))
+
+(ert-deftest fzfa-session-presentation-change-rematerializes-without-rescore ()
+  "Highlight policy and hook changes rebuild Lisp output, not native work."
+  (let* ((default-directory "/tmp/")
+         (fzfa-highlight nil)
+         (fzf-native-highlight-fn 'highlight-a)
+         (src (fzfa-make-source :command "ls"))
+         (submits 0)
+         (snapshots 0))
+    (setf (fzfa-source-handle src) 'fake-handle)
+    (cl-letf (((symbol-function 'fzfa--session-api-p) (lambda () t))
+              ((symbol-function 'fzf-native-async-submit)
+               (lambda (&rest _)
+                 (cl-incf submits)))
+              ((symbol-function 'fzf-native-async-status)
+               (lambda (&rest _)
+                 '(:state complete :snapshot-generation 7
+                   :stale nil :filtered 1 :total 1)))
+              ((symbol-function 'fzf-native-async-snapshot)
+               (lambda (&rest _)
+                 (cl-incf snapshots)
+                 (list :state 'complete :snapshot-generation 7 :stale nil
+                       :candidates
+                       (list (format "%S/%S"
+                                     fzfa-highlight
+                                     fzf-native-highlight-fn))
+                       :filtered 1 :total 1))))
+      (should (equal (fzfa--source-async-out src "a" 10)
+                     '(final ("nil/highlight-a") 1 1)))
+      ;; Stable presentation reuses the already materialized object.
+      (should (equal (fzfa--source-async-out src "a" 10)
+                     '(final ("nil/highlight-a") 1 1)))
+      (setq fzfa-highlight t)
+      (should (equal (fzfa--source-async-out src "a" 10)
+                     '(final ("t/highlight-a") 1 1)))
+      (setq fzf-native-highlight-fn 'highlight-b)
+      (should (equal (fzfa--source-async-out src "a" 10)
+                     '(final ("t/highlight-b") 1 1)))
+      (should (= submits 1))
+      (should (= snapshots 3)))))
+
+(ert-deftest fzfa-session-helm-adapter-does-not-copy-pending-snapshot ()
+  "Helm keeps its Lisp cache instead of copying stale native candidates."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls"))
+         (submits 0)
+         (statuses 0)
+         (snapshots 0))
+    (setf (fzfa-source-handle src) 'fake-handle)
+    (cl-letf (((symbol-function 'fzfa--session-api-p) (lambda () t))
+              ((symbol-function 'fzf-native-async-submit)
+               (lambda (&rest _)
+                 (cl-incf submits)
+                 77))
+              ((symbol-function 'fzf-native-async-status)
+               (lambda (&rest _)
+                 (cl-incf statuses)
+                 '(:state running :snapshot-generation 3 :total 100)))
+              ((symbol-function 'fzf-native-async-snapshot)
+               (lambda (&rest _)
+                 (cl-incf snapshots)
+                 (error "pending request must not materialize candidates"))))
+      (should (eq (fzfa--source-async-candidates src "q" 10) t))
+      (should (eq (fzfa--source-async-candidates src "q" 10) t))
+      (should (= submits 1))
+      (should (= statuses 2))
+      (should (= snapshots 0)))))
+
+(ert-deftest fzfa-session-helm-adapter-preserves-terminal-failure-state ()
+  "Helm must distinguish matcher failure from a final empty result."
+  (let ((src (fzfa-make-source :command "ls")))
+    (cl-letf (((symbol-function 'fzfa--source-async-out)
+               (lambda (&rest _) '(failed "matcher OOM" 42))))
+      (should (equal (fzfa--source-async-candidates src "q" 10)
+                     '(failed "matcher OOM" 42))))))
+
+(ert-deftest fzfa-helm-session-stats-use-live-pool-boundary ()
+  "Helm's header total must track the growing session pool."
+  (require 'fzfa-helm)
+  (cl-letf (((symbol-function 'fzfa--session-api-p) (lambda () t))
+            ((symbol-function 'fzf-native-async-status)
+             (lambda (&rest _)
+               '(:filtered 5 :total 100 :pool-generation 125)))
+            ((symbol-function 'fzf-native-async-stats)
+             (lambda (&rest _) (error "legacy stats must not be read"))))
+    (should (equal (fzfa-helm--async-stats-suffix 'fake-handle)
+                   " (5/125)"))))
+
+(ert-deftest fzfa-helm-single-source-preserves-last-result-on-failure ()
+  "A terminal matcher failure must not blank a single Helm source."
+  (require 'fzfa-helm)
+  (let* ((original-maker (symbol-function 'fzfa-make-source))
+         (outcomes '(("last-good") (failed "matcher OOM" 1)))
+         (helm-alive-p t)
+         (helm-pattern "")
+         (helm-map (make-sparse-keymap))
+         runtime-source first second)
+    (cl-letf (((symbol-function 'fzfa-helm--ensure-loaded) #'ignore)
+              ((symbol-function 'fzfa--spawn)
+               (lambda (&rest _) 'fake-handle))
+              ((symbol-function 'fzfa-make-source)
+               (lambda (&rest args)
+                 (setq runtime-source (apply original-maker args))))
+              ((symbol-function 'helm-make-source)
+               (lambda (_name _class &rest args) args))
+              ((symbol-function 'run-with-timer)
+               (lambda (&rest _) 'fake-timer))
+              ((symbol-function 'cancel-timer) #'ignore)
+              ((symbol-function 'fzfa-source--stop) #'ignore)
+              ((symbol-function 'fzfa--source-async-candidates)
+               (lambda (&rest _) (pop outcomes))))
+      (pcase-let* ((`(,source-plist . ,stop)
+                     (fzfa-helm--async-source-and-stop
+                      "test" "printf x" "/tmp/" #'identity 10))
+                    (callback (plist-get source-plist :candidates)))
+        (unwind-protect
+            (setq first (funcall callback)
+                  second (funcall callback))
+          (funcall stop)))
+      (should (equal first '("last-good")))
+      (should (equal second '("last-good")))
+      (should (equal (fzfa-source-last-result runtime-source)
+                     '("last-good")))
+      (should-not (fzfa-source-retry-timer runtime-source)))))
+
+(ert-deftest fzfa-helm-multi-source-preserves-last-result-on-failure ()
+  "A terminal matcher failure must not blank a Helm multi source."
+  (require 'fzfa-helm)
+  (let ((outcomes '(("last-good") (failed "matcher OOM" 1)))
+        (helm-alive-p t)
+        (helm-pattern "")
+        (helm-map (make-sparse-keymap))
+        (helm-after-update-hook nil)
+        (helm-move-selection-after-hook nil)
+        first second)
+    (cl-letf (((symbol-function 'fzfa-helm--ensure-loaded) #'ignore)
+              ((symbol-function 'fzfa--spawn)
+               (lambda (&rest _) 'fake-handle))
+              ((symbol-function 'fzfa-source--stop) #'ignore)
+              ((symbol-function 'fzfa--preview-handler)
+               (lambda (&rest _) nil))
+              ((symbol-function 'fzfa--sessions-push) #'ignore)
+              ((symbol-function 'helm-make-source)
+               (lambda (_name _class &rest args) args))
+              ((symbol-function 'run-with-timer)
+               (lambda (&rest _) 'fake-timer))
+              ((symbol-function 'cancel-timer) #'ignore)
+              ((symbol-function 'fzfa--source-async-candidates)
+               (lambda (&rest _)
+                 (or (pop outcomes) '(failed "unexpected call" 1))))
+              ((symbol-function 'helm)
+               (lambda (&rest args)
+                 (let* ((helm-sources (plist-get args :sources))
+                        (callback (plist-get (car helm-sources)
+                                             :candidates)))
+                   (setq first (funcall callback)
+                         second (funcall callback)))
+                 nil)))
+      (fzfa-helm--read
+       '((:name "one" :command "printf one" :action identity)
+         (:name "two" :command "printf two" :action identity))
+       :prompt "test: ")
+      (should (equal first '("last-good")))
+      (should (equal second '("last-good"))))))
+
+(ert-deftest fzfa-session-pending-total-uses-live-pool-boundary ()
+  "A running request reports candidates collected now, not an older result."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls")))
+    (setf (fzfa-source-handle src) 'fake-handle)
+    (cl-letf (((symbol-function 'fzfa--session-api-p) (lambda () t))
+              ((symbol-function 'fzf-native-async-submit)
+               (lambda (&rest _) 77))
+              ((symbol-function 'fzf-native-async-status)
+               (lambda (&rest _)
+                 '(:state running :stale t :snapshot-generation 3
+                   :pool-generation 125 :total 100))))
+      (should (equal (fzfa--source-async-out src "q" 10)
+                     '(pending . 125))))))
+
+(ert-deftest fzfa-session-running-status-reports-producer-failure-once ()
+  "Producer failure is visible even before its matcher request completes."
+  (let* ((default-directory "/tmp/")
+         (fzfa--async-failed-producers nil)
+         (src (fzfa-make-source :command "bad-producer"))
+         messages)
+    (setf (fzfa-source-handle src) 'fake-handle)
+    (cl-letf (((symbol-function 'fzfa--session-api-p) (lambda () t))
+              ((symbol-function 'fzf-native-async-submit)
+               (lambda (&rest _) 77))
+              ((symbol-function 'fzf-native-async-status)
+               (lambda (&rest _)
+                 '(:state running :stale t :snapshot-generation 3
+                   :pool-generation 125 :total 100
+                   :producer-state failed :producer-error "read failed")))
+              ((symbol-function 'fzfa--log) #'ignore)
+              ((symbol-function 'message)
+               (lambda (format-string &rest args)
+                 (push (apply #'format format-string args) messages))))
+      (should (equal (fzfa--source-async-out src "q" 10)
+                     '(pending . 125)))
+      (should (equal (fzfa--source-async-out src "q" 10)
+                     '(pending . 125)))
+      (should (= (length messages) 1))
+      (should (string-match-p "source command failed" (car messages)))
+      (should (memq 'fake-handle fzfa--async-failed-producers)))))
+
+(ert-deftest fzfa-session-failed-request-is-terminal-and-reported-once ()
+  "A persistent matcher failure is terminal, visible, and does not retry-loop."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls"))
+         (submits 0)
+         messages)
+    (setf (fzfa-source-handle src) 'fake-handle)
+    (cl-letf (((symbol-function 'fzfa--session-api-p)
+               (lambda () t))
+              ((symbol-function 'fzf-native-async-submit)
+               (lambda (&rest _)
+                 (+ 16 (cl-incf submits))))
+              ((symbol-function 'fzf-native-async-status)
+               (lambda (_handle request-id)
+                 (list :request-id request-id
+                       :state 'failed
+                       :snapshot-generation 7
+                       :error "matcher OOM"
+                       :total 42)))
+              ((symbol-function 'fzfa--log) #'ignore)
+              ((symbol-function 'message)
+               (lambda (format-string &rest args)
+                 (push (apply #'format format-string args) messages))))
+      (should (equal (fzfa--source-async-out src "q" 10)
+                     '(failed "matcher OOM" 42)))
+      (should (equal (fzfa--source-async-out src "q" 10)
+                     '(failed "matcher OOM" 42)))
+      (should (= submits 1))
+      (should (= (fzfa-source-request-id src) 17))
+      (should (= (length messages) 1))
+      (should (string-match-p "matcher OOM" (car messages))))))
+
+(ert-deftest fzfa-session-nonpublishing-request-releases-ownership ()
+  "Superseded, cancelled, unknown, or idle requests retry immediately."
+  (dolist (terminal-state '(superseded cancelled unknown idle))
+    (let* ((default-directory "/tmp/")
+           (src (fzfa-make-source :command "ls"))
+           (submits 0)
+           (statuses 0)
+           (snapshots 0))
+      (setf (fzfa-source-handle src) 'fake-handle)
+      (cl-letf (((symbol-function 'fzfa--session-api-p)
+                 (lambda () t))
+                ((symbol-function 'fzf-native-async-submit)
+                 (lambda (&rest _)
+                   (+ 16 (cl-incf submits))))
+                ((symbol-function 'fzf-native-async-status)
+                 (lambda (_handle request-id)
+                   (cl-incf statuses)
+                   (if (= request-id 17)
+                       (list :request-id request-id :state terminal-state
+                             :snapshot-generation 1 :total 42)
+                     (list :request-id request-id :state 'complete
+                           :snapshot-generation 2 :stale nil
+                           :filtered 1 :total 42))))
+                ((symbol-function 'fzf-native-async-snapshot)
+                 (lambda (_handle request-id)
+                   (cl-incf snapshots)
+                   (list :request-id request-id :state 'complete
+                         :snapshot-generation 2 :stale nil
+                         :candidates '("alpha") :filtered 1 :total 42))))
+        (should (equal (fzfa--source-async-out src "q" 10)
+                       '(pending . 42)))
+        (should (= (fzfa-source-request-id src) 18))
+        (should (fzfa-source-request-signature src))
+        (should (equal (fzfa--source-async-out src "q" 10)
+                       '(final ("alpha") 1 42)))
+        (should (= submits 2))
+        (should (= statuses 2))
+        (should (= snapshots 1))
+        (should (= (fzfa-source-request-id src) 18))))))
+
+(ert-deftest fzfa-session-poller-replaces-nonpublishing-request-in-one-refresh ()
+  "A committed terminal generation must not strand replacement work."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls"))
+         (sources (vector src))
+         (submits 0)
+         (refreshes 0)
+         (fzfa-input-throttle 0)
+         poll)
+    (setf (fzfa-source-handle src) 'fake-handle
+          (fzfa-source-last-gen src) 0
+          (fzfa-source-request-id src) 17
+          (fzfa-source-request-signature src)
+          (fzfa--source-request-signature "q" 10))
+    (cl-letf (((symbol-function 'fzfa--session-api-p) (lambda () t))
+              ((symbol-function 'fzf-native-async-status)
+               (lambda (_handle &optional request-id)
+                 (if request-id
+                     (list :request-id request-id :state 'superseded
+                           :snapshot-generation 1 :total 42)
+                   '(:snapshot-generation 1))))
+              ((symbol-function 'fzf-native-async-submit)
+               (lambda (&rest _)
+                 (+ 17 (cl-incf submits))))
+              ((symbol-function 'input-pending-p) (lambda () nil)))
+      (setq poll
+            (fzfa--make-poll-fn
+             sources (lambda () t)
+             (lambda ()
+               (cl-incf refreshes)
+               (fzfa--source-async-out src "q" 10))
+             (lambda () nil)))
+      (funcall poll)
+      (should (= refreshes 1))
+      (should (= submits 1))
+      (should (= (fzfa-source-last-gen src) 1))
+      (should (= (fzfa-source-request-id src) 18))
+      (should (fzfa-source-request-signature src)))))
+
+(ert-deftest fzfa-legacy-zero-result-freshness-uses-fzfa-policy ()
+  "Legacy finality must use the same match options as candidate scoring."
+  (let* ((default-directory "/tmp/")
+         (fzfa-case-mode 'ignore)
+         (fzf-native-case-mode 'respect)
+         (src (fzfa-make-source :command "ls")))
+    (setf (fzfa-source-handle src) 'fake-handle)
+    (cl-letf (((symbol-function 'fzfa--session-api-p) (lambda () nil))
+              ((symbol-function 'fzf-native-async-candidates)
+               (lambda (&rest _) nil))
+              ((symbol-function 'fzf-native-async-result-fresh-p)
+               (lambda (&rest _)
+                 (eq fzf-native-case-mode 'ignore)))
+              ((symbol-function 'fzf-native-async-stats)
+               (lambda (&rest _) '(0 . 1))))
+      (should (equal (fzfa--source-async-out src "q" 10)
+                     '(final nil 0 1))))))
+
+(ert-deftest fzfa-session-generation-change-rematerializes-result ()
+  "A new native snapshot generation invalidates fzfa's candidate cache."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls"))
+         (generation 1)
+         (snapshots 0))
+    (setf (fzfa-source-handle src) 'fake-handle)
+    (cl-letf (((symbol-function 'fzf-native-async-submit)
+               (lambda (&rest _) 1))
+              ((symbol-function 'fzf-native-async-status)
+               (lambda (&rest _)
+                 (list :state 'complete :stale nil
+                       :snapshot-generation generation :total generation)))
+              ((symbol-function 'fzf-native-async-snapshot)
+               (lambda (&rest _)
+                 (cl-incf snapshots)
+                 (list :state 'complete :stale nil
+                       :snapshot-generation generation
+                       :candidates (list (format "result-%d" generation))
+                       :filtered 1 :total generation))))
+      (should (equal (fzfa--source-async-out src "q" 10)
+                     '(final ("result-1") 1 1)))
+      (should (equal (fzfa--source-async-out src "q" 10)
+                     '(final ("result-1") 1 1)))
+      (setq generation 2)
+      (should (equal (fzfa--source-async-out src "q" 10)
+                     '(final ("result-2") 1 2)))
+      (should (= snapshots 2)))))
+
+(ert-deftest fzfa-session-api-requires-complete-matching-abi ()
+  "A stray submit symbol cannot activate an incomplete native session API."
+  (let ((fzf-native-session-abi-required 1))
+    (cl-letf (((symbol-function 'fzf-native-async-submit) #'ignore)
+              ((symbol-function 'fzf-native-async-snapshot) #'ignore)
+              ((symbol-function 'fzf-native-async-status) #'ignore)
+              ((symbol-function 'fzf-native-session-abi-version)
+               (lambda () 2)))
+      (should-not (fzfa--session-api-p)))
+    (cl-letf (((symbol-function 'fzf-native-async-submit) #'ignore)
+              ((symbol-function 'fzf-native-async-snapshot) #'ignore)
+              ((symbol-function 'fzf-native-async-status) #'ignore)
+              ((symbol-function 'fzf-native-session-abi-version)
+               (lambda () 1)))
+      (should (fzfa--session-api-p)))
+    (cl-letf (((symbol-function 'fzf-native-async-submit) #'ignore)
+              ((symbol-function 'fzf-native-async-snapshot) #'ignore)
+              ((symbol-function 'fzf-native-async-status) nil)
+              ((symbol-function 'fzf-native-session-abi-version)
+               (lambda () 1)))
+      (should-not (fzfa--session-api-p)))))
+
+(ert-deftest fzfa-async-submit-preserves-raw-byte-query ()
+  "Raw pathname bytes reach fzf-native unchanged."
+  (let ((query (unibyte-string #x80 ?a))
+        seen)
+    (cl-letf (((symbol-function 'fzf-native-async-submit)
+               (lambda (_handle value _limit)
+                 (setq seen value)
+                 1)))
+      (should (= (fzfa--async-submit 'fake-handle query 10) 1))
+      (should (eq seen query))
+      (should (equal seen query)))))
+
+(ert-deftest fzfa-producer-failure-with-partial-output-reports-once ()
+  "A partial candidate list must not conceal a failed producer."
+  (let ((fzfa--async-failed-producers nil)
+        messages)
+    (cl-letf (((symbol-function 'message)
+               (lambda (format-string &rest args)
+                 (push (apply #'format format-string args) messages)))
+              ((symbol-function 'fzfa--log) #'ignore)
+              ((symbol-function 'minibufferp) (lambda (&rest _) nil)))
+      (let ((snapshot '(:candidates ("partial")
+                        :producer-error "producer exited with status 7"
+                        :producer-exit-status 7)))
+        (fzfa--async-note-producer-failure 'fake-handle snapshot)
+        (fzfa--async-note-producer-failure 'fake-handle snapshot))
+      (should (= (length messages) 1))
+      (should (string-match-p "source command failed" (car messages))))))
+
+(ert-deftest fzfa-session-end-to-end-polls-one-native-request ()
+  "Repeated renders poll one real native request until it is final."
+  (skip-unless (and (fboundp 'fzf-native-async-start)
+                    (fboundp 'fzf-native-async-submit)))
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "printf '%s\\n' alpha beta"))
+         (handle (fzf-native-async-start
+                  "printf '%s\\n' alpha beta" default-directory))
+         (native-submit (symbol-function 'fzf-native-async-submit))
+         (native-snapshot (symbol-function 'fzf-native-async-snapshot))
+         (submits 0)
+         (snapshots 0)
+         result)
+    (setf (fzfa-source-handle src) handle)
+    (unwind-protect
+        (progn
+          (let ((deadline (+ (float-time) 3.0)))
+            (while (and (< (float-time) deadline)
+                        (not (plist-get (fzf-native-async-status handle)
+                                        :reader-done)))
+              (sleep-for 0.01)))
+          (cl-letf (((symbol-function 'fzf-native-async-submit)
+                     (lambda (&rest args)
+                       (cl-incf submits)
+                       (apply native-submit args)))
+                    ((symbol-function 'fzf-native-async-snapshot)
+                     (lambda (&rest args)
+                       (cl-incf snapshots)
+                       (apply native-snapshot args))))
+            (let ((deadline (+ (float-time) 3.0)))
+              (while (and (< (float-time) deadline)
+                          (not (eq (car-safe
+                                    (setq result
+                                          (fzfa--source-async-out
+                                           src "a" 10)))
+                                   'final)))
+                (sleep-for 0.01)))
+            ;; A stable redraw must reuse the candidate list just built.
+            (should (equal (fzfa--source-async-out src "a" 10) result)))
+          (should (equal result '(final ("alpha" "beta") 2 2)))
+          (should (= submits 1))
+          (should (= snapshots 1)))
+      (fzfa-source--stop src))))
+
+(ert-deftest fzfa-session-end-to-end-reports-partial-producer-failure ()
+  "Real partial output remains visible while its producer failure is shown."
+  (skip-unless (and (fboundp 'fzf-native-async-start)
+                    (fboundp 'fzf-native-async-submit)))
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source
+               :command "printf '%s\\n' partial; exit 7"))
+         (handle (fzf-native-async-start
+                  "printf '%s\\n' partial; exit 7" default-directory))
+         (fzfa--async-failed-producers nil)
+         messages
+         result)
+    (setf (fzfa-source-handle src) handle)
+    (unwind-protect
+        (progn
+          (let ((deadline (+ (float-time) 3.0)))
+            (while (and (< (float-time) deadline)
+                        (not (plist-get (fzf-native-async-status handle)
+                                        :reader-done)))
+              (sleep-for 0.01)))
+          (cl-letf (((symbol-function 'message)
+                     (lambda (format-string &rest args)
+                       (push (apply #'format format-string args) messages)))
+                    ((symbol-function 'fzfa--log) #'ignore)
+                    ((symbol-function 'minibufferp) (lambda (&rest _) nil)))
+            (let ((deadline (+ (float-time) 3.0)))
+              (while (and (< (float-time) deadline)
+                          (not (eq (car-safe
+                                    (setq result
+                                          (fzfa--source-async-out
+                                           src "part" 10)))
+                                   'final)))
+                (sleep-for 0.01))))
+          (should (equal result '(final ("partial") 1 1)))
+          (should (= (length messages) 1))
+          (should (string-match-p "source command failed"
+                                  (car messages))))
+      (fzfa-source--stop src))))
+
 (ert-deftest fzfa-source-cands-fn-normalized ()
   "Producer-fn constructor normalizes a list into a 2-arg producer."
   (let* ((default-directory "/tmp/")
@@ -1320,12 +1987,16 @@ even when their extension is excluded from `fzfa-extensions'."
   (with-temp-buffer
     (let* ((default-directory "/tmp/")
            (src (fzfa-make-source :command "ls")))
-      ;; Call twice; should not error.
+      (setf (fzfa-source-request-id src) 42
+            (fzfa-source-request-signature src) '("q" 10 smart t))
+      ;; Call twice; should not error and must drop request ownership.
       (fzfa-source--stop src)
       (fzfa-source--stop src)
       (should (null (fzfa-source-handle src)))
       (should (null (fzfa-source-restart-timer src)))
-      (should (null (fzfa-source-retry-timer src))))))
+      (should (null (fzfa-source-retry-timer src)))
+      (should (= (fzfa-source-request-id src) 0))
+      (should-not (fzfa-source-request-signature src)))))
 
 (ert-deftest fzfa-source-stop-cancels-timers ()
   "`fzfa-source--stop' cancels restart-timer and retry-timer slots."
@@ -1357,6 +2028,8 @@ updates snapshot, total, filtered, last-result."
   (let* ((default-directory "/tmp/")
          (src (fzfa-make-source :candidates '("x" "y" "z")))
          (refresh-fired 0))
+    (setf (fzfa-source-request-id src) 42
+          (fzfa-source-request-signature src) '("old" 10 smart t))
     (fzfa-source--restart src "ignored"
                           (lambda () (cl-incf refresh-fired)))
     (should (equal (fzfa-source-snapshot src) '("x" "y" "z")))
@@ -1364,7 +2037,9 @@ updates snapshot, total, filtered, last-result."
     (should (= (fzfa-source-filtered src) 3))
     (should (equal (fzfa-source-last-result src) '("x" "y" "z")))
     (should (= refresh-fired 1))
-    (should (equal (fzfa-source-current-cmd src) "ignored"))))
+    (should (equal (fzfa-source-current-cmd src) "ignored"))
+    (should (= (fzfa-source-request-id src) 0))
+    (should-not (fzfa-source-request-signature src))))
 
 (ert-deftest fzfa-source-restart-producer-stale-callback-dropped ()
   "Later prod-token bump invalidates an in-flight producer callback."
@@ -1622,6 +2297,29 @@ unchanged through the per-source pipeline."
 
 ;;; Eager C-side highlight suppression — Chunk 6 (fussy pattern port)
 
+(ert-deftest fzfa-setup-does-not-change-direct-native-matching-options ()
+  "Initializing fzfa must not reconfigure unrelated fzf-native callers."
+  (skip-unless (fboundp 'fzf-native-score-all))
+  (let ((fzfa--setup-done nil)
+        (fzfa-extensions nil)
+        (completion-styles-alist (copy-tree completion-styles-alist))
+        (fzf-native-case-mode 'respect)
+        (fzfa-case-mode 'ignore)
+        (fzf-native-batch-highlight nil)
+        (fzfa-batch-highlight nil))
+    (fzfa--ensure-setup)
+    ;; The direct call keeps its caller-owned respect-case binding.
+    (should-not (fzf-native-score-all '("Foo") "foo"))
+    ;; fzfa's explicit bridge still applies its ignore-case policy.
+    (should (equal (fzfa--bridge-defcustoms
+                    #'fzf-native-score-all '("Foo") "foo")
+                   '("Foo")))
+    (dolist (fn '(fzf-native-async-start
+                  fzf-native-async-candidates
+                  fzf-native-async-submit
+                  fzf-native-async-snapshot))
+      (should-not (advice-member-p #'fzfa--bridge-defcustoms fn)))))
+
 (ert-deftest fzfa-batch-highlight-nil-suppresses-c-highlight ()
   "Binding `fzfa-batch-highlight' to nil makes `fzf-native-score-all'
 return faceless candidates — the bridge propagates the nil onto
@@ -1787,6 +2485,21 @@ candidate at the matched position."
          (completion-lazy-hilit-fn nil))
     (fzfa-all-completions "f" table nil 0)
     (let* ((ret (funcall completion-lazy-hilit-fn "find-file"))
+           (face (get-text-property 0 'face ret)))
+      (should (or (eq face 'completions-common-part)
+                  (and (listp face)
+                       (memq 'completions-common-part face)))))))
+
+(ert-deftest fzfa-all-completions-lazy-highlight-uses-fzfa-policy ()
+  "Lazy highlighting must use the same case policy as fzfa scoring."
+  (skip-unless (fboundp 'fzf-native-highlight-one))
+  (let* ((table (lambda (_str _pred _flag) '("Foo")))
+         (completion-lazy-hilit t)
+         (completion-lazy-hilit-fn nil)
+         (fzfa-case-mode 'ignore)
+         (fzf-native-case-mode 'respect))
+    (fzfa-all-completions "foo" table nil 0)
+    (let* ((ret (funcall completion-lazy-hilit-fn "Foo"))
            (face (get-text-property 0 'face ret)))
       (should (or (eq face 'completions-common-part)
                   (and (listp face)

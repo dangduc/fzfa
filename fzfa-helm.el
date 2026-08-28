@@ -209,6 +209,7 @@ before the idle delay elapses -> timer fires post-cleanup ->
 (declare-function fzf-native-async-generation "ext:fzf-native-module")
 (declare-function fzf-native-async-candidates "ext:fzf-native-module")
 (declare-function fzf-native-async-stats "ext:fzf-native-module")
+(declare-function fzf-native-async-status "ext:fzf-native-module")
 (declare-function fzf-native-score-all "ext:fzf-native-module")
 
 ;;; Stats display helpers
@@ -224,9 +225,15 @@ Read by `:header-name' closures so the source's helm-buffer header
 updates live as new candidates stream in — helm re-calls `:header-name'
 on every `helm-force-update', which is what the polling timers in the
 async / multi handlers trigger on each generation tick."
-  (if-let* ((stats (and handle (fzf-native-async-stats handle))))
-      (format " (%s/%s)" (fzfa--commas (car stats))
-              (fzfa--commas (cdr stats)))
+  (if-let* ((handle)
+            (counts
+             (if (fzfa--session-api-p)
+                 (when-let* ((status (fzf-native-async-status handle)))
+                   (cons (or (plist-get status :filtered) 0)
+                         (fzfa--async-collected-total status)))
+               (fzf-native-async-stats handle))))
+      (format " (%s/%s)" (fzfa--commas (car counts))
+              (fzfa--commas (cdr counts)))
     ""))
 
 (defun fzfa-helm--sync-stats-suffix (filtered total)
@@ -474,7 +481,41 @@ and `fzfa-helm--read' (batch with bulk-stop)."
                   (when (not (equal cmd (fzfa-source-current-cmd source)))
                     (fzfa-source--debounce-restart source cmd refresh-fn))
                   (when (fzfa-source-handle source)
-                    (fzfa--source-async-candidates source filter limit)))))
+                    (let ((r (while-no-input
+                               (fzfa--source-async-candidates
+                                source filter limit))))
+                      (cond
+                       ((eq r t)
+                        ;; Preserve the last completed list while native
+                        ;; scoring catches up.  If input interrupted a final
+                        ;; materialization after the generation timer fired,
+                        ;; this retry guarantees another render.
+                        (when-let* ((tm (fzfa-source-retry-timer source)))
+                          (cancel-timer tm))
+                        (setf (fzfa-source-retry-timer source)
+                              (run-with-idle-timer
+                               fzfa-input-debounce nil
+                               (lambda ()
+                                 (setf (fzfa-source-retry-timer source) nil)
+                                 (when helm-alive-p
+                                   (helm-force-update)))))
+                        (fzfa-source-last-result source))
+                       ((eq (car-safe r) 'failed)
+                        ;; Matcher failure is terminal for this request.
+                        ;; Keep the last completed list and do not arm the
+                        ;; pending-work retry timer; the core adapter already
+                        ;; reported the failure once.
+                        (when-let* ((tm (fzfa-source-retry-timer source)))
+                          (cancel-timer tm)
+                          (setf (fzfa-source-retry-timer source) nil))
+                        (fzfa-source-last-result source))
+                       (t
+                        (when-let* ((tm (fzfa-source-retry-timer source)))
+                          (cancel-timer tm)
+                          (setf (fzfa-source-retry-timer source) nil))
+                        (setf (fzfa-source-last-result source) r
+                              (fzfa-source-last-query source) filter)
+                        r)))))))
             :match-dynamic t
             :nohighlight t
             :candidate-number-limit limit
@@ -1158,6 +1199,16 @@ for fuzzy-multi-source UX."
                                              (helm-force-update)))))
                                   ;; Don't update rank — cached
                                   ;; `last-result' is for an earlier query.
+                                  (fzfa-source-last-result source))
+                                 ((eq (car-safe r) 'failed)
+                                  ;; Terminal matcher failure: retain the
+                                  ;; last completed candidates and rank, and
+                                  ;; do not schedule another pending retry.
+                                  (when-let* ((tm (fzfa-source-retry-timer
+                                                   source)))
+                                    (cancel-timer tm)
+                                    (setf (fzfa-source-retry-timer source)
+                                          nil))
                                   (fzfa-source-last-result source))
                                  (t
                                   (when (and r (not first-cands-shown))

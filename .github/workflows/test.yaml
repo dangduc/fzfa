@@ -24,9 +24,13 @@ jobs:
         with:
           path: fzf-async
 
+      # PR1 depends on the request-aware session ABI in the paired native PR.
+      # Pin the exact reviewed native source and artifacts instead of silently
+      # exercising the legacy fallback against fzf-native's default branch.
       - uses: actions/checkout@v4
         with:
-          repository: jojojames/fzf-native
+          repository: fastducduc/fzf-native
+          ref: 7e4a7904346a158055d70cae6bf72022a8f38f8a
           path: fzf-native
 
       # Optional Elisp deps that fzfa forward-declares from.  Checked
@@ -126,6 +130,23 @@ jobs:
       - name: Print emacs version
         shell: bash
         run: emacs --version
+
+      - name: Build paired fzf-native source
+        shell: bash
+        working-directory: fzf-native
+        run: |
+          rm -rf bin
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+
+      - name: Require paired session ABI
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: fzf-async
+        run: |
+          emacs -Q --batch -L ../fzf-native -L . \
+            -l fzf-native -f fzf-native-load-dyn -l fzfa \
+            --eval '(unless (and (fboundp (quote fzf-native-session-abi-version)) (= (fzf-native-session-abi-version) fzf-native-session-abi-required) (fzfa--session-api-p)) (error "paired fzf-native session ABI is unavailable"))'
 
       - name: Compile
         shell: bash

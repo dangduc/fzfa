@@ -4,7 +4,7 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0.2
-;; Package-Requires: ((emacs "29.1") (fzf-native "2.2"))
+;; Package-Requires: ((emacs "29.1") (fzf-native "2.3"))
 ;; Keywords: matching, completion, fzf, fuzzy, fussy
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
@@ -51,8 +51,10 @@
 (defvar fzf-native-fuzzy)
 (defvar fzf-native-async-highlight)
 (defvar fzf-native-batch-highlight)
+(defvar fzf-native-highlight-fn)
 (defvar fzf-native-max-line-length)
 (defvar fzf-native-async-cache-size)
+(defvar fzf-native-session-abi-required)
 (defvar marginalia-annotate-file)
 (declare-function icomplete-exhibit "icomplete")
 (defvar icomplete-overlay)
@@ -98,6 +100,7 @@
                   (handle &optional request-id))
 (declare-function fzf-native-async-status "ext:fzf-native-module"
                   (handle &optional request-id))
+(declare-function fzf-native-session-abi-version "ext:fzf-native-module" ())
 (declare-function fzf-native-highlight-all "ext:fzf-native-module"
                   (collection query))
 (declare-function fzf-native-highlight-one "ext:fzf-native-module" (cand query))
@@ -133,21 +136,22 @@ Set to nil or 0 to disable the cap (may be slow for very large result sets)."
   :group 'fzfa)
 
 (defcustom fzfa-refresh-delay 0.05
-  "Seconds between polls for new C-side candidate generations.
+  "Seconds between polls for a new native result snapshot.
 
-The background reader thread increments a generation counter as lines
-arrive; this timer checks that counter and schedules a display refresh
-when new data is available.  Lower values feel more responsive but burn
-more CPU on the polling loop."
+With the session API, this timer reads metadata-only status and schedules a
+display refresh when `:snapshot-generation' changes.  Candidate growth causes
+the native session to retry the owned request; the timer does not copy the
+candidate list while that retry runs.  The legacy API polls its compatibility
+generation counter.  Lower values feel more responsive but use more CPU."
   :type 'float
   :group 'fzfa)
 
 (defcustom fzfa-input-debounce 0.1
-  "Seconds of idle time to wait before retrying after interrupted scoring.
+  "Seconds of idle time before retrying an interrupted display fetch.
 
-When the user types fast, `while-no-input' aborts the scoring call.  This
-idle timer fires once typing pauses and re-triggers the display so results
-self-heal."
+When the user types fast, `while-no-input' can interrupt status or snapshot
+materialization.  Native scoring continues independently.  This idle timer
+re-triggers the display after input pauses."
   :type 'float
   :group 'fzfa)
 
@@ -183,7 +187,7 @@ nil or a negative integer — no highlighting.
 t                        — highlight every returned candidate.
 a positive integer N     — highlight only the top N candidates.
 The C layer applies `completions-common-part' face to each contiguous
-run of matched bytes via fzf_get_positions."
+run of matched characters from fzf_get_positions."
   :type '(choice (const   :tag "Disabled" nil)
                  (const   :tag "All candidates" t)
                  (integer :tag "Top N candidates"))
@@ -243,8 +247,8 @@ If nil, prefixing a term with ' switches that term to fuzzy matching.
 
 Read at the start of every scoring call.
 
-Propagated to `fzf-native-fuzzy' via `:around' advice on the
-`fzf-native' async entry points."
+Propagated to `fzf-native-fuzzy' by explicit bridges at fzfa's
+native call sites."
   :type 'boolean
   :group 'fzfa)
 
@@ -417,6 +421,9 @@ Each multi source's candidates carry a single trailing codepoint at
 invisibly while making cross-source duplicates `string='-unique.
 See consult's `consult--tofu-encode' for the same trick.")
 
+(defconst fzfa--tofu-max-index (- #x10ffff fzfa--tofu-base)
+  "Largest source index encodable as one Unicode tofu suffix.")
+
 (defvar fzfa--tofu-cache (make-hash-table :test 'eql)
   "Cache of propertized tofu suffix strings, keyed by source index.")
 
@@ -470,7 +477,8 @@ highlight already attached by the scorer."
             (lambda (cand)
               (if (or (null query) (string-empty-p query))
                   cand
-                (fzf-native-highlight-one cand query))))))
+                (fzfa--bridge-defcustoms
+                 #'fzf-native-highlight-one cand query))))))
   (funcall table string pred t))
 
 ;;; Frontend abstraction
@@ -1833,7 +1841,8 @@ available (`fzfa--session-api-p'), `fzfa--source-async-out' reads
 finality from the request snapshot's `:state' / `:stale' fields
 instead and this predicate is not consulted."
   (or r (and (fboundp 'fzf-native-async-result-fresh-p)
-             (fzf-native-async-result-fresh-p handle query))))
+             (fzfa--bridge-defcustoms
+              #'fzf-native-async-result-fresh-p handle query))))
 
 (defun fzfa--session-api-p ()
   "Non-nil when fzf-native exposes the request-aware session API.
@@ -1843,7 +1852,15 @@ The session API (`fzf-native-async-submit' / `-snapshot' /
 the snapshot's `:state' / `:stale' fields instead of the
 `fzfa--final-p' heuristic over the combined
 `fzf-native-async-candidates' return."
-  (fboundp 'fzf-native-async-submit))
+  (and (fboundp 'fzf-native-async-submit)
+       (fboundp 'fzf-native-async-snapshot)
+       (fboundp 'fzf-native-async-status)
+       (fboundp 'fzf-native-session-abi-version)
+       (boundp 'fzf-native-session-abi-required)
+       (condition-case nil
+           (= (fzf-native-session-abi-version)
+              fzf-native-session-abi-required)
+         (error nil))))
 
 (defun fzfa--poll-generation (h)
   "Return handle H's refresh generation for poll-tick comparison.
@@ -1999,15 +2016,20 @@ one place instead of four."
   "Non-nil if CAND carries an invisible multi-source tofu suffix.
 
 The suffix is added by `fzfa--tag' to make cross-source
-duplicates `string='-distinct.  Its codepoint sits at
-`fzfa--tofu-base' or higher (Unicode PUA range).  Used by
+duplicates `string='-distinct.  It carries the private
+`fzfa-tofu-index' text property and a matching codepoint in the
+bounded suffix range.  The property check is required because valid
+candidate data can itself end in U+100000 through U+10FFFF.  Used by
 `fzfa--sort-by-history' to detect multi-source input — the multi
 loop already applied per-source sort + highlight, so a global
 re-sort here would trample the per-source ordering."
   (and (stringp cand)
        (let ((n (length cand)))
-         (and (> n 0)
-              (>= (aref cand (1- n)) fzfa--tofu-base)))))
+         (when (> n 0)
+           (let ((idx (get-text-property (1- n) 'fzfa-tofu-index cand)))
+             (and (integerp idx)
+                  (<= 0 idx fzfa--tofu-max-index)
+                  (= (aref cand (1- n)) (+ fzfa--tofu-base idx))))))))
 
 (defun fzfa--sort-by-history (completions &optional history-sym)
   "Order COMPLETIONS by score, history recency, then length.
@@ -2468,6 +2490,15 @@ on it identically regardless of which container holds it."
   request-id                    ; integer — native request ID returned by the
                                 ; most recent `fzf-native-async-submit' for
                                 ; this source (0 = none / legacy API)
+  request-signature             ; (QUERY LIMIT CASE-MODE FUZZY
+                                ;  FILTER-ONLY-LENGTH FILTER-ONLY-LOGIC),
+                                ; owned by fzfa; equal calls reuse request-id
+                                ; without relying on native submit deduplication
+  request-snapshot-generation   ; generation represented by request-output
+  request-materialization-key   ; snapshot generation + presentation policy
+                                ; represented by request-output
+  request-output                ; cached (final CANDS FILTERED TOTAL), so a
+                                ; stable redraw polls metadata, not CANDS
   ;; Producer-fn (used when source was constructed from :candidates;
   ;; mutually exclusive with the async handle above).  `cands-fn' is
   ;; immutable; the rest is runtime state mutated by the producer
@@ -2535,6 +2566,10 @@ to eager-start via `fzf-native-async-start' or to defer."
      :current-cmd nil
      :last-gen -1
      :request-id 0
+     :request-signature nil
+     :request-snapshot-generation nil
+     :request-materialization-key nil
+     :request-output nil
      :cands-fn (and candidates
                     (fzfa--normalize-candidates candidates))
      :snapshot nil
@@ -2554,41 +2589,105 @@ to eager-start via `fzf-native-async-start' or to defer."
      :source-name nil)))
 
 (defun fzfa--async-safe-query (query)
-  "Return QUERY with raw-byte chars removed.
-A query yanked from a buffer Emacs could not fully decode carries
-raw-byte chars (the #x3FFF00 range); the module boundary cannot
-encode those and `fzf-native-async-submit' signals
-`wrong-type-argument' (dangduc/fzf-native#39 KK2-2).  Stripping them
-keeps the rest of the query matchable."
-  (if (string-match-p "[^\x00-\x10FFFF]" query)
-      (replace-regexp-in-string "[^\x00-\x10FFFF]+" "" query)
-    query))
+  "Return QUERY unchanged, including Emacs raw-byte characters.
+
+Current fzf-native session modules preserve invalid UTF-8 as unibyte
+data at the ABI boundary.  Removing raw bytes here would change the
+user's query and make raw Unix pathnames impossible to match."
+  query)
 
 (defun fzfa--async-submit (handle query limit)
-  "Submit QUERY on HANDLE; return its request id, or nil if refused.
-Newer fzf-native modules signal on a failed submit (stopped handle,
-unencodable query) instead of returning nil; either way the caller
-sees nil and must not snapshot -- a nil request id reads as
-\"latest\", which may be another query's result
-\(dangduc/fzf-native#39 JO-2)."
-  (condition-case _err
-      (fzf-native-async-submit handle (fzfa--async-safe-query query) limit)
+  "Submit QUERY on HANDLE; return its request id or `(failed ERROR)'.
+A failed submit is terminal for this request signature.  It must not become
+an endless pending/resubmit loop, and nil must never reach snapshot because a
+nil request id means \"latest\" rather than \"this query\"."
+  (condition-case err
+      (or (fzfa--bridge-defcustoms
+           #'fzf-native-async-submit
+           handle (fzfa--async-safe-query query) limit)
+          '(failed "native matcher rejected request"))
     (error
-     (fzfa--log "async submit refused: %S" _err)
-     nil)))
+     (list 'failed (error-message-string err)))))
+
+(defun fzfa--source-request-signature (query limit)
+  "Return the complete native request identity for QUERY and LIMIT."
+  (list (substring-no-properties query)
+        limit fzfa-case-mode (and fzfa-fuzzy t)
+        (and (boundp 'fzf-native-filter-only-length)
+             (symbol-value 'fzf-native-filter-only-length))
+        (and (boundp 'fzf-native-filter-only-logic)
+             (symbol-value 'fzf-native-filter-only-logic))))
+
+(defun fzfa--source-clear-request (src)
+  "Clear SRC's locally owned native request and materialized output."
+  (setf (fzfa-source-request-id src) 0
+        (fzfa-source-request-signature src) nil
+        (fzfa-source-request-snapshot-generation src) nil
+        (fzfa-source-request-materialization-key src) nil
+        (fzfa-source-request-output src) nil))
+
+(defun fzfa--source-materialization-key (snapshot-generation)
+  "Return the Lisp presentation identity for SNAPSHOT-GENERATION.
+
+Native scoring identity deliberately excludes highlighting.  Materializing a
+snapshot does not: changing either the highlight policy or hook must rebuild
+the Lisp strings without submitting a new native matcher request."
+  (list snapshot-generation
+        fzfa-highlight
+        (and (boundp 'fzf-native-highlight-fn)
+             (symbol-value 'fzf-native-highlight-fn))))
+
+(defun fzfa--source-submit (src query limit)
+  "Return SRC's request id or terminal failure for QUERY and LIMIT.
+
+An equal request is submitted only once.  This local ownership rule is
+independent of whether a particular fzf-native build deduplicates equal
+submissions.  On a changed or refused request, clear the old id before
+anything can poll it under the new query's identity."
+  (let* ((signature (fzfa--source-request-signature query limit))
+         (old-id (fzfa-source-request-id src)))
+    (if (equal signature (fzfa-source-request-signature src))
+        (if (and (integerp old-id) (> old-id 0))
+            old-id
+          (fzfa-source-request-output src))
+      (fzfa--source-clear-request src)
+      (let ((submission
+             (fzfa--async-submit (fzfa-source-handle src) query limit)))
+        (cond
+         ((and (integerp submission) (> submission 0))
+          (setf (fzfa-source-request-id src) submission
+                (fzfa-source-request-signature src) signature)
+          submission)
+         ((eq (car-safe submission) 'failed)
+          (let ((output (list 'failed (nth 1 submission) nil)))
+            (setf (fzfa-source-request-signature src) signature
+                  (fzfa-source-request-output src) output)
+            (fzfa--log "async submit failed: %s" (nth 1 output))
+            (funcall (if (minibufferp) #'minibuffer-message #'message)
+                     "fzfa: matcher request failed: %s" (nth 1 output))
+            output)))))))
 
 (defvar fzfa--async-failed-producers nil
   "Handles whose producer failure has been reported this session.")
 
+(defun fzfa--async-collected-total (status)
+  "Return the live collected-candidate count represented by STATUS.
+
+For a running or stale request, `:total' belongs to its retained completed
+snapshot and can lag the producer.  `:pool-generation' is the current pool
+boundary and therefore the prompt's collected-total value.  Fall back for
+legacy session modules that do not publish that field."
+  (or (plist-get status :pool-generation)
+      (plist-get status :total)))
+
 (defun fzfa--async-note-producer-failure (handle snap)
   "Report HANDLE's dead producer once, per SNAP's producer fields.
-A producer that died (command not found, killed) still completes its
-request with :error nil, so an empty final result would silently
-render as \"no matches\" (dangduc/fzf-native#39 JO2-2)."
+A producer that dies after writing zero or more candidates still
+completes its matcher request with :error nil.  Report the independent
+producer failure while preserving any partial final candidates."
   (let ((err (plist-get snap :producer-error))
         (exit (plist-get snap :producer-exit-status)))
-    (when (and (null (plist-get snap :candidates))
-               (or err (and (integerp exit) (> exit 0)))
+    (when (and (or err (and (integerp exit) (> exit 0)))
                (not (memq handle fzfa--async-failed-producers)))
       (push handle fzfa--async-failed-producers)
       (fzfa--log "async producer failed: exit=%S err=%S" exit err)
@@ -2598,23 +2697,77 @@ render as \"no matches\" (dangduc/fzf-native#39 JO2-2)."
                  (format " (exit %s)" exit))))))
 
 (defun fzfa--source-async-candidates (src filter limit)
-  "Return the last completed candidate list for FILTER on SRC's handle.
+  "Return FILTER's candidates for SRC, or t while no result is ready.
 
-Combined-API semantics on both paths: dispatch scoring for FILTER
-\(never blocking on it) and return the most recent completed list —
-possibly a prior query's — leaving \"is this final?\" to the caller.
+This is the list-shaped adapter used by helm.  It delegates to the
+status-first `fzfa--source-async-out' path, so an in-flight session request
+does not copy the preceding request's native candidate snapshot.  A final
+empty result returns nil.  A terminal failure remains a `(failed ...)' value
+so Helm can preserve its last completed list without scheduling retries.
+Helm callers also retain their last completed list when this function returns
+t for pending work."
+  (pcase (fzfa--source-async-out src filter limit)
+    ('t t)
+    (`(final ,candidates ,_filtered ,_total) candidates)
+    (`(pending . ,_total) t)
+    (`(failed ,error ,total) (list 'failed error total))))
 
-Session API: submit FILTER, record the returned request ID in SRC's
-`request-id' slot, and read `:candidates' from the request's
-snapshot.  Legacy API: `fzf-native-async-candidates', which does the
-same submit-then-copy internally but without request ownership."
-  (let ((h (fzfa-source-handle src)))
-    (if (fzfa--session-api-p)
-        (let ((rid (fzfa--async-submit h filter limit)))
-          (when rid
-            (setf (fzfa-source-request-id src) rid)
-            (plist-get (fzf-native-async-snapshot h rid) :candidates)))
-      (fzf-native-async-candidates h filter limit))))
+(defun fzfa--source-materialize-session-output (src handle request-id)
+  "Build and cache REQUEST-ID's candidate output for SRC on HANDLE."
+  (let ((snapshot (while-no-input
+                    (fzfa--bridge-defcustoms
+                     #'fzf-native-async-snapshot handle request-id))))
+    (cond
+     ((eq snapshot t) t)
+     ((and (eq (plist-get snapshot :state) 'complete)
+           (not (plist-get snapshot :stale)))
+      (fzfa--async-note-producer-failure handle snapshot)
+      (let ((output (list 'final
+                          (plist-get snapshot :candidates)
+                          (plist-get snapshot :filtered)
+                          (plist-get snapshot :total))))
+        (setf (fzfa-source-request-snapshot-generation src)
+              (plist-get snapshot :snapshot-generation)
+              (fzfa-source-request-materialization-key src)
+              (fzfa--source-materialization-key
+               (plist-get snapshot :snapshot-generation))
+              (fzfa-source-request-output src) output)
+        output))
+     (t
+      (setf (fzfa-source-request-snapshot-generation src) nil
+            (fzfa-source-request-materialization-key src) nil
+            (fzfa-source-request-output src) nil)
+      (cons 'pending (fzfa--async-collected-total snapshot))))))
+
+(defun fzfa--source-terminal-request-output (src handle _request-id status)
+  "Return and cache SRC's terminal REQUEST-ID failure from STATUS.
+
+The first observation is reported to the user.  Equal redraws reuse the
+cached `(failed ERROR TOTAL)' value, so a persistent native failure neither
+masquerades as in-flight work nor drives a submit/fail refresh loop.  A query
+signature change clears this marker through `fzfa--source-submit'."
+  (fzfa--async-note-producer-failure handle status)
+  (let ((cached (fzfa-source-request-output src)))
+    (if (eq (car-safe cached) 'failed)
+        (let ((updated (list 'failed (nth 1 cached)
+                             (fzfa--async-collected-total status))))
+          (setf (fzfa-source-request-output src) updated)
+          updated)
+      (let* ((state (plist-get status :state))
+             (error-text
+              (or (plist-get status :error)
+                  (format "native matcher request ended in %s" state)))
+             (output (list 'failed error-text
+                           (fzfa--async-collected-total status))))
+        (setf (fzfa-source-request-snapshot-generation src)
+              (plist-get status :snapshot-generation)
+              (fzfa-source-request-materialization-key src) nil
+              (fzfa-source-request-output src) output)
+        (fzfa--log "async request %s ended in %S: %s"
+                   _request-id state error-text)
+        (funcall (if (minibufferp) #'minibuffer-message #'message)
+                 "fzfa: matcher request failed: %s" error-text)
+        output))))
 
 (defun fzfa--source-async-out (src query limit)
   "Fetch QUERY's scored candidates from async SRC, tagged by finality.
@@ -2622,54 +2775,78 @@ same submit-then-copy internally but without request ownership."
 Returns one of:
   t                            — pending input interrupted the fetch
   (final CANDS FILTERED TOTAL) — authoritative result for QUERY;
-                                 CANDS may be nil (zero matches);
-                                 FILTERED / TOTAL may be nil when the
-                                 handle died mid-session
-  (pending . TOTAL)            — QUERY still in flight; keep the prior
-                                 display; TOTAL (may be nil) is the
-                                 total from the most recent completed
-                                 result, as the legacy stats call
-                                 reports for the overlay
+                                 CANDS may be nil (zero matches)
+  (failed ERROR TOTAL)         — terminal native matcher failure
+  (pending . TOTAL)            — QUERY is still in flight
 
-Session API: submit QUERY (outside the input guard, so the request
-lands even while the user types; the native session coalesces), then
-snapshot the returned request ID.  The result is final exactly when
-the snapshot's `:state' is `complete' and `:stale' is nil — completed
-for this request against the current candidate pool.  A `failed' /
-`cancelled' / superseded request reports pending, matching the legacy
-path's keep-prior-display behavior.
-
-Legacy API: `fzf-native-async-candidates' under `while-no-input',
-with finality inferred by `fzfa--final-p' and counts fetched
-separately via `fzf-native-async-stats'."
-  (let ((h (fzfa-source-handle src)))
+With the session API, a changed request is submitted once.  Later
+renders poll metadata through `fzf-native-async-status'.  Candidate
+materialization occurs only when a new complete, non-stale snapshot
+generation appears.  Legacy modules retain the combined API path."
+  (let ((handle (fzfa-source-handle src)))
     (if (fzfa--session-api-p)
-        (let ((rid (fzfa--async-submit h query limit)))
-          (if (null rid)
-              ;; Refused submit: no request to poll, keep the prior
-              ;; display rather than snapshotting "latest" (which may
-              ;; be another query's result).
-              (cons 'pending nil)
-            (setf (fzfa-source-request-id src) rid)
-            (let ((snap (while-no-input
-                          (fzf-native-async-snapshot h rid))))
+        (let ((request-id (fzfa--source-submit src query limit)))
+          (cond
+           ((eq (car-safe request-id) 'failed) request-id)
+           ((null request-id)
+            (cons 'pending nil))
+           (t
+            (let ((status (while-no-input
+                            (fzf-native-async-status handle request-id))))
+              ;; Producer and matcher lifecycles are independent.  A source
+              ;; can fail after emitting useful candidates while this request
+              ;; remains running or stale, so report that failure before
+              ;; branching on matcher state.
+              (when (and status (not (eq status t)))
+                (fzfa--async-note-producer-failure handle status))
               (cond
-               ((eq snap t) t)
-               ((and (eq (plist-get snap :state) 'complete)
-                     (not (plist-get snap :stale)))
-                (fzfa--async-note-producer-failure h snap)
-                (list 'final (plist-get snap :candidates)
-                      (plist-get snap :filtered)
-                      (plist-get snap :total)))
-               (t (cons 'pending (plist-get snap :total)))))))
+               ((eq status t) t)
+               ((null status) (cons 'pending nil))
+               ((eq (plist-get status :state) 'failed)
+                (fzfa--source-terminal-request-output
+                 src handle request-id status))
+               ((memq (plist-get status :state)
+                      '(superseded cancelled unknown idle))
+                ;; These states cannot ever publish a result for REQUEST-ID.
+                ;; The poller commits the generation which exposed this state
+                ;; before entering this render.  Release ownership and submit
+                ;; the replacement now: waiting for another render can strand
+                ;; the source forever because no later native publication is
+                ;; guaranteed.  Unlike a matcher failure, these states are not
+                ;; a sticky user-visible error.
+                (let ((total (fzfa--async-collected-total status)))
+                  (fzfa--source-clear-request src)
+                  (let ((replacement
+                         (fzfa--source-submit src query limit)))
+                    (if (eq (car-safe replacement) 'failed)
+                        replacement
+                      (cons 'pending total)))))
+               ((or (not (eq (plist-get status :state) 'complete))
+                    (plist-get status :stale))
+                (cons 'pending (fzfa--async-collected-total status)))
+               ((and (equal
+                      (plist-get status :snapshot-generation)
+                      (fzfa-source-request-snapshot-generation src))
+                     (equal
+                      (fzfa--source-materialization-key
+                       (plist-get status :snapshot-generation))
+                      (fzfa-source-request-materialization-key src))
+                     (eq (car-safe (fzfa-source-request-output src))
+                         'final))
+                (fzfa-source-request-output src))
+               (t
+                (fzfa--source-materialize-session-output
+                 src handle request-id)))))))
       (let ((out (while-no-input
-                   (fzf-native-async-candidates h query limit))))
+                   (fzfa--bridge-defcustoms
+                    #'fzf-native-async-candidates handle query limit))))
         (cond
          ((eq out t) t)
-         ((not (fzfa--final-p out h query))
-          (cons 'pending (cdr (fzf-native-async-stats h))))
-         (t (let ((stats (fzf-native-async-stats h)))
-              (list 'final out (car stats) (cdr stats)))))))))
+         ((not (fzfa--final-p out handle query))
+          (cons 'pending (cdr (fzf-native-async-stats handle))))
+         (t
+          (let ((stats (fzf-native-async-stats handle)))
+            (list 'final out (car stats) (cdr stats)))))))))
 
 ;;; Session
 
@@ -2822,7 +2999,8 @@ can rewrite CMD/DIR before the shell fork."
                        (funcall fzfa-source-spawn-transform-function
                                 cmd dir))
                   (cons cmd dir))))
-    (fzf-native-async-start (car pair) (cdr pair))))
+    (fzfa--bridge-defcustoms
+     #'fzf-native-async-start (car pair) (cdr pair))))
 
 (defun fzfa-source--restart (source new-cmd refresh-fn)
   "Restart SOURCE's producer with NEW-CMD.
@@ -2839,6 +3017,11 @@ frontend — typically a closure over the session's
 is needed.
 
 Updates CURRENT-CMD, LAST-GEN, and LAST-RESTART-TIME unconditionally."
+  (setf (fzfa-source-request-id source) 0
+        (fzfa-source-request-signature source) nil
+        (fzfa-source-request-snapshot-generation source) nil
+        (fzfa-source-request-materialization-key source) nil
+        (fzfa-source-request-output source) nil)
   (cond
    ((fzfa-source-cands-fn source)
     (let ((token (cl-incf (fzfa-source-prod-token source))))
@@ -2855,8 +3038,10 @@ Updates CURRENT-CMD, LAST-GEN, and LAST-RESTART-TIME unconditionally."
                            (fzfa-source-last-result source) snap))
                    (funcall refresh-fn))))))
    (t
-    (when-let* ((old (fzfa-source-handle source)))
+   (when-let* ((old (fzfa-source-handle source)))
       (fzfa--defer-async-stop old)
+      (setq fzfa--async-failed-producers
+            (delq old fzfa--async-failed-producers))
       (setf (fzfa-source-handle source) nil))
     (setf (fzfa-source-current-cmd source) new-cmd
           (fzfa-source-last-gen source) -1
@@ -2908,7 +3093,14 @@ callback discards on arrival."
         (fzfa-source-display-overlays source) nil)
   (when-let* ((h (fzfa-source-handle source)))
     (fzfa--defer-async-stop h)
+    (setq fzfa--async-failed-producers
+          (delq h fzfa--async-failed-producers))
     (setf (fzfa-source-handle source) nil))
+  (setf (fzfa-source-request-id source) 0
+        (fzfa-source-request-signature source) nil
+        (fzfa-source-request-snapshot-generation source) nil
+        (fzfa-source-request-materialization-key source) nil
+        (fzfa-source-request-output source) nil)
   (when (fzfa-source-cands-fn source)
     (cl-incf (fzfa-source-prod-token source))))
 
@@ -3254,20 +3446,20 @@ when callers don't have direct access to the session-local hash table.")
 
 (defun fzfa--tofu-suffix (idx)
   "Return the cached invisible tofu suffix string for source IDX."
+  (unless (and (integerp idx) (<= 0 idx fzfa--tofu-max-index))
+    (error "Fzfa source index cannot be tofu-encoded: %S" idx))
   (or (gethash idx fzfa--tofu-cache)
       (puthash idx
                (propertize (string (+ fzfa--tofu-base idx))
-                           'invisible t 'display "")
+                           'invisible t 'display ""
+                           'fzfa-tofu-index idx)
                fzfa--tofu-cache)))
 
 (defun fzfa--tofu-hide (s)
   "Return S without its trailing tofu codepoint, if any.
 
 Returns S unchanged when there is no tofu suffix."
-  (if (and (stringp s)
-           (let ((n (length s)))
-             (and (> n 0)
-                  (>= (aref s (1- n)) fzfa--tofu-base))))
+  (if (fzfa--tagged-p s)
       (substring s 0 (1- (length s)))
     s))
 
@@ -4015,6 +4207,12 @@ Per-source plist keys:
                            ((and h (eq (car-safe out) 'pending))
                             (when (cdr out)
                               (setf (fzfa-source-total src) (cdr out))))
+                           ((and h (eq (car-safe out) 'failed))
+                            ;; Terminal matcher failure: keep the last good
+                            ;; candidates but do not classify this source as
+                            ;; still computing.
+                            (when (nth 2 out)
+                              (setf (fzfa-source-total src) (nth 2 out))))
                            (t
                             ;; Async `(final CANDS FILTERED TOTAL)' —
                             ;; unpack counts (atomic with CANDS) and
@@ -4600,6 +4798,13 @@ Per-source plist keys:
                                       (when (cdr out)
                                         (setf (fzfa-source-total src)
                                               (cdr out))))
+                                     ((and h (eq (car-safe out) 'failed))
+                                      ;; Preserve the prior per-source slot;
+                                      ;; the failure was already reported once
+                                      ;; by `fzfa--source-async-out'.
+                                      (when (nth 2 out)
+                                        (setf (fzfa-source-total src)
+                                              (nth 2 out))))
                                      (t
                                       ;; Async `(final CANDS FILTERED TOTAL)'
                                       ;; — unpack counts (atomic with CANDS)
@@ -5276,15 +5481,6 @@ PATH is resolved against `default-directory' first."
                  '(fzfa
                    fzfa-try-completion fzfa-all-completions
                    "Passthrough style for pre-scored async fzf completions."))
-
-    (advice-add 'fzf-native-async-start      :around #'fzfa--bridge-defcustoms)
-    (advice-add 'fzf-native-async-candidates :around #'fzfa--bridge-defcustoms)
-    ;; Session API entry points (no-ops until the module defines them):
-    ;; `-submit' reads case-mode / fuzzy / filter-only at call time,
-    ;; `-snapshot' reads `fzf-native-async-highlight' when it builds
-    ;; the candidate list.  `-status' reads no defcustoms.
-    (advice-add 'fzf-native-async-submit     :around #'fzfa--bridge-defcustoms)
-    (advice-add 'fzf-native-async-snapshot   :around #'fzfa--bridge-defcustoms)
 
     (with-eval-after-load 'embark
       (dolist (entry '((fzfa-file     . embark-file-map)

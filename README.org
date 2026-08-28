@@ -145,10 +145,10 @@ returned — suitable for in-memory lists.  ~fzfa~ runs the shell
 command in a background process and incrementally refreshes the
 completion UI as candidates arrive and are scored.
 
-In casual testing, ~fzfa~ and ~fzf.el~ are the only packages that
-handle 10M+ candidates without visible degradation.  Numbers depend on
-the candidate shape and the host machine — see [[*Comparison]] for the
-full matrix.
+Large-pool latency and memory depend on candidate length, query shape, match
+density, host hardware, and the configured result limit.  Benchmark the
+producer and matcher with the workload you intend to use; the comparison below
+describes architecture, not a universal throughput ranking.
 
 ** Cross-frontend support
 
@@ -558,10 +558,12 @@ Demo below:
 A meaningful difference from the alternatives is that ~fzfa-multi-read~
 can mix *both* synchronous and asynchronous sources in a single picker.
 
-On every keystroke each source is re-filtered — sync sources via
-~fzf-native-score-all~, async sources via ~fzf-native-async-candidates~
-against the live producer pool. The producer (e.g. ~find~, ~fd~, ~ripgrep~)
-does not reset and continues generating results we can score/filter against.
+On every changed query each source is re-filtered.  Sync sources use
+~fzf-native-score-all~.  Async sources submit one request, poll metadata, and
+materialize one authoritative snapshot through the request-aware session API.
+Stable redraws reuse that materialized output.  The producer (for example
+~find~, ~fd~, or ~ripgrep~) does not reset and continues generating candidates
+for native incremental retries.
 
 This lets one prompt combine, say, ~recentf~ entries (sync list) alongside a
 streaming ~rg~ search (async producer) and have both groups score
@@ -1787,9 +1789,9 @@ A 2-arg producer example refires per CMD-half change.  See
   using Gotoh's algorithm.  From my short testing, the C
   implementation doesn't scale very well to large codebases, being
   single-threaded.
-- ~fzfa~ and ~fzf.el~ were the only packages capable of handling
-  millions (10+~) of candidates without degraded performance.
-  Caveat: Try the packages yourself to come to your own conclusion.
+- ~fzfa~ and ~fzf.el~ both keep a producer alive while the query changes, but
+  they use different UIs and integration boundaries.  Measure them with your
+  candidate distribution before drawing a throughput conclusion.
 - Multicomponent queries exist with these packages with varying
   functionality.  For example, using multicomponent matching is
   possible with ~orderless~, but adding ~flex~ filtering to the
@@ -1895,14 +1897,10 @@ themselves render in ~helm~'s UI when ~helm-mode~ is on.
 - *[[https://github.com/minad/affe][affe]]*: closest architectural
   cousin to ~fzfa~ — background producer + async filter.
   Matching can integrate with ~orderless~ or take advantage of any
-  of the Emacs plumbing. Filtering is single-threaded Elisp;
-  plateaus around 1-2M candidates while ~fzf-native~ chews 10-20M in
-  the same wall time (again, eye test).  Strict pure-Elisp win compared
-  to ~fzfa~'s native dep. ~fzfa~ took the most learning from this project
-  and its background producer + filter flow is what ~fzfa~ does. It
-  doesn't do smart fuzzy matching, and it's still relatively "slow"
-  (in the context of fuzzy matching, not prefix matching)
-  compared to newer alternatives (e.g. ~fff~, ~fzf~).
+  of the Emacs plumbing. Filtering is single-threaded Elisp, which avoids
+  ~fzfa~'s native dependency.  ~fzfa~ learned from this project's background
+  producer + filter flow.  The packages use different matching algorithms and
+  should be measured with the intended workload.
 
 - *[[https://github.com/bling/fzf.el][fzf.el]]*: shells out to the
   =fzf= command-line binary as its UI.  Doesn't participate in
