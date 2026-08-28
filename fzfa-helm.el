@@ -164,7 +164,7 @@ of the entry command (e.g. `fzfa-find-any'), etc.  Marking `user-moved'
 only when `this-command' matches one of these explicit navigation
 commands avoids treating those internal fires as user intent.")
 
-(defun fzfa-helm--cancel-stranded-follow-timer ()
+(defun fzfa-helm--cancel-stranded-follow-timer (&optional timer)
   "Cancel helm's global `follow-mode' idle timer if still scheduled.
 
 helm-core's `helm-follow-execute-persistent-action-maybe' schedules
@@ -178,10 +178,17 @@ Race: scroll selection (schedules timer) -> RET/ESC to exit helm
 before the idle delay elapses -> timer fires post-cleanup ->
 \"Running helm command outside of context\".  Only relevant when
 :follow 1 is in play (every fzfa-helm source that wires preview)."
-  (when (and (boundp 'helm--execute-persistent-action-timer)
-             (timerp helm--execute-persistent-action-timer))
-    (cancel-timer helm--execute-persistent-action-timer)
-    (setq helm--execute-persistent-action-timer nil)))
+  (let ((timer
+         (or timer
+             (and (boundp 'helm--execute-persistent-action-timer)
+                  helm--execute-persistent-action-timer))))
+    (when (timerp timer)
+      (cancel-timer timer)
+      ;; `cancel-timer' is callback-capable through advice.  Preserve a timer
+      ;; installed by a nested Helm session instead of erasing its ownership.
+      (when (and (boundp 'helm--execute-persistent-action-timer)
+                 (eq timer helm--execute-persistent-action-timer))
+        (setq helm--execute-persistent-action-timer nil)))))
 
 (defun fzfa-helm--cleanup-call (label function &rest args)
   "Call FUNCTION with ARGS during teardown and log an error under LABEL.
@@ -342,13 +349,15 @@ OWNER-P, when non-nil, must still return non-nil at dispatch time.  Each
 invocation also captures the current Helm session buffer.  Immediate and
 deferred dispatches require that exact session to remain current, so a nested
 Helm cannot consume an outer session's preview timer or candidate."
-  (let ((preview-timer nil)
+  (let ((preview-owner (fzfa--timer-owner-create))
         (preview-last 'unset))
     (lambda (_cand)
       (when-let* ((owner-token (fzfa-helm--current-session-token))
                   ((or (null owner-p) (funcall owner-p))))
         (cond
          ((<= (or fzfa-preview-delay 0) 0)
+          (when (fzfa--timer-owner-timer preview-owner)
+            (fzfa--timer-owner-cancel preview-owner "Helm preview timer"))
           ;; Immediate path — no debounce.  Re-read current selection
           ;; for parity with the idle path, but only from the session that
           ;; invoked this persistent action.
@@ -360,22 +369,22 @@ Helm cannot consume an outer session's preview timer or candidate."
               (let ((fzfa--preview-session
                      (or session-cell fzfa--preview-session)))
                 (fzfa--preview-call :preview nil cur)))))
-         ((not (timerp preview-timer))
-          (setq preview-timer
-                (run-with-idle-timer
-                 fzfa-preview-delay nil
-                 (lambda ()
-                   (setq preview-timer nil)
-                   (when-let* (((fzfa-helm--preview-owner-p
-                                 owner-token owner-p))
-                               (cur (helm-get-selection))
-                               ((fzfa-helm--preview-owner-p
-                                 owner-token owner-p)))
-                     (unless (equal cur preview-last)
-                       (setq preview-last cur)
-                       (let ((fzfa--preview-session
-                              (or session-cell fzfa--preview-session)))
-                         (fzfa--preview-call :preview nil cur)))))))))))))
+         ((not (fzfa--timer-owner-timer preview-owner))
+          (fzfa--timer-owner-schedule
+           preview-owner
+           (lambda (callback)
+             (run-with-idle-timer fzfa-preview-delay nil callback))
+           (lambda ()
+             (when-let* (((fzfa-helm--preview-owner-p
+                           owner-token owner-p))
+                         (cur (helm-get-selection))
+                         ((fzfa-helm--preview-owner-p
+                           owner-token owner-p)))
+               (unless (equal cur preview-last)
+                 (setq preview-last cur)
+                 (let ((fzfa--preview-session
+                        (or session-cell fzfa--preview-session)))
+                   (fzfa--preview-call :preview nil cur))))))))))))
 
 ;;; Display transformer — preserves text properties and optionally annotates
 
@@ -591,28 +600,18 @@ and `fzfa-helm--read' (batch with bulk-stop)."
                         ;; scoring catches up.  If input interrupted a final
                         ;; materialization after the generation timer fired,
                         ;; this retry guarantees another render.
-                        (when-let* ((tm (fzfa-source-retry-timer source)))
-                          (cancel-timer tm))
-                        (setf (fzfa-source-retry-timer source)
-                              (run-with-idle-timer
-                               fzfa-input-debounce nil
-                               (lambda ()
-                                 (setf (fzfa-source-retry-timer source) nil)
-                                 (funcall refresh-fn))))
+                        (fzfa-source--schedule-retry
+                         source fzfa-input-debounce refresh-fn)
                         (fzfa-source-last-result source))
                        ((eq (car-safe r) 'failed)
                         ;; Matcher failure is terminal for this request.
                         ;; Keep the last completed list and do not arm the
                         ;; pending-work retry timer; the core adapter already
                         ;; reported the failure once.
-                        (when-let* ((tm (fzfa-source-retry-timer source)))
-                          (cancel-timer tm)
-                          (setf (fzfa-source-retry-timer source) nil))
+                        (fzfa-source--cancel-retry source)
                         (fzfa-source-last-result source))
                        (t
-                        (when-let* ((tm (fzfa-source-retry-timer source)))
-                          (cancel-timer tm)
-                          (setf (fzfa-source-retry-timer source) nil))
+                        (fzfa-source--cancel-retry source)
                         (setf (fzfa-source-last-result source) r
                               (fzfa-source-last-query source) filter)
                         r)))))))
@@ -804,16 +803,12 @@ producers use the shared fetch protocol; async delivery triggers
                               #'fzf-native-score-all all filter))))))
                (cond
                 ((eq r t)
-                 (when-let* ((tm (fzfa-source-retry-timer source)))
-                   (cancel-timer tm))
-                 (setf (fzfa-source-retry-timer source)
-                       (run-with-idle-timer
-                        fzfa-input-debounce nil
-                        (lambda ()
-                          (setf (fzfa-source-retry-timer source) nil)
-                          (when (funcall owner-p)
-                            (helm-force-update)
-                            (funcall owner-p)))))
+                 (fzfa-source--schedule-retry
+                  source fzfa-input-debounce
+                  (lambda ()
+                    (when (funcall owner-p)
+                      (helm-force-update)
+                      (funcall owner-p))))
                  ;; Return cached candidates only when the filter still
                  ;; matches the query that produced them — otherwise nil so
                  ;; helm doesn't render stale results from a prior query
@@ -822,9 +817,7 @@ producers use the shared fetch protocol; async delivery triggers
                      (fzfa-source-last-result source)
                    nil))
                 (t
-                 (when-let* ((tm (fzfa-source-retry-timer source)))
-                   (cancel-timer tm)
-                   (setf (fzfa-source-retry-timer source) nil))
+                 (fzfa-source--cancel-retry source)
                  (setq r (fzfa--rank-and-highlight r filter history))
                  (setf (fzfa-source-total source) (length all)
                        (fzfa-source-filtered source) (length r)
@@ -1165,7 +1158,7 @@ for fuzzy-multi-source UX."
          ;; Per-source state collected during source construction.
          (handles nil)   ; reversed: list of fzf-native handles (async only)
          (stops nil)     ; reversed: one 0-arg stop closure per source
-         poll-timer
+         (poll-owner (fzfa--timer-owner-create))
          helm-entered
          ;; Most recent user filter, updated by `update-last-query'
          ;; (below) on each `helm-after-update-hook' tick.  Read by
@@ -1299,16 +1292,8 @@ for fuzzy-multi-source UX."
                                           source filter limit))))
                                 (cond
                                  ((eq r t)
-                                  (when-let* ((tm (fzfa-source-retry-timer
-                                                   source)))
-                                    (cancel-timer tm))
-                                  (setf (fzfa-source-retry-timer source)
-                                        (run-with-idle-timer
-                                         fzfa-input-debounce nil
-                                         (lambda ()
-                                           (setf (fzfa-source-retry-timer
-                                                  source) nil)
-                                           (funcall helm-refresh))))
+                                  (fzfa-source--schedule-retry
+                                   source fzfa-input-debounce helm-refresh)
                                   ;; Don't update rank — cached
                                   ;; `last-result' is for an earlier query.
                                   (fzfa-source-last-result source))
@@ -1316,20 +1301,12 @@ for fuzzy-multi-source UX."
                                   ;; Terminal matcher failure: retain the
                                   ;; last completed candidates and rank, and
                                   ;; do not schedule another pending retry.
-                                  (when-let* ((tm (fzfa-source-retry-timer
-                                                   source)))
-                                    (cancel-timer tm)
-                                    (setf (fzfa-source-retry-timer source)
-                                          nil))
+                                  (fzfa-source--cancel-retry source)
                                   (fzfa-source-last-result source))
                                  (t
                                   (when (and r (not first-cands-shown))
                                     (setq first-cands-shown t))
-                                  (when-let* ((tm (fzfa-source-retry-timer
-                                                   source)))
-                                    (cancel-timer tm)
-                                    (setf (fzfa-source-retry-timer source)
-                                          nil))
+                                  (fzfa-source--cancel-retry source)
                                   (setf (fzfa-source-last-result source) r
                                         (fzfa-source-rank source)
                                         (fzfa--multi-rank r filter t))
@@ -1442,14 +1419,8 @@ for fuzzy-multi-source UX."
                                            #'fzf-native-score-all all filter))))))
                             (cond
                              ((eq r t)
-                              (when-let* ((tm (fzfa-source-retry-timer source)))
-                                (cancel-timer tm))
-                              (setf (fzfa-source-retry-timer source)
-                                    (run-with-idle-timer
-                                     fzfa-input-debounce nil
-                                     (lambda ()
-                                       (setf (fzfa-source-retry-timer source) nil)
-                                       (funcall helm-refresh))))
+                              (fzfa-source--schedule-retry
+                               source fzfa-input-debounce helm-refresh)
                               ;; Return cached candidates only when the
                               ;; filter still matches the query that
                               ;; produced them — otherwise nil so helm
@@ -1460,9 +1431,7 @@ for fuzzy-multi-source UX."
                                   (fzfa-source-last-result source)
                                 nil))
                              (t
-                              (when-let* ((tm (fzfa-source-retry-timer source)))
-                                (cancel-timer tm)
-                                (setf (fzfa-source-retry-timer source) nil))
+                              (fzfa-source--cancel-retry source)
                               (setq r (fzfa--rank-and-highlight
                                        r filter history))
                               (when (and r (not first-cands-shown))
@@ -1620,15 +1589,17 @@ for fuzzy-multi-source UX."
           ;; when input is pending — typing always trumps streamed-candidate
           ;; refreshes.
           (when handles
-            (setq poll-timer
-                  (run-with-timer
-                   0 fzfa-refresh-delay
-                   (fzfa--make-poll-fn
-                    sources-v
-                    helm-owner-p
-                    helm-refresh
-                    (lambda () first-cands-shown)
-                    (lambda (work) (funcall work))))))
+            (fzfa--timer-owner-schedule
+             poll-owner
+             (lambda (callback)
+               (run-with-timer 0 fzfa-refresh-delay callback))
+             (fzfa--make-poll-fn
+              sources-v
+              helm-owner-p
+              helm-refresh
+              (lambda () first-cands-shown)
+              (lambda (work) (funcall work)))
+             t))
           ;; Per-source preview `:setup' broadcast.  Each cell captures the
           ;; ORIGIN window/buffer/`default-directory' (the user's selected
           ;; window before helm activated), then dispatches `:setup' under its
@@ -1834,9 +1805,18 @@ for fuzzy-multi-source UX."
       ;; Release resources first.  Every cleanup call is isolated so one
       ;; broken source or hook cannot strand the remaining handles or timers.
       (setq session-active nil)
-      (when poll-timer
-        (fzfa-helm--cleanup-call "poll timer" #'cancel-timer poll-timer)
-        (setq poll-timer nil))
+      ;; Cancel the captured outer Helm follow timer before any source or
+      ;; preview cleanup callback can enter a replacement Helm session.
+      (when-let* ((follow-timer
+                   (and (boundp 'helm--execute-persistent-action-timer)
+                        helm--execute-persistent-action-timer)))
+        (or (fzfa-helm--cleanup-call
+             "stranded follow timer"
+             #'fzfa-helm--cancel-stranded-follow-timer follow-timer)
+            (fzfa-helm--cleanup-call
+             "stranded follow timer retry"
+             #'fzfa-helm--cancel-stranded-follow-timer follow-timer)))
+      (fzfa--timer-owner-cancel poll-owner "Helm poll timer")
       (dolist (stop stops)
         (fzfa-helm--cleanup-call "source" stop))
       (fzfa-helm--cleanup-call
@@ -1881,9 +1861,7 @@ for fuzzy-multi-source UX."
                 (fzfa-helm--cleanup-call
                  (format "preview %d return" i) #'fzfa--preview-return
                  (if (eql i result-src-idx) result-cand nil) nil)))
-            (aset preview-active i nil))))
-      (fzfa-helm--cleanup-call
-       "stranded follow timer" #'fzfa-helm--cancel-stranded-follow-timer))
+            (aset preview-active i nil)))))
     result))
 
 (provide 'fzfa-helm)

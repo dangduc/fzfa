@@ -34,6 +34,15 @@ jobs:
           ref: 5494011879665720890e0c6cdeb2cb7947f1c8de
           path: fzf-native
 
+      # Build the same reviewed source in a separate checkout.  Keep the first
+      # checkout untouched so tests cannot hide a stale committed artifact by
+      # replacing bin/ before it is loaded.
+      - uses: actions/checkout@v4
+        with:
+          repository: fastducduc/fzf-native
+          ref: 5494011879665720890e0c6cdeb2cb7947f1c8de
+          path: fzf-native-source
+
       # Optional Elisp deps that fzfa forward-declares from.  Checked
       # out only to give `make check-declare' an Elisp source to
       # verify the declarations against — `make compile' / `make test'
@@ -132,15 +141,15 @@ jobs:
         shell: bash
         run: emacs --version
 
-      - name: Build paired fzf-native source
+      - name: Inspect tracked fzf-native artifact
         shell: bash
-        working-directory: fzf-native
+        working-directory: fzf-async
         run: |
-          rm -rf bin
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --config Release
+          emacs -Q --batch -L ../fzf-native \
+            -l fzf-native \
+            --eval '(let* ((relative (fzf-native--bundled-module-relative-path)) (path (expand-file-name relative fzf-native--bin-dir))) (unless (file-exists-p path) (error "tracked module is missing: %s" path)) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally path) (princ (format "tracked module: %s\nsha256: %s\n" path (secure-hash (quote sha256) (current-buffer))))))'
 
-      - name: Require paired session ABI
+      - name: Require tracked session ABI
         if: runner.os != 'Windows'
         shell: bash
         working-directory: fzf-async
@@ -149,7 +158,7 @@ jobs:
             -l fzf-native -f fzf-native-load-dyn -l fzfa \
             --eval '(unless (and (fboundp (quote fzf-native-session-abi-version)) (= (fzf-native-session-abi-version) fzf-native-session-abi-required) (fzfa--session-api-p)) (error "paired fzf-native session ABI is unavailable"))'
 
-      - name: Require explicit Windows batch-only contract
+      - name: Require tracked Windows batch-only contract
         if: runner.os == 'Windows'
         shell: bash
         working-directory: fzf-async
@@ -160,18 +169,46 @@ jobs:
             --eval '(when (fzfa--command-api-p) (error "Windows artifact unexpectedly advertises the POSIX session API"))' \
             --eval '(condition-case nil (progn (fzfa--spawn "echo alpha" default-directory) (error "batch-only command source did not fail")) (user-error nil))'
 
-      - name: Compile
+      - name: Test against tracked artifact
         shell: bash
         working-directory: fzf-async
-        run: make compile
+        run: make test FZF_NATIVE_DIR=../fzf-native
 
       - name: Check declarations
         if: runner.os != 'Windows'
         shell: bash
         working-directory: fzf-async
-        run: make check-declare NOTMUCH_DIR=../notmuch/emacs
+        run: make check-declare FZF_NATIVE_DIR=../fzf-native NOTMUCH_DIR=../notmuch/emacs
 
-      - name: Test
+      - name: Build paired fzf-native source
+        shell: bash
+        working-directory: fzf-native-source
+        run: |
+          rm -rf bin
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+
+      - name: Require source-built session ABI
+        if: runner.os != 'Windows'
         shell: bash
         working-directory: fzf-async
-        run: make test
+        run: |
+          emacs -Q --batch -L ../fzf-native-source -L . \
+            -l fzf-native -f fzf-native-load-dyn -l fzfa \
+            --eval '(unless (and (fboundp (quote fzf-native-session-abi-version)) (= (fzf-native-session-abi-version) fzf-native-session-abi-required) (fzfa--session-api-p)) (error "source-built fzf-native session ABI is unavailable"))'
+
+      - name: Require source-built Windows batch-only contract
+        if: runner.os == 'Windows'
+        shell: bash
+        working-directory: fzf-async
+        run: |
+          emacs -Q --batch -L ../fzf-native-source -L . \
+            -l fzf-native -f fzf-native-load-dyn -l fzfa \
+            --eval '(unless (> (car (fzf-native-score "alpha" "alp")) 0) (error "source-built fzf-native batch scorer is unavailable"))' \
+            --eval '(when (fzfa--command-api-p) (error "Windows source build unexpectedly advertises the POSIX session API"))' \
+            --eval '(condition-case nil (progn (fzfa--spawn "echo alpha" default-directory) (error "batch-only command source did not fail")) (user-error nil))'
+
+      - name: Test against source-built module
+        shell: bash
+        working-directory: fzf-async
+        run: make test FZF_NATIVE_DIR=../fzf-native-source

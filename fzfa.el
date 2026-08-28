@@ -3,8 +3,8 @@
 ;; Copyright (C) 2026 James Nguyen
 
 ;; Author: James Nguyen <james@jojojames.com>
-;; Version: 1.0.2
-;; Package-Requires: ((emacs "29.1") (fzf-native "2.3"))
+;; Version: 1.1.0
+;; Package-Requires: ((emacs "29.1") (fzf-native "2.4"))
 ;; Keywords: matching, completion, fzf, fuzzy, fussy
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
@@ -26,9 +26,10 @@
 ;;; Commentary:
 
 ;; Provides async shell command completion using fzf-native for scoring.
-;; The native layer handles process I/O on a background thread, ANSI
-;; stripping, and parallel fzf scoring.  The Elisp layer provides
-;; while-no-input responsiveness, a candidate cap, and a live stats overlay.
+;; The native layer keeps each command and matcher session alive across query
+;; updates.  It handles process I/O on a background thread, ANSI stripping,
+;; and parallel fzf scoring.  The Elisp layer provides while-no-input
+;; responsiveness, a candidate cap, and a live stats overlay.
 ;;
 ;; Quick start:
 ;;   (fzfa-setup)   ; register completion style + category override
@@ -143,6 +144,74 @@ when FUNCTION returns normally, and nil when cleanup signals."
        (fzfa--log "Cleanup %s failed: %s"
                   label (error-message-string err)))
      nil)))
+
+(cl-defstruct (fzfa--timer-owner
+               (:constructor fzfa--timer-owner-create))
+  "Identity and generation for one callback-capable timer slot."
+  timer
+  (epoch 0))
+
+(defun fzfa--timer-owner--cancel-pass (owner label)
+  "Make one exact-handle cancellation attempt for OWNER under LABEL.
+
+The epoch revokes the captured timer before `cancel-timer' runs.  Clear the
+slot only when cancellation succeeds and no callback installed a replacement."
+  (let ((epoch (cl-incf (fzfa--timer-owner-epoch owner)))
+        (timer (fzfa--timer-owner-timer owner)))
+    (cond
+     ((null timer) t)
+     ((not (fzfa--cleanup-call label #'cancel-timer timer)) nil)
+     ((and (= epoch (fzfa--timer-owner-epoch owner))
+           (eq timer (fzfa--timer-owner-timer owner)))
+      (setf (fzfa--timer-owner-timer owner) nil)
+      t)
+     (t nil))))
+
+(defun fzfa--timer-owner-cancel (owner label)
+  "Revoke OWNER and make two bounded timer cancellation passes under LABEL.
+
+The second pass handles a transient cancellation error or a replacement that
+was installed reentrantly during the first pass.  Return non-nil when no timer
+remains owned."
+  (or (fzfa--timer-owner--cancel-pass owner label)
+      (fzfa--timer-owner--cancel-pass owner label)))
+
+(defun fzfa--timer-owner-schedule (owner scheduler callback &optional repeat)
+  "Replace OWNER's timer with one built by SCHEDULER for CALLBACK.
+
+SCHEDULER is called with one zero-argument wrapper and must return its timer
+handle.  The newest reentrant schedule owns the slot.  A stale scheduler return
+is canceled instead of overwriting that newer timer.  Unless REPEAT is non-nil,
+the wrapper clears its exact handle before it calls CALLBACK."
+  (let ((epoch (cl-incf (fzfa--timer-owner-epoch owner)))
+        (old (fzfa--timer-owner-timer owner))
+        timer)
+    (when old
+      (cancel-timer old)
+      (when (and (= epoch (fzfa--timer-owner-epoch owner))
+                 (eq old (fzfa--timer-owner-timer owner)))
+        (setf (fzfa--timer-owner-timer owner) nil)))
+    (when (and (= epoch (fzfa--timer-owner-epoch owner))
+               (null (fzfa--timer-owner-timer owner)))
+      (setq timer
+            (funcall
+             scheduler
+             (lambda ()
+               (when (and timer
+                          (= epoch (fzfa--timer-owner-epoch owner))
+                          (eq timer (fzfa--timer-owner-timer owner)))
+                 (unless repeat
+                   (setf (fzfa--timer-owner-timer owner) nil))
+                 (funcall callback)))))
+      (if (and timer
+               (= epoch (fzfa--timer-owner-epoch owner))
+               (null (fzfa--timer-owner-timer owner)))
+          (setf (fzfa--timer-owner-timer owner) timer)
+        ;; Advice around the scheduler can enter a newer request before the
+        ;; outer scheduler returns.  Its unowned timer must not remain live.
+        (or (fzfa--cleanup-call "stale timer" #'cancel-timer timer)
+            (fzfa--cleanup-call "stale timer retry" #'cancel-timer timer))))
+    (fzfa--timer-owner-timer owner)))
 
 ;;; Customization
 
@@ -406,10 +475,12 @@ state via `fzfa-preview-get' / `fzfa-preview-put'.")
 
 (defvar-local fzfa--preview-timer nil
   "Buffer-local debounce timer; lives in the minibuffer only.")
+(defvar-local fzfa--preview-timer-owner nil
+  "Buffer-local identity and generation for `fzfa--preview-timer'.")
 (defvar-local fzfa--preview-last 'unset
   "Last previewed candidate in this minibuffer (for change detection).")
 (defvar-local fzfa--minibuffer-marker nil
-  "Buffer-local marker set on the fzfa minibuffer by `fzfa--preview-install'.
+  "Buffer-local marker set on each active fzfa minibuffer.
 
 Extensions (notably `fzfa-posframe') use this to detect whether a
 given minibuffer belongs to an fzfa session — needed because embark's
@@ -418,8 +489,8 @@ routing wants to peek at the parent-fzfa's context, not fire globally.")
 (defvar-local fzfa--minibuffer-session nil
   "Buffer-local `fzfa-session' for the current fzfa minibuffer.
 
-Set by `fzfa--preview-install' at session open, cleared on
-`minibuffer-exit-hook'.  Read via `fzfa--current-session' by
+Set when the frontend opens and refreshed by `fzfa--preview-install'.
+Cleared on `minibuffer-exit-hook'.  Read via `fzfa--current-session' by
 fixed-arity integrations that can't take session by parameter (embark
 transformer, `fzfa-apply-current' from a keybinding).")
 (defvar-local fzfa--preview-run-fn nil
@@ -649,6 +720,14 @@ non-nil only when the frontend published a refresh."
        (window-live-p window)
        (eq window (active-minibuffer-window))
        (eq buffer (window-buffer window))))
+
+(defun fzfa--active-minibuffer-context ()
+  "Return (BUFFER WINDOW SESSION) for the top fzfa minibuffer, or nil."
+  (when-let* ((window (active-minibuffer-window))
+              (buffer (window-buffer window))
+              (session
+               (buffer-local-value 'fzfa--minibuffer-session buffer)))
+    (list buffer window session)))
 
 (defun fzfa--insert-prompt-if-ivy ()
   "Force ivy to redraw its prompt if `ivy-mode' is active.
@@ -977,15 +1056,25 @@ unwind path's implicit window-state restoration.
 
 Silently no-ops when no `:apply' is defined for the source/session."
   (interactive)
-  (when-let* ((cand (fzfa--frontend-candidate))
+  (when-let* ((context (fzfa--active-minibuffer-context))
+              (buffer (nth 0 context))
+              (window (nth 1 context))
+              (session (nth 2 context))
+              ((fzfa--minibuffer-owner-p buffer window))
+              (cand (fzfa--frontend-candidate))
+              ((fzfa--minibuffer-owner-p buffer window))
               (apply (fzfa--resolve-apply cand))
-              (resolved (fzfa-resolve-candidate cand (fzfa--current-session)))
+              ((fzfa--minibuffer-owner-p buffer window))
+              (resolved (fzfa-resolve-candidate cand session))
+              ((fzfa--minibuffer-owner-p buffer window))
               (origin (or (minibuffer-selected-window) (selected-window))))
     (condition-case err
         (with-selected-window origin
           (funcall apply resolved)
-          (fzfa--pin-window-buffer origin (current-buffer))
-          (run-hooks 'fzfa-after-apply-hook))
+          (when (fzfa--minibuffer-owner-p buffer window)
+            (fzfa--pin-window-buffer origin (current-buffer))
+            (when (fzfa--minibuffer-owner-p buffer window)
+              (run-hooks 'fzfa-after-apply-hook))))
       (error (message "fzfa-apply: %s" (error-message-string err))))))
 
 (defun fzfa--minibuffer-install-apply-key ()
@@ -1023,10 +1112,16 @@ Looks up the active session's preview handler and dispatches `:preview'
 with the current candidate.  Silently no-ops when no handler is
 registered for this session."
   (interactive)
-  (when-let* ((cand (fzfa--frontend-candidate))
-              (session (fzfa--current-session)))
-    (setq fzfa--preview-last cand)
-    (fzfa--preview-call :preview session cand)))
+  (when-let* ((context (fzfa--active-minibuffer-context))
+              (buffer (nth 0 context))
+              (window (nth 1 context))
+              (session (nth 2 context))
+              ((fzfa--minibuffer-owner-p buffer window))
+              (cand (fzfa--frontend-candidate))
+              ((fzfa--minibuffer-owner-p buffer window)))
+    (with-current-buffer buffer
+      (setq fzfa--preview-last cand)
+      (fzfa--preview-call :preview session cand))))
 
 (defun fzfa--minibuffer-install-preview-key ()
   "Bind `fzfa-preview-key' to `fzfa-preview-current' in the active minibuffer.
@@ -1272,14 +1367,19 @@ immediately on every selection change.  When both DELAY and
 preview only fires via `fzfa-preview-key' / `fzfa-preview-current'."
   (let* ((delay (or delay fzfa-preview-delay))
          (mb (current-buffer))
+         (mb-window (active-minibuffer-window))
          (run (lambda ()
-                ;; Suppress dispatch while a nested minibuffer is up
-                ;; (embark's action prompter or similar) — otherwise
-                ;; the idle timer would stomp embark's UI with a fresh
-                ;; preview swap.  Depth = 1 means we're inside just
-                ;; the fzfa session; > 1 means something nested.
-                (when (<= (minibuffer-depth) 1)
-                  (when-let* ((cand (fzfa--frontend-candidate)))
+                ;; Require this exact minibuffer before and after reading the
+                ;; candidate.  The read can enter a nested minibuffer.
+                (when (and (fzfa--minibuffer-owner-p mb mb-window)
+                           (eq session
+                               (buffer-local-value
+                                'fzfa--minibuffer-session mb)))
+                  (when-let* ((cand (fzfa--frontend-candidate))
+                              ((fzfa--minibuffer-owner-p mb mb-window))
+                              ((eq session
+                                   (buffer-local-value
+                                    'fzfa--minibuffer-session mb))))
                     (unless (equal cand fzfa--preview-last)
                       (setq fzfa--preview-last cand)
                       (fzfa--preview-call :preview session cand)))))))
@@ -1288,6 +1388,8 @@ preview only fires via `fzfa-preview-key' / `fzfa-preview-current'."
                                       (minibuffer-selected-window)))
     (fzfa-preview-put :default-directory default-directory)
     (setq fzfa--preview-last 'unset
+          fzfa--preview-timer nil
+          fzfa--preview-timer-owner (fzfa--timer-owner-create)
           ;; Marker consulted by fzfa-posframe's embark-buffer routing
           ;; to distinguish "this is a fzfa minibuffer" from a random
           ;; other minibuffer that happens to be visible.
@@ -1320,24 +1422,29 @@ preview only fires via `fzfa-preview-key' / `fzfa-preview-current'."
          ;; silently corrupt the wrong buffer's locals and leave a stale
          ;; timer object behind that blocks every subsequent preview.
          (lambda ()
-           (unless (timerp fzfa--preview-timer)
+           (unless (fzfa--timer-owner-timer fzfa--preview-timer-owner)
+             (fzfa--timer-owner-schedule
+              fzfa--preview-timer-owner
+              (lambda (callback)
+                (run-with-idle-timer delay nil callback))
+              (lambda ()
+                (when (buffer-live-p mb)
+                  (with-current-buffer mb
+                    (setq fzfa--preview-timer nil)
+                    (funcall run)))))
+             ;; Preserve the old buffer-local timer cell for integrations that
+             ;; inspect it.  The owner remains the authority for mutations.
              (setq fzfa--preview-timer
-                   (run-with-idle-timer
-                    delay nil
-                    (lambda ()
-                      (when (buffer-live-p mb)
-                        (with-current-buffer mb
-                          (when (timerp fzfa--preview-timer)
-                            (cancel-timer fzfa--preview-timer))
-                          (setq fzfa--preview-timer nil)
-                          (funcall run)))))))))
+                   (fzfa--timer-owner-timer fzfa--preview-timer-owner)))))
        nil t))
     (add-hook
      'minibuffer-exit-hook
      (lambda ()
-       (when (timerp fzfa--preview-timer)
-         (cancel-timer fzfa--preview-timer)
-         (setq fzfa--preview-timer nil))
+       (when fzfa--preview-timer-owner
+         (fzfa--timer-owner-cancel
+          fzfa--preview-timer-owner "preview timer")
+         (setq fzfa--preview-timer
+               (fzfa--timer-owner-timer fzfa--preview-timer-owner)))
        (setq fzfa--preview-run-fn nil
              fzfa--minibuffer-marker nil
              fzfa--minibuffer-session nil)
@@ -2579,8 +2686,10 @@ on it identically regardless of which container holds it."
   display-overlays              ; list of overlays
   ;; Throttle / timers.
   restart-timer                 ; timer or nil
+  restart-timer-epoch           ; monotonic debounce ownership token
   last-restart-time             ; float
   retry-timer                   ; timer or nil
+  retry-timer-epoch             ; monotonic retry ownership token
   ;; Result / score.
   last-result                   ; list — cached candidate list
   last-query                    ; string — query that produced last-result
@@ -2647,8 +2756,10 @@ to eager-start via `fzf-native-async-start' or to defer."
      :separator-overlays nil
      :display-overlays nil
      :restart-timer nil
+     :restart-timer-epoch 0
      :last-restart-time 0.0
      :retry-timer nil
+     :retry-timer-epoch 0
      :last-result nil
      :rank 0
      :total 0
@@ -3029,7 +3140,10 @@ generation appears.  Legacy modules retain the combined API path."
                       (fzfa--source-materialize-session-output
                        src handle request-id request-epoch
                        materialization-key)))))))))))
-      (let* ((epoch (fzfa-source-request-epoch src))
+      ;; The legacy combined API has no native request ID.  Give each render a
+      ;; fresh local epoch so a nested query on the same handle revokes the
+      ;; outer rank/publication path instead of forming an ABA pair.
+      (let* ((epoch (cl-incf (fzfa-source-request-epoch src)))
              (out (while-no-input
                     (fzfa--bridge-defcustoms
                      #'fzf-native-async-candidates handle query limit))))
@@ -3221,7 +3335,8 @@ frontend — typically a closure over the session's
 `fzfa--frontend-push' machinery.  Pass `#'ignore' if no refresh
 is needed.
 
-Updates CURRENT-CMD, LAST-GEN, and LAST-RESTART-TIME unconditionally."
+Updates CURRENT-CMD, LAST-GEN, and LAST-RESTART-TIME while this restart still
+owns SOURCE.  A callback that starts a newer restart revokes the older one."
   (fzfa--source-clear-request source)
   (cond
    ((fzfa-source-cands-fn source)
@@ -3239,20 +3354,35 @@ Updates CURRENT-CMD, LAST-GEN, and LAST-RESTART-TIME unconditionally."
                            (fzfa-source-last-result source) snap))
                    (funcall refresh-fn))))))
    (t
-   (when-let* ((old (fzfa-source-handle source)))
-      (fzfa--defer-async-stop old)
-      (setq fzfa--async-failed-producers
-            (delq old fzfa--async-failed-producers))
-      (setf (fzfa-source-handle source) nil))
-    (setf (fzfa-source-current-cmd source) new-cmd
-          (fzfa-source-last-gen source) -1
-          (fzfa-source-filtered source) 0
-          (fzfa-source-total source) 0
-          (fzfa-source-last-restart-time source) (float-time))
-    (when (and new-cmd (not (string-empty-p new-cmd)))
-      (setf (fzfa-source-handle source)
-            (fzfa--spawn new-cmd (fzfa-source-directory source))))
-    (funcall refresh-fn))))
+    (let ((epoch (fzfa-source-request-epoch source)))
+      (when-let* ((old (fzfa-source-handle source)))
+        (fzfa--defer-async-stop old)
+        (setq fzfa--async-failed-producers
+              (delq old fzfa--async-failed-producers))
+        ;; Native stop is callback-capable through advice.  Do not erase a
+        ;; replacement handle installed by a nested restart.
+        (when (fzfa--source-owned-p source old epoch)
+          (setf (fzfa-source-handle source) nil)))
+      (when (fzfa--source-owned-p source nil epoch)
+        (setf (fzfa-source-current-cmd source) new-cmd
+              (fzfa-source-last-gen source) -1
+              (fzfa-source-filtered source) 0
+              (fzfa-source-total source) 0
+              (fzfa-source-last-restart-time source) (float-time))
+        (if (and new-cmd (not (string-empty-p new-cmd)))
+            (let ((spawned
+                   (fzfa--spawn new-cmd (fzfa-source-directory source))))
+              ;; The spawn transform and native setup are callback-capable.
+              ;; A newer restart owns any replacement attached during them.
+              (if (and (fzfa--source-owned-p source nil epoch)
+                       (equal new-cmd (fzfa-source-current-cmd source)))
+                  (progn
+                    (setf (fzfa-source-handle source) spawned)
+                    (when (fzfa--source-owned-p source spawned epoch)
+                      (funcall refresh-fn)))
+                (fzfa--defer-async-stop spawned)))
+          (when (fzfa--source-owned-p source nil epoch)
+            (funcall refresh-fn))))))))
 
 (defun fzfa-source--debounce-restart (source new-cmd refresh-fn)
   "Schedule a debounced restart of SOURCE's shell handle with NEW-CMD.
@@ -3263,19 +3393,86 @@ one.  Delay floors at `fzfa-shell-command-debounce' and respects
 a burst of keystrokes ends with exactly one spawn on the final
 cmd.  When the timer fires it clears the slot and calls
 `fzfa-source--restart' with REFRESH-FN."
-  (when-let* ((tm (fzfa-source-restart-timer source)))
-    (cancel-timer tm)
-    (setf (fzfa-source-restart-timer source) nil))
-  (let* ((elapsed (- (float-time)
-                     (fzfa-source-last-restart-time source)))
-         (delay (max fzfa-shell-command-debounce
-                     (- fzfa-shell-command-throttle elapsed))))
-    (setf (fzfa-source-restart-timer source)
-          (run-with-timer
-           (max 0.01 delay) nil
-           (lambda ()
-             (setf (fzfa-source-restart-timer source) nil)
-             (fzfa-source--restart source new-cmd refresh-fn))))))
+  (let ((epoch (cl-incf (fzfa-source-restart-timer-epoch source)))
+        (old (fzfa-source-restart-timer source)))
+    (when old
+      (cancel-timer old)
+      ;; Timer cancellation can run advice that schedules a newer debounce.
+      (when (and (= epoch (fzfa-source-restart-timer-epoch source))
+                 (eq old (fzfa-source-restart-timer source)))
+        (setf (fzfa-source-restart-timer source) nil)))
+    (when (and (= epoch (fzfa-source-restart-timer-epoch source))
+               (null (fzfa-source-restart-timer source)))
+      (let* ((elapsed (- (float-time)
+                         (fzfa-source-last-restart-time source)))
+             (delay (max fzfa-shell-command-debounce
+                         (- fzfa-shell-command-throttle elapsed)))
+             timer)
+        (when (= epoch (fzfa-source-restart-timer-epoch source))
+          (setq timer
+                (run-with-timer
+                 (max 0.01 delay) nil
+                 (lambda ()
+                   (when (and timer
+                              (= epoch
+                                 (fzfa-source-restart-timer-epoch source))
+                              (eq timer
+                                  (fzfa-source-restart-timer source)))
+                     (setf (fzfa-source-restart-timer source) nil)
+                     (fzfa-source--restart source new-cmd refresh-fn)))))
+          ;; Scheduling is callback-capable through advice.  Install only if
+          ;; no newer debounce or direct slot replacement won in the meantime.
+          (if (and timer
+                   (= epoch (fzfa-source-restart-timer-epoch source))
+                   (null (fzfa-source-restart-timer source)))
+              (setf (fzfa-source-restart-timer source) timer)
+            (when timer
+              (cancel-timer timer))))))))
+
+(defun fzfa-source--cancel-retry (source)
+  "Cancel SOURCE's exact retry timer without clearing a newer replacement."
+  (let ((epoch (cl-incf (fzfa-source-retry-timer-epoch source)))
+        (timer (fzfa-source-retry-timer source)))
+    (when timer
+      (cancel-timer timer)
+      (when (and (= epoch (fzfa-source-retry-timer-epoch source))
+                 (eq timer (fzfa-source-retry-timer source)))
+        (setf (fzfa-source-retry-timer source) nil)))
+    (fzfa-source-retry-timer source)))
+
+(defun fzfa-source--schedule-retry (source delay callback)
+  "Replace SOURCE's idle retry timer with a call to CALLBACK after DELAY.
+
+The newest reentrant schedule owns the timer.  A stale scheduler return is
+canceled and cannot overwrite that newer handle."
+  (let ((epoch (cl-incf (fzfa-source-retry-timer-epoch source)))
+        (old (fzfa-source-retry-timer source))
+        timer)
+    (when old
+      (cancel-timer old)
+      (when (and (= epoch (fzfa-source-retry-timer-epoch source))
+                 (eq old (fzfa-source-retry-timer source)))
+        (setf (fzfa-source-retry-timer source) nil)))
+    (when (and (= epoch (fzfa-source-retry-timer-epoch source))
+               (null (fzfa-source-retry-timer source)))
+      (setq timer
+            (run-with-idle-timer
+             delay nil
+             (lambda ()
+               (when (and timer
+                          (= epoch
+                              (fzfa-source-retry-timer-epoch source))
+                          (eq timer (fzfa-source-retry-timer source)))
+                 (setf (fzfa-source-retry-timer source) nil)
+                 (funcall callback)))))
+      (if (and timer
+               (= epoch (fzfa-source-retry-timer-epoch source))
+               (null (fzfa-source-retry-timer source)))
+          (setf (fzfa-source-retry-timer source) timer)
+        (or (fzfa--cleanup-call "stale source retry" #'cancel-timer timer)
+            (fzfa--cleanup-call
+             "stale source retry retry" #'cancel-timer timer))))
+    (fzfa-source-retry-timer source)))
 
 (defun fzfa-source--stop-pass (source)
   "Attempt one independent physical cleanup pass for SOURCE.
@@ -3292,7 +3489,11 @@ another pass."
           (progn
             (setq fzfa--async-failed-producers
                   (delq h fzfa--async-failed-producers))
-            (setf (fzfa-source-handle source) nil))
+            (if (eq h (fzfa-source-handle source))
+                (setf (fzfa-source-handle source) nil)
+              ;; A stop callback installed another handle.  Preserve it for
+              ;; the bounded follow-up pass instead of losing the producer.
+              (setq ok nil)))
         (setq ok nil)))
     (dolist (slot '(restart-timer retry-timer))
       (let ((tm (pcase slot
@@ -3300,11 +3501,19 @@ another pass."
                   ('retry-timer (fzfa-source-retry-timer source)))))
         (when tm
           (if (fzfa--cleanup-call (symbol-name slot) #'cancel-timer tm)
-              (pcase slot
-                ('restart-timer
-                 (setf (fzfa-source-restart-timer source) nil))
-                ('retry-timer
-                 (setf (fzfa-source-retry-timer source) nil)))
+              (let ((current
+                     (pcase slot
+                       ('restart-timer
+                        (fzfa-source-restart-timer source))
+                       ('retry-timer
+                        (fzfa-source-retry-timer source)))))
+                (if (eq tm current)
+                    (pcase slot
+                      ('restart-timer
+                       (setf (fzfa-source-restart-timer source) nil))
+                      ('retry-timer
+                       (setf (fzfa-source-retry-timer source) nil)))
+                  (setq ok nil)))
             (setq ok nil)))))
     (dolist (slot '(separator-overlays display-overlays))
       (let* ((overlays
@@ -3318,13 +3527,32 @@ another pass."
                        unless (fzfa--cleanup-call
                                (symbol-name slot) #'delete-overlay overlay)
                        collect overlay)))
-        (pcase slot
-          ('separator-overlays
-           (setf (fzfa-source-separator-overlays source) failed))
-          ('display-overlays
-           (setf (fzfa-source-display-overlays source) failed)))
-        (when failed
-          (setq ok nil))))
+        (let ((current
+               (pcase slot
+                 ('separator-overlays
+                  (fzfa-source-separator-overlays source))
+                 ('display-overlays
+                  (fzfa-source-display-overlays source)))))
+          (if (eq current overlays)
+              (pcase slot
+                ('separator-overlays
+                 (setf (fzfa-source-separator-overlays source) failed))
+                ('display-overlays
+                 (setf (fzfa-source-display-overlays source) failed)))
+            ;; Preserve a replacement list installed by cleanup advice.  Add
+            ;; only old overlays whose deletion failed so the next pass can
+            ;; retry both generations.
+            (let ((remaining
+                   (cl-remove-duplicates
+                    (append failed (copy-sequence current)) :test #'eq)))
+              (pcase slot
+                ('separator-overlays
+                 (setf (fzfa-source-separator-overlays source) remaining))
+                ('display-overlays
+                 (setf (fzfa-source-display-overlays source) remaining)))
+              (setq ok nil)))
+          (when failed
+            (setq ok nil)))))
     ok))
 
 (defun fzfa-source--stop (source)
@@ -3335,6 +3563,8 @@ Each cleanup pass is failure-safe, and one bounded retry handles transient
 timer, overlay, or native-stop errors without relying on an unreachable outer
 caller to invoke teardown again.  Return t when cleanup completed."
   (fzfa--source-clear-request source)
+  (cl-incf (fzfa-source-restart-timer-epoch source))
+  (cl-incf (fzfa-source-retry-timer-epoch source))
   (when (fzfa-source-cands-fn source)
     (cl-incf (fzfa-source-prod-token source)))
   (or (fzfa-source--stop-pass source)
@@ -3865,21 +4095,49 @@ cached OUTPUT object from `fzfa--source-async-out'; reuse SOURCE's tagged
 `last-result' and rank instead of walking every visible candidate again."
   (if (eq output (fzfa-source-last-async-output source))
       (fzfa-source-last-result source)
-    (let* ((action (plist-get (fzfa-source-spec source) :action))
-           (candidates
-            (mapcar (lambda (candidate)
-                      (fzfa--tag candidate idx candidate->source
-                                 multi-p action))
-                    (nth 1 output))))
-      (when (nth 2 output)
-        (setf (fzfa-source-filtered source) (nth 2 output)
-              (fzfa-source-total source) (nth 3 output)))
-      (setf (fzfa-source-last-result source) candidates
-            (fzfa-source-last-query source) query
-            (fzfa-source-rank source)
-            (fzfa--multi-rank candidates query t)
-            (fzfa-source-last-async-output source) output)
-      candidates)))
+    (let ((handle (fzfa-source-handle source))
+          (request-id (fzfa-source-request-id source))
+          (request-epoch (fzfa-source-request-epoch source))
+          (session-api-p (fzfa--session-api-p)))
+      (cl-labels
+          ((owned-p ()
+             (and (if session-api-p
+                      (fzfa--source-request-owned-p
+                       source handle request-id request-epoch)
+                    (fzfa--source-owned-p source handle request-epoch))
+                  ;; Legacy output is produced and consumed in one render.
+                  ;; Session output has a retained identity that must still
+                  ;; belong to the captured request.
+                  (or (not session-api-p)
+                      (eq output (fzfa-source-request-output source))))))
+        (if (not (owned-p))
+            (fzfa-source-last-result source)
+          (let* ((action (plist-get (fzfa-source-spec source) :action))
+                 ;; Tagging records routing keys.  Stage those keys privately
+                 ;; so a rank callback cannot leak revoked request state into
+                 ;; the live session hash.
+                 (staged-routes (make-hash-table :test #'equal))
+                 (candidates
+                  (mapcar (lambda (candidate)
+                            (fzfa--tag candidate idx staged-routes
+                                       multi-p action))
+                          (nth 1 output)))
+                 (rank (fzfa--multi-rank candidates query t)))
+            ;; Rank computation can call the user highlight hook.  It may
+            ;; replace this source or request before publication.
+            (if (not (owned-p))
+                (fzfa-source-last-result source)
+              (maphash (lambda (candidate source-idx)
+                         (puthash candidate source-idx candidate->source))
+                       staged-routes)
+              (when (nth 2 output)
+                (setf (fzfa-source-filtered source) (nth 2 output)
+                      (fzfa-source-total source) (nth 3 output)))
+              (setf (fzfa-source-last-result source) candidates
+                    (fzfa-source-last-query source) query
+                    (fzfa-source-rank source) rank
+                    (fzfa-source-last-async-output source) output)
+              candidates)))))))
 
 (defun fzfa--source-fetch (source query &optional refresh-fn on-deliver)
   "Refetch SOURCE's producer for QUERY iff QUERY changed.
@@ -4353,7 +4611,7 @@ Per-source plist keys:
          (frontend-window nil)
          frontend-owned-p
          (stats-overlay nil)
-         retry-timer
+         (retry-owner (fzfa--timer-owner-create))
          ;; Captured by `minibuffer-exit-hook' from the propertized text
          ;; in the minibuffer before `completing-read' returns and strips
          ;; properties.  Reliable per-instance source dispatch even when
@@ -4385,28 +4643,36 @@ Per-source plist keys:
           (lambda ()
             (when (and (functionp frontend-owned-p)
                        (funcall frontend-owned-p)
-                       stats-overlay
                        (not menu-active)
                        frontend-window)
               (with-selected-window frontend-window
-                (overlay-put
-                 stats-overlay 'display
-                 (funcall
-                  fzfa-prompt-function
-                  (funcall
-                   prompt-fn-args
-                   (list :index (fzfa--frontend-index)
-                         :filtered (cl-loop for s across sources
-                                            sum (fzfa-source-filtered s))
-                         :total (cl-loop for s across sources
-                                         sum (fzfa-source-total s))
-                         :narrow-name
-                         (and multi-p narrow-idx
-                              (or (plist-get
-                                   (aref specs-v narrow-idx)
-                                   :name)
-                                  "?"))))))))
-            (fzfa--insert-prompt-if-ivy)))
+                (when (funcall frontend-owned-p)
+                  (when stats-overlay
+                    (let ((data
+                           (funcall
+                            prompt-fn-args
+                            (list :index (fzfa--frontend-index)
+                                  :filtered
+                                  (cl-loop for s across sources
+                                           sum (fzfa-source-filtered s))
+                                  :total
+                                  (cl-loop for s across sources
+                                           sum (fzfa-source-total s))
+                                  :narrow-name
+                                  (and multi-p narrow-idx
+                                       (or (plist-get
+                                            (aref specs-v narrow-idx)
+                                            :name)
+                                           "?"))))))
+                      (when (funcall frontend-owned-p)
+                        (let ((display (funcall fzfa-prompt-function data)))
+                          (when (funcall frontend-owned-p)
+                            (overlay-put stats-overlay 'display display))))))
+                  ;; Ivy's prompt refresh is required even before the stats
+                  ;; overlay has been allocated.  Keep it independent from
+                  ;; the optional overlay update while retaining ownership.
+                  (when (funcall frontend-owned-p)
+                    (fzfa--insert-prompt-if-ivy)))))))
          ;; Forward placeholders — these closures reference each other
          ;; in a cycle (`ivy-push-multi' → `narrow-do-restart' →
          ;; `multi-refresh-fn' → `ivy-push-multi'), so they can't be
@@ -4528,13 +4794,12 @@ Per-source plist keys:
                                     (length out)))))))))
                   (if interrupted
                       (progn
-                        (when retry-timer (cancel-timer retry-timer))
-                        (setq retry-timer
-                              (run-with-idle-timer
-                               fzfa-input-debounce nil
-                               (lambda ()
-                                 (setq retry-timer nil)
-                                 (funcall multi-refresh-fn))))
+                        (fzfa--timer-owner-schedule
+                         retry-owner
+                         (lambda (callback)
+                           (run-with-idle-timer
+                            fzfa-input-debounce nil callback))
+                         multi-refresh-fn)
                         nil)
                     (let* ((order (number-sequence 0 (1- n)))
                            (empty-q (string-empty-p query))
@@ -4586,14 +4851,17 @@ Per-source plist keys:
                                       (push (cdr slot) tails))))
                                 (append (nreverse leaders)
                                         (apply #'append (nreverse tails)))))))
-                      (ivy--set-candidates cands)
-                      (ivy--exhibit)
-                      ;; `ivy--exhibit' skips the prompt redraw when the
-                      ;; candidate body didn't change.  Force it so our
-                      ;; `ivy-pre-prompt-function' lambda runs again with
-                      ;; the freshest stats.
-                      (ivy--insert-prompt)
-                      (funcall frontend-owned-p))))))))
+                      (when (funcall frontend-owned-p)
+                        (ivy--set-candidates cands)
+                        (when (funcall frontend-owned-p)
+                          (ivy--exhibit)
+                          ;; `ivy--exhibit' skips the prompt redraw when the
+                          ;; candidate body didn't change.  Force it so our
+                          ;; `ivy-pre-prompt-function' lambda runs again with
+                          ;; the freshest stats.
+                          (when (funcall frontend-owned-p)
+                            (ivy--insert-prompt)
+                            (funcall frontend-owned-p)))))))))))
          ;; Ivy action list for narrow dispatch.  One entry per
          ;; source's :narrow key (mutates `narrow-idx' and refreshes
          ;; via `ivy-push-multi'), plus a widen entry on
@@ -4666,83 +4934,96 @@ Per-source plist keys:
             ;; From the menu: source letter narrows/switches; the
             ;; prefix key widens (-> 1); any other key cancels the
             ;; menu and returns to the prior state (1 or 3).
-            (let* ((seq (and fzfa-multi-narrow-key
-                             (listify-key-sequence
-                              (kbd fzfa-multi-narrow-key))))
-                   (prefix-event (car (last seq)))
-                   (before narrow-idx))
-              ;; Suspend `refresh-overlay' (which otherwise restores the
-              ;; stats line on every async tick) so the menu stays put
-              ;; until `read-char' returns.  `unwind-protect' guarantees
-              ;; the flag clears on `C-g' / error too.
-              (setq menu-active t)
-              (unwind-protect
-                  (progn
-                    (when (funcall frontend-owned-p)
-                      (with-selected-window frontend-window
-                        ;; Lazily create the stats overlay if the table
-                        ;; arm hasn't ticked through yet (`fzfa-replay'
-                        ;; on a seeded filter only fires `(t …)' once
-                        ;; before the user presses `<', and depending on
-                        ;; timing the overlay may not have been
-                        ;; installed when the menu opens).  Without
-                        ;; this, the `when (and stats-overlay …)' guard
-                        ;; silently dropped the hint and the menu came
-                        ;; up blank.
-                        (unless stats-overlay
-                          (setq stats-overlay
-                                (make-overlay (point-min)
-                                              (minibuffer-prompt-end))))
-                        (overlay-put stats-overlay 'display
-                                     (concat (fzfa--format-narrow-hint
-                                              specs-v narrow-idx nil
-                                              fzfa-multi-narrow-key)
-                                             " "))
-                        (redisplay)))
-                    (let* ((c (read-char))
-                           (target
-                            (cl-position-if
-                             (lambda (spec)
-                               (when-let* ((k (plist-get spec :narrow)))
-                                 (and (stringp k)
-                                      (= (length k) 1)
-                                      (= (string-to-char k) c))))
-                             specs-v)))
-                      (cond
-                       ((and prefix-event (eql c prefix-event))
-                        (setq narrow-idx nil
-                              fzfa--multi-narrowed-p nil))
-                       (target (setq narrow-idx target
-                                     fzfa--multi-narrowed-p t))
-                       (t nil))
-                      (setq menu-active nil)
-                      (unless (eql before narrow-idx)
-                        ;; Leaving a non-hidden source — extract its
-                        ;; `#cmd#' shape back onto the source struct so
-                        ;; widened / next-narrowed mode doesn't inherit
-                        ;; a stale `#cmd#filter' buffer.
-                        (when before
-                          (fzfa-source--display-force-hidden
-                           (aref sources before) fzfa-separator))
-                        ;; Defer the push: when `force-hidden' mutates
-                        ;; the minibuffer, ivy's `ivy-text' doesn't sync
-                        ;; until `post-command-hook' fires, so an inline
-                        ;; push reads stale input.  An idle-0 timer
-                        ;; lands after the hook and reads fresh text.
-                        (run-with-idle-timer
-                         0 nil multi-refresh-fn))
-                      ;; Restore the normal overlay now that the menu
-                      ;; is dismissed (the 't action's own refresh path
-                      ;; only fires on candidate computations).
-                      (funcall refresh-overlay)
-                      ;; Under ivy, force a prompt redraw so the
-                      ;; `ivy-pre-prompt-function' lambda runs again
-                      ;; with `menu-active' = nil and swaps the menu
-                      ;; hint back to the stats line.  Cheap if
-                      ;; `ivy-push-multi' already redrew.
-                      (when (bound-and-true-p ivy-mode)
-                        (ivy--exhibit))))
-                (setq menu-active nil)))))
+            (when (funcall frontend-owned-p)
+              (let* ((seq (and fzfa-multi-narrow-key
+                               (listify-key-sequence
+                                (kbd fzfa-multi-narrow-key))))
+                     (prefix-event (car (last seq)))
+                     (before narrow-idx))
+                ;; Suspend `refresh-overlay' (which otherwise restores the
+                ;; stats line on every async tick) so the menu stays put
+                ;; until `read-char' returns.  `unwind-protect' guarantees
+                ;; the flag clears on `C-g' / error too.
+                (setq menu-active t)
+                (unwind-protect
+                    (progn
+                      (when (funcall frontend-owned-p)
+                        (with-selected-window frontend-window
+                          (when (funcall frontend-owned-p)
+                            ;; Lazily create the stats overlay if the table
+                            ;; arm hasn't ticked through yet (`fzfa-replay'
+                            ;; on a seeded filter only fires `(t …)' once
+                            ;; before the user presses `<', and depending on
+                            ;; timing the overlay may not have been
+                            ;; installed when the menu opens).  Without
+                            ;; this, the `when (and stats-overlay …)' guard
+                            ;; silently dropped the hint and the menu came
+                            ;; up blank.
+                            (unless stats-overlay
+                              (setq stats-overlay
+                                    (make-overlay
+                                     (point-min) (minibuffer-prompt-end))))
+                            (when (funcall frontend-owned-p)
+                              (let ((display
+                                     (concat
+                                      (fzfa--format-narrow-hint
+                                       specs-v narrow-idx nil
+                                       fzfa-multi-narrow-key)
+                                      " ")))
+                                (when (funcall frontend-owned-p)
+                                  (overlay-put stats-overlay 'display display)
+                                  (when (funcall frontend-owned-p)
+                                    (redisplay))))))))
+                      (when (funcall frontend-owned-p)
+                        (let* ((c (read-char))
+                               (target
+                                (cl-position-if
+                                 (lambda (spec)
+                                   (when-let* ((k (plist-get spec :narrow)))
+                                     (and (stringp k)
+                                          (= (length k) 1)
+                                          (= (string-to-char k) c))))
+                                 specs-v)))
+                          (when (funcall frontend-owned-p)
+                            (cond
+                             ((and prefix-event (eql c prefix-event))
+                              (setq narrow-idx nil
+                                    fzfa--multi-narrowed-p nil))
+                             (target
+                              (setq narrow-idx target
+                                    fzfa--multi-narrowed-p t))
+                             (t nil))
+                            (setq menu-active nil)
+                            (unless (eql before narrow-idx)
+                              ;; Leaving a non-hidden source — extract its
+                              ;; `#cmd#' shape back onto the source struct so
+                              ;; widened / next-narrowed mode doesn't inherit
+                              ;; a stale `#cmd#filter' buffer.
+                              (when before
+                                (fzfa-source--display-force-hidden
+                                 (aref sources before) fzfa-separator))
+                              ;; Defer the push: when `force-hidden' mutates
+                              ;; the minibuffer, ivy's `ivy-text' doesn't sync
+                              ;; until `post-command-hook' fires, so an inline
+                              ;; push reads stale input.  An idle-0 timer
+                              ;; lands after the hook and reads fresh text.
+                              (when (funcall frontend-owned-p)
+                                (run-with-idle-timer
+                                 0 nil multi-refresh-fn)))
+                            ;; Restore the normal overlay now that the menu
+                            ;; is dismissed (the 't action's own refresh path
+                            ;; only fires on candidate computations).
+                            (when (funcall frontend-owned-p)
+                              (funcall refresh-overlay)
+                              ;; Under ivy, force a prompt redraw so the
+                              ;; `ivy-pre-prompt-function' lambda runs again
+                              ;; with `menu-active' = nil and swaps the menu
+                              ;; hint back to the stats line.  Cheap if
+                              ;; `ivy-push-multi' already redrew.
+                              (when (and (funcall frontend-owned-p)
+                                         (bound-and-true-p ivy-mode))
+                                (ivy--exhibit)))))))
+                  (setq menu-active nil))))))
          (router      (fzfa--multi-build-router specs-v candidate->source))
          (session
           (fzfa-session-create
@@ -4761,8 +5042,9 @@ Per-source plist keys:
                ;; routing outside the router; cells exposed via
                ;; `:multi-cells' on ROUTER itself.
                (list router :multi-candidate->source candidate->source)))
-         poll-refresh-timer
-         timer result)
+         (poll-refresh-owner (fzfa--timer-owner-create))
+         (poll-owner (fzfa--timer-owner-create))
+         result)
     ;; Bind the forward-declared closures.  Order: `multi-refresh-fn'
     ;; references `ivy-push-multi' (which was bound in let*);
     ;; `narrow-do-restart' references `multi-refresh-fn';
@@ -4790,19 +5072,21 @@ Per-source plist keys:
     (setq narrow-display-cycle
           (lambda ()
             (interactive)
-            (cond
-             ;; Widened → let `>' self-insert; in multi-source mode
-             ;; there's no single source to cycle.
-             ((null narrow-idx) (call-interactively #'self-insert-command))
-             ;; Mutate the buffer (hidden↔compact materializes /
-             ;; extracts `#CMD#') and let the frontend's
-             ;; post-command-hook pick it up.  A manual
-             ;; `fzfa--frontend-push' here runs *before* ivy syncs
-             ;; `ivy-text' from the minibuffer, so it would parse the
-             ;; stale pre-insert input and restart the source with
-             ;; garbage CMD.
-             (t (fzfa-source--display-cycle
-                 (aref sources narrow-idx) fzfa-separator)))))
+            (when (funcall frontend-owned-p)
+              (cond
+               ;; Widened → let `>' self-insert; in multi-source mode
+               ;; there's no single source to cycle.
+               ((null narrow-idx)
+                (call-interactively #'self-insert-command))
+               ;; Mutate the buffer (hidden↔compact materializes /
+               ;; extracts `#CMD#') and let the frontend's
+               ;; post-command-hook pick it up.  A manual
+               ;; `fzfa--frontend-push' here runs *before* ivy syncs
+               ;; `ivy-text' from the minibuffer, so it would parse the
+               ;; stale pre-insert input and restart the source with
+               ;; garbage CMD.
+               (t (fzfa-source--display-cycle
+                   (aref sources narrow-idx) fzfa-separator))))))
     (unwind-protect
         (progn
           ;; Acquire command handles only after cleanup ownership exists.  If
@@ -4815,23 +5099,27 @@ Per-source plist keys:
                 (setf (fzfa-source-current-cmd src) cmd
                       (fzfa-source-handle src)
                       (fzfa--spawn cmd (fzfa-source-directory src))))))
-          (setq timer
-                (run-with-timer
-                 0 fzfa-refresh-delay
-                 (fzfa--make-poll-fn
-                  sources
-                  frontend-owned-p
-                  multi-refresh-fn
-                  (lambda () first-cands-shown)
-                  (lambda (refresh-work)
-                    (unless poll-refresh-timer
-                      (setq poll-refresh-timer
-                            (run-with-idle-timer
-                             0 nil
-                             (lambda ()
-                               (setq poll-refresh-timer nil)
-                               (funcall refresh-work)))))))))
-          (sit-for fzfa-refresh-delay)
+          ;; Static producer sessions have no native generation to poll.
+          (when (cl-loop for source across sources
+                         thereis (fzfa-source-handle source))
+            (fzfa--timer-owner-schedule
+             poll-owner
+             (lambda (callback)
+               (run-with-timer 0 fzfa-refresh-delay callback))
+             (fzfa--make-poll-fn
+              sources
+              frontend-owned-p
+              multi-refresh-fn
+              (lambda () first-cands-shown)
+              (lambda (refresh-work)
+                (unless (fzfa--timer-owner-timer poll-refresh-owner)
+                  (fzfa--timer-owner-schedule
+                   poll-refresh-owner
+                   (lambda (callback)
+                     (run-with-idle-timer 0 nil callback))
+                   refresh-work))))
+             t)
+            (sit-for fzfa-refresh-delay))
           (setq result
                 (minibuffer-with-setup-hook
                     (lambda ()
@@ -4841,6 +5129,16 @@ Per-source plist keys:
                       (setq frontend-buffer (current-buffer)
                             frontend-window (active-minibuffer-window)
                             frontend-entered t)
+                      ;; Manual apply/preview commands require the exact top
+                      ;; minibuffer's session even when no preview router is
+                      ;; configured.
+                      (setq fzfa--minibuffer-marker t
+                            fzfa--minibuffer-session session)
+                      (add-hook 'minibuffer-exit-hook
+                                (lambda ()
+                                  (setq fzfa--minibuffer-marker nil
+                                        fzfa--minibuffer-session nil))
+                                nil 'local)
                       (add-hook 'post-command-hook refresh-overlay nil t)
                       (fzfa--minibuffer-format-reset wants-decoration)
                       (when (bound-and-true-p icomplete-mode)
@@ -5137,13 +5435,12 @@ Per-source plist keys:
                                               (fzfa-source-filtered src)
                                               (length out)))))))))
                             (when interrupted
-                              (when retry-timer (cancel-timer retry-timer))
-                              (setq retry-timer
-                                    (run-with-idle-timer
-                                     fzfa-input-debounce nil
-                                     (lambda ()
-                                       (setq retry-timer nil)
-                                       (funcall multi-refresh-fn)))))
+                              (fzfa--timer-owner-schedule
+                               retry-owner
+                               (lambda (callback)
+                                 (run-with-idle-timer
+                                  fzfa-input-debounce nil callback))
+                               multi-refresh-fn))
                             (when (funcall frontend-owned-p)
                               (with-selected-window frontend-window
                                 (unless stats-overlay
@@ -5190,14 +5487,9 @@ Per-source plist keys:
       ;; Teardown calls are independent.  No optional cleanup failure can
       ;; strand a source handle, timer, hook, overlay, or preview session.
       (setq active nil)
-      (when poll-refresh-timer
-        (fzfa--cleanup-call "poll refresh timer"
-                            #'cancel-timer poll-refresh-timer)
-        (setq poll-refresh-timer nil))
-      (when timer
-        (fzfa--cleanup-call "poll timer" #'cancel-timer timer))
-      (when retry-timer
-        (fzfa--cleanup-call "retry timer" #'cancel-timer retry-timer))
+      (fzfa--timer-owner-cancel poll-refresh-owner "poll refresh timer")
+      (fzfa--timer-owner-cancel poll-owner "poll timer")
+      (fzfa--timer-owner-cancel retry-owner "retry timer")
       (when (buffer-live-p frontend-buffer)
         (fzfa--cleanup-call
          "post-command hook"
