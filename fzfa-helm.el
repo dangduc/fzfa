@@ -1554,45 +1554,53 @@ for fuzzy-multi-source UX."
                              ((funcall helm-owner-p))
                              ((not user-moved))
                              (win (helm-window))
+                             ((funcall helm-owner-p))
                              ((window-live-p win))
-                             ((not (helm-empty-buffer-p))))
+                             ((not (helm-empty-buffer-p)))
+                             ((funcall helm-owner-p)))
                    (let ((fzfa-helm--suppressing-snap t))
                      (with-selected-window win
-                       (let* ((pat (bound-and-true-p helm-pattern))
-                              (multi-nonempty (and multi-p pat
-                                                   (not (string-empty-p pat))))
-                              (leader
-                               (when multi-nonempty
-                                 (let ((best-i nil) (best-r 0))
-                                   (dotimes (i n-sources)
-                                     (when-let* ((src (aref sources-v i))
-                                                 (r (fzfa-source-rank src))
-                                                 ((> r best-r)))
-                                       (setq best-r r best-i i)))
-                                   best-i))))
-                         (if leader
-                             (progn
-                               (helm-goto-source (aref source-names leader))
-                               ;; `helm-goto-source' lands on the source
-                               ;; HEADER (helm-core.el:6367).  The
-                               ;; skip-noncandidate logic in
-                               ;; `helm-move-selection-common-1' only
-                               ;; runs when direction is `next' /
-                               ;; `previous', not when direction is a
-                               ;; source name.  Advance past the header
-                               ;; ourselves and re-mark the candidate
-                               ;; line — this mirrors how
-                               ;; `helm-preselect' handles source jumps
-                               ;; (helm-core.el:6791-6792).
-                               (forward-line 1)
-                               (helm-mark-current-line))
-                           (helm-beginning-of-buffer))
-                         ;; `recenter 1' leaves row 0 for the source
-                         ;; header and puts the current line (first
-                         ;; candidate) on row 1 — otherwise the header
-                         ;; gets pushed off-screen and the user has to
-                         ;; scroll up to see which source they're on.
-                         (recenter 1)))))))))))
+                       (when (funcall helm-owner-p)
+                         (let* ((pat (bound-and-true-p helm-pattern))
+                                (multi-nonempty
+                                 (and multi-p pat
+                                      (not (string-empty-p pat))))
+                                (leader
+                                 (when multi-nonempty
+                                   (let ((best-i nil) (best-r 0))
+                                     (dotimes (i n-sources)
+                                       (when-let* ((src (aref sources-v i))
+                                                   (r (fzfa-source-rank src))
+                                                   ((> r best-r)))
+                                         (setq best-r r best-i i)))
+                                     best-i))))
+                           (if leader
+                               (progn
+                                 (helm-goto-source
+                                  (aref source-names leader))
+                                 (when (funcall helm-owner-p)
+                                   ;; `helm-goto-source' lands on the source
+                                   ;; HEADER (helm-core.el:6367).  The
+                                   ;; skip-noncandidate logic in
+                                   ;; `helm-move-selection-common-1' only
+                                   ;; runs when direction is `next' /
+                                   ;; `previous', not when direction is a
+                                   ;; source name.  Advance past the header
+                                   ;; ourselves and re-mark the candidate
+                                   ;; line — this mirrors how
+                                   ;; `helm-preselect' handles source jumps
+                                   ;; (helm-core.el:6791-6792).
+                                   (forward-line 1)
+                                   (when (funcall helm-owner-p)
+                                     (helm-mark-current-line))))
+                             (helm-beginning-of-buffer))
+                           (when (funcall helm-owner-p)
+                             ;; `recenter 1' leaves row 0 for the source
+                             ;; header and puts the current line (first
+                             ;; candidate) on row 1 — otherwise the header
+                             ;; gets pushed off-screen and the user has to
+                             ;; scroll up to see which source they're on.
+                             (recenter 1)))))))))))))
     (unwind-protect
         (progn
           ;; Source construction above is deliberately inert.  Start every
