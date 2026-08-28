@@ -481,8 +481,15 @@ and `fzfa-helm--read' (batch with bulk-stop)."
                (let* ((h (fzfa-source-handle source))
                       (gen (and h (fzfa--poll-generation h))))
                  (when (and gen (> gen (fzfa-source-last-gen source)))
-                   (setf (fzfa-source-last-gen source) gen)
-                   (helm-force-update)))))))
+                   (helm-force-update)
+                   ;; Commit only after Helm published the corresponding
+                   ;; candidates, and only while this source still owns the
+                   ;; observed handle.  A failed update or an update that
+                   ;; replaces the handle must leave the generation edge
+                   ;; available to the next poll.
+                   (when (and active
+                              (eq h (fzfa-source-handle source)))
+                     (setf (fzfa-source-last-gen source) gen))))))))
     (cons
      (apply #'helm-make-source (or name "fzfa") 'helm-source-sync
             :header-name
@@ -1517,7 +1524,8 @@ for fuzzy-multi-source UX."
                     sources-v
                     (lambda () helm-alive-p)
                     #'helm-force-update
-                    (lambda () first-cands-shown)))))
+                    (lambda () first-cands-shown)
+                    (lambda (work) (funcall work))))))
           ;; Per-source preview `:setup' broadcast.  Each cell captures the
           ;; ORIGIN window/buffer/`default-directory' (the user's selected
           ;; window before helm activated), then dispatches `:setup' under its

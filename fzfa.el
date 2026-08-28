@@ -2540,6 +2540,8 @@ on it identically regardless of which container holds it."
   request-id                    ; integer — native request ID returned by the
                                 ; most recent `fzf-native-async-submit' for
                                 ; this source (0 = none / legacy API)
+  request-epoch                 ; monotonic ownership token; incremented when
+                                ; a request is revoked, including restart/stop
   request-signature             ; (QUERY LIMIT CASE-MODE FUZZY
                                 ;  FILTER-ONLY-LENGTH FILTER-ONLY-LOGIC),
                                 ; owned by fzfa; equal calls reuse request-id
@@ -2618,6 +2620,7 @@ to eager-start via `fzf-native-async-start' or to defer."
      :current-cmd nil
      :last-gen -1
      :request-id 0
+     :request-epoch 0
      :request-signature nil
      :request-snapshot-generation nil
      :request-materialization-key nil
@@ -2673,6 +2676,7 @@ nil request id means \"latest\" rather than \"this query\"."
 
 (defun fzfa--source-clear-request (src)
   "Clear SRC's locally owned native request and materialized output."
+  (cl-incf (fzfa-source-request-epoch src))
   (setf (fzfa-source-request-id src) 0
         (fzfa-source-request-signature src) nil
         (fzfa-source-request-snapshot-generation src) nil
@@ -2682,6 +2686,17 @@ nil request id means \"latest\" rather than \"this query\"."
         ;; duplicate raw candidate snapshot as soon as request ownership
         ;; changes.  The next final publication receives a new output object.
         (fzfa-source-last-async-output src) nil))
+
+(defun fzfa--source-request-owned-p (src handle request-id epoch)
+  "Return non-nil when SRC still owns the captured request identity.
+
+HANDLE and REQUEST-ID alone are vulnerable to ABA-style replacement by user
+Lisp reached while a native snapshot is materialized.  EPOCH is incremented
+whenever fzfa revokes request ownership, so the complete tuple remains stable
+only while the caller may safely publish its result."
+  (and (= epoch (fzfa-source-request-epoch src))
+       (eq handle (fzfa-source-handle src))
+       (eql request-id (fzfa-source-request-id src))))
 
 (defun fzfa--source-materialization-key (snapshot-generation)
   "Return the Lisp presentation identity for SNAPSHOT-GENERATION.
@@ -2708,21 +2723,30 @@ anything can poll it under the new query's identity."
             old-id
           (fzfa-source-request-output src))
       (fzfa--source-clear-request src)
-      (let ((submission
-             (fzfa--async-submit (fzfa-source-handle src) query limit)))
+      (let* ((handle (fzfa-source-handle src))
+             (epoch (fzfa-source-request-epoch src))
+             (submission (fzfa--async-submit handle query limit)))
         (cond
          ((and (integerp submission) (> submission 0))
-          (setf (fzfa-source-request-id src) submission
-                (fzfa-source-request-signature src) signature)
-          submission)
+          (when (fzfa--source-request-owned-p src handle 0 epoch)
+            (setf (fzfa-source-request-id src) submission
+                  (fzfa-source-request-signature src) signature)
+            submission))
          ((eq (car-safe submission) 'failed)
-          (let ((output (list 'failed (nth 1 submission) nil)))
-            (setf (fzfa-source-request-signature src) signature
-                  (fzfa-source-request-output src) output)
-            (fzfa--log "async submit failed: %s" (nth 1 output))
-            (funcall (if (minibufferp) #'minibuffer-message #'message)
-                     "fzfa: matcher request failed: %s" (nth 1 output))
-            output)))))))
+          (when (fzfa--source-request-owned-p src handle 0 epoch)
+            (let ((output (list 'failed (nth 1 submission) nil)))
+              (setf (fzfa-source-request-signature src) signature
+                    (fzfa-source-request-output src) output)
+              (fzfa--log "async submit failed: %s" (nth 1 output))
+              (funcall (if (minibufferp) #'minibuffer-message #'message)
+                       "fzfa: matcher request failed: %s" (nth 1 output))
+              ;; Logging and message display are user-extensible.  If either
+              ;; replaced this source, do not return the obsolete failure as
+              ;; the new source's result.
+              (when (and (fzfa--source-request-owned-p
+                          src handle 0 epoch)
+                         (eq output (fzfa-source-request-output src)))
+                output)))))))))
 
 (defvar fzfa--async-failed-producers nil
   "Handles whose producer failure has been reported this session.")
@@ -2769,34 +2793,44 @@ t for pending work."
     (`(pending . ,_total) t)
     (`(failed ,error ,total) (list 'failed error total))))
 
-(defun fzfa--source-materialize-session-output (src handle request-id)
+(defun fzfa--source-materialize-session-output
+    (src handle request-id request-epoch)
   "Build and cache REQUEST-ID's candidate output for SRC on HANDLE."
   (let ((snapshot (while-no-input
                     (fzfa--bridge-defcustoms
                      #'fzf-native-async-snapshot handle request-id))))
     (cond
+     ;; Snapshot construction can call `fzf-native-highlight-fn'.  That user
+     ;; hook may restart or stop SRC before control returns here.
+     ((not (fzfa--source-request-owned-p
+            src handle request-id request-epoch))
+      t)
      ((eq snapshot t) t)
      ((and (eq (plist-get snapshot :state) 'complete)
            (not (plist-get snapshot :stale)))
       (fzfa--async-note-producer-failure handle snapshot)
-      (let ((output (list 'final
-                          (plist-get snapshot :candidates)
-                          (plist-get snapshot :filtered)
-                          (plist-get snapshot :total))))
-        (setf (fzfa-source-request-snapshot-generation src)
-              (plist-get snapshot :snapshot-generation)
-              (fzfa-source-request-materialization-key src)
-              (fzfa--source-materialization-key
-               (plist-get snapshot :snapshot-generation))
-              (fzfa-source-request-output src) output)
-        output))
+      (if (not (fzfa--source-request-owned-p
+                src handle request-id request-epoch))
+          t
+        (let ((output (list 'final
+                            (plist-get snapshot :candidates)
+                            (plist-get snapshot :filtered)
+                            (plist-get snapshot :total))))
+          (setf (fzfa-source-request-snapshot-generation src)
+                (plist-get snapshot :snapshot-generation)
+                (fzfa-source-request-materialization-key src)
+                (fzfa--source-materialization-key
+                 (plist-get snapshot :snapshot-generation))
+                (fzfa-source-request-output src) output)
+          output)))
      (t
       (setf (fzfa-source-request-snapshot-generation src) nil
             (fzfa-source-request-materialization-key src) nil
             (fzfa-source-request-output src) nil)
       (cons 'pending (fzfa--async-collected-total snapshot))))))
 
-(defun fzfa--source-terminal-request-output (src handle _request-id status)
+(defun fzfa--source-terminal-request-output
+    (src handle request-id request-epoch status)
   "Return and cache SRC's terminal REQUEST-ID failure from STATUS.
 
 The first observation is reported to the user.  Equal redraws reuse the
@@ -2804,27 +2838,33 @@ cached `(failed ERROR TOTAL)' value, so a persistent native failure neither
 masquerades as in-flight work nor drives a submit/fail refresh loop.  A query
 signature change clears this marker through `fzfa--source-submit'."
   (fzfa--async-note-producer-failure handle status)
-  (let ((cached (fzfa-source-request-output src)))
-    (if (eq (car-safe cached) 'failed)
-        (let ((updated (list 'failed (nth 1 cached)
+  (if (not (fzfa--source-request-owned-p
+            src handle request-id request-epoch))
+      t
+    (let ((cached (fzfa-source-request-output src)))
+      (if (eq (car-safe cached) 'failed)
+          (let ((updated (list 'failed (nth 1 cached)
+                               (fzfa--async-collected-total status))))
+            (setf (fzfa-source-request-output src) updated)
+            updated)
+        (let* ((state (plist-get status :state))
+               (error-text
+                (or (plist-get status :error)
+                    (format "native matcher request ended in %s" state)))
+               (output (list 'failed error-text
                              (fzfa--async-collected-total status))))
-          (setf (fzfa-source-request-output src) updated)
-          updated)
-      (let* ((state (plist-get status :state))
-             (error-text
-              (or (plist-get status :error)
-                  (format "native matcher request ended in %s" state)))
-             (output (list 'failed error-text
-                           (fzfa--async-collected-total status))))
-        (setf (fzfa-source-request-snapshot-generation src)
-              (plist-get status :snapshot-generation)
-              (fzfa-source-request-materialization-key src) nil
-              (fzfa-source-request-output src) output)
-        (fzfa--log "async request %s ended in %S: %s"
-                   _request-id state error-text)
-        (funcall (if (minibufferp) #'minibuffer-message #'message)
-                 "fzfa: matcher request failed: %s" error-text)
-        output))))
+          (setf (fzfa-source-request-snapshot-generation src)
+                (plist-get status :snapshot-generation)
+                (fzfa-source-request-materialization-key src) nil
+                (fzfa-source-request-output src) output)
+          (fzfa--log "async request %s ended in %S: %s"
+                     request-id state error-text)
+          (funcall (if (minibufferp) #'minibuffer-message #'message)
+                   "fzfa: matcher request failed: %s" error-text)
+          (if (fzfa--source-request-owned-p
+               src handle request-id request-epoch)
+              output
+            t))))))
 
 (defun fzfa--source-async-out (src query limit)
   "Fetch QUERY's scored candidates from async SRC, tagged by finality.
@@ -2842,11 +2882,15 @@ materialization occurs only when a new complete, non-stale snapshot
 generation appears.  Legacy modules retain the combined API path."
   (let ((handle (fzfa-source-handle src)))
     (if (fzfa--session-api-p)
-        (let ((request-id (fzfa--source-submit src query limit)))
+        (let* ((request-id (fzfa--source-submit src query limit))
+               (request-epoch (fzfa-source-request-epoch src)))
           (cond
            ((eq (car-safe request-id) 'failed) request-id)
            ((null request-id)
             (cons 'pending nil))
+           ((not (fzfa--source-request-owned-p
+                  src handle request-id request-epoch))
+            t)
            (t
             (let ((status (while-no-input
                             (fzf-native-async-status handle request-id))))
@@ -2857,11 +2901,14 @@ generation appears.  Legacy modules retain the combined API path."
               (when (and status (not (eq status t)))
                 (fzfa--async-note-producer-failure handle status))
               (cond
+               ((not (fzfa--source-request-owned-p
+                      src handle request-id request-epoch))
+                t)
                ((eq status t) t)
                ((null status) (cons 'pending nil))
                ((eq (plist-get status :state) 'failed)
                 (fzfa--source-terminal-request-output
-                 src handle request-id status))
+                 src handle request-id request-epoch status))
                ((memq (plist-get status :state)
                       '(superseded cancelled unknown idle))
                 ;; These states cannot ever publish a result for REQUEST-ID.
@@ -2893,7 +2940,7 @@ generation appears.  Legacy modules retain the combined API path."
                 (fzfa-source-request-output src))
                (t
                 (fzfa--source-materialize-session-output
-                 src handle request-id)))))))
+                 src handle request-id request-epoch)))))))
       (let ((out (while-no-input
                    (fzfa--bridge-defcustoms
                     #'fzf-native-async-candidates handle query limit))))
@@ -3080,12 +3127,7 @@ frontend — typically a closure over the session's
 is needed.
 
 Updates CURRENT-CMD, LAST-GEN, and LAST-RESTART-TIME unconditionally."
-  (setf (fzfa-source-request-id source) 0
-        (fzfa-source-request-signature source) nil
-        (fzfa-source-request-snapshot-generation source) nil
-        (fzfa-source-request-materialization-key source) nil
-        (fzfa-source-request-output source) nil
-        (fzfa-source-last-async-output source) nil)
+  (fzfa--source-clear-request source)
   (cond
    ((fzfa-source-cands-fn source)
     (let ((token (cl-incf (fzfa-source-prod-token source))))
@@ -3197,12 +3239,7 @@ Idempotent.  Producer callback ownership is revoked before physical cleanup.
 Each cleanup pass is failure-safe, and one bounded retry handles transient
 timer, overlay, or native-stop errors without relying on an unreachable outer
 caller to invoke teardown again.  Return t when cleanup completed."
-  (setf (fzfa-source-request-id source) 0
-        (fzfa-source-request-signature source) nil
-        (fzfa-source-request-snapshot-generation source) nil
-        (fzfa-source-request-materialization-key source) nil
-        (fzfa-source-request-output source) nil
-        (fzfa-source-last-async-output source) nil)
+  (fzfa--source-clear-request source)
   (when (fzfa-source-cands-fn source)
     (cl-incf (fzfa-source-prod-token source)))
   (or (fzfa-source--stop-pass source)
@@ -3852,16 +3889,20 @@ refresh that replaces the handle leaves the new source generation untouched."
       (when (eq handle (fzfa-source-handle src))
         (setf (fzfa-source-last-gen src) generation)))))
 
-(defun fzfa--make-poll-fn (sources-v alive-p refresh-fn first-shown-p)
+(defun fzfa--make-poll-fn
+    (sources-v alive-p refresh-fn first-shown-p schedule-fn)
   "Return a 0-arg poll closure for SOURCES-V.
 
-ALIVE-P / REFRESH-FN / FIRST-SHOWN-P are 0-arg functions.  Each tick
+ALIVE-P / REFRESH-FN / FIRST-SHOWN-P are 0-arg functions.  SCHEDULE-FN
+accepts one 0-arg refresh transaction and must arrange to call it later;
+the owner uses this seam to track and cancel the idle timer.  Each tick
 the closure checks ALIVE-P, `fzfa--multi-poll-bumps', and
 `input-pending-p', then a `fzfa-input-throttle' gate that is
 bypassed while FIRST-SHOWN-P returns nil — so cold sessions paint
 as soon as the producer + scoring delivers, without sitting through
-a throttle window on the empty buffer.  When all checks pass, call REFRESH-FN
-and commit only the generations that the refresh published successfully."
+a throttle window on the empty buffer.  When all checks pass, schedule one
+transaction.  That transaction rechecks liveness and input, calls REFRESH-FN,
+and only then commits the generations that it published successfully."
   (let ((last-exhibit 0.0))
     (lambda ()
       (when (funcall alive-p)
@@ -3871,9 +3912,14 @@ and commit only the generations that the refresh published successfully."
                      (or (not (funcall first-shown-p))
                          (>= (- (float-time) last-exhibit)
                              fzfa-input-throttle)))
-            (funcall refresh-fn)
-            (fzfa--multi-poll-commit bumps)
-            (setq last-exhibit (float-time))))))))
+            (funcall
+             schedule-fn
+             (lambda ()
+               (when (and (funcall alive-p)
+                          (not (input-pending-p)))
+                 (funcall refresh-fn)
+                 (fzfa--multi-poll-commit bumps)
+                 (setq last-exhibit (float-time)))))))))))
 
 (defun fzfa--multi-narrow->string (k)
   "Coerce narrow key value K (symbol, character, or string) to length-1 string."
@@ -4595,6 +4641,8 @@ Per-source plist keys:
                ;; routing outside the router; cells exposed via
                ;; `:multi-cells' on ROUTER itself.
                (list router :multi-candidate->source candidate->source)))
+         (active t)
+         poll-refresh-timer
          retry-timer timer frontend-entered result)
     ;; Bind the forward-declared closures.  Order: `multi-refresh-fn'
     ;; references `ivy-push-multi' (which was bound in let*);
@@ -4646,11 +4694,18 @@ Per-source plist keys:
                  0 fzfa-refresh-delay
                  (fzfa--make-poll-fn
                   sources
-                  (lambda () (active-minibuffer-window))
                   (lambda ()
-                    (run-with-idle-timer
-                     0 nil #'fzfa--frontend-push ivy-push-multi))
-                  (lambda () first-cands-shown))))
+                    (and active (active-minibuffer-window)))
+                  (lambda () (fzfa--frontend-push ivy-push-multi))
+                  (lambda () first-cands-shown)
+                  (lambda (refresh-work)
+                    (unless poll-refresh-timer
+                      (setq poll-refresh-timer
+                            (run-with-idle-timer
+                             0 nil
+                             (lambda ()
+                               (setq poll-refresh-timer nil)
+                               (funcall refresh-work)))))))))
           (add-hook 'post-command-hook refresh-overlay)
           (sit-for fzfa-refresh-delay)
           (setq result
@@ -5007,6 +5062,11 @@ Per-source plist keys:
                      default-val)))))
       ;; Teardown calls are independent.  No optional cleanup failure can
       ;; strand a source handle, timer, hook, overlay, or preview session.
+      (setq active nil)
+      (when poll-refresh-timer
+        (fzfa--cleanup-call "poll refresh timer"
+                            #'cancel-timer poll-refresh-timer)
+        (setq poll-refresh-timer nil))
       (when timer
         (fzfa--cleanup-call "poll timer" #'cancel-timer timer))
       (when retry-timer
