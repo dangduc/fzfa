@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: fastducduc/fzf-native
-          ref: e6a1b0e03651d6615530bf8430ba2783cb1789ce
+          ref: aebd0c362a003b7a8f5b5af3be5162354ff9d06b
           path: fzf-native
 
       # Optional Elisp deps that fzfa forward-declares from.  Checked
