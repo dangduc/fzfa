@@ -565,11 +565,10 @@ mirroring `fzfa-helm-make-async-source' and the substrate.  For lists
 and zero-arg fns there is no CMD concept; `helm-pattern' is the FILTER
 directly and DISPLAY is ignored.
 
-Producer-kind detection runs once at source construction (a test fire
-with empty input observes whether the callback arrives synchronously).
-Async-firing producers (jsonrpc, `url-retrieve') keep their snapshot in
-source-local closure state and trigger `helm-force-update' from the
-callback so helm re-reads candidates with the fresh snapshot."
+Producer functions are classified by arity without firing them during
+source construction.  Both synchronously and asynchronously firing
+producers use the shared fetch protocol; async delivery triggers
+`helm-force-update' so helm re-reads the fresh snapshot."
   (fzfa-helm--ensure-loaded)
   (let* ((limit (or candidate-number-limit 10000))
          (kind
@@ -577,11 +576,9 @@ callback so helm re-reads candidates with the fresh snapshot."
            ((listp items) 'list)
            ((functionp items)
             (if (>= (car (func-arity items)) 1)
-                (let ((fired nil))
-                  (funcall items "" (lambda (_x) (setq fired t)))
-                  (if fired 'sync 'async))
+                'producer
               'zero))))
-         (producer-kind-p (memq kind '(sync async)))
+         (producer-kind-p (eq kind 'producer))
          (initial-char fzfa-separator)
          ;; Per-source state (display-state machinery, producer state,
          ;; result/score, retry-timer) on the struct.  Static kinds
@@ -603,16 +600,7 @@ callback so helm re-reads candidates with the fresh snapshot."
             (fzfa-source--display-cycle source initial-char)
             (when helm-alive-p
               (setq helm-pattern (minibuffer-contents)))))
-         (stop (lambda ()
-                 (when-let* ((tm (fzfa-source-retry-timer source)))
-                   (cancel-timer tm)
-                   (setf (fzfa-source-retry-timer source) nil))
-                 (mapc #'delete-overlay
-                       (fzfa-source-separator-overlays source))
-                 (mapc #'delete-overlay
-                       (fzfa-source-display-overlays source))
-                 (setf (fzfa-source-separator-overlays source) nil
-                       (fzfa-source-display-overlays source) nil))))
+         (stop (lambda () (fzfa-source--stop source))))
     (apply #'helm-make-source (or name "fzfa") 'helm-source-sync
            :header-name
            (lambda (n)
@@ -644,11 +632,7 @@ callback so helm re-reads candidates with the fresh snapshot."
                      (cl-case kind
                        (list items)
                        (zero (funcall items))
-                       (sync (let (snap)
-                               (funcall items (or cmd "")
-                                        (lambda (x) (setq snap x)))
-                               snap))
-                       (async
+                       (producer
                         ;; Producer protocol + async-refresh dispatch
                         ;; live in the shared `fzfa--source-fetch'
                         ;; helper; the closure adapts its REFRESH-FN
