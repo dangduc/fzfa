@@ -1565,8 +1565,11 @@ Lowering this number can be a huge performance improvement.
 | ~+N~   | Exclude lines longer than N characters (default 256).  |
 | ~-N~   | Include but truncate to N characters.                  |
 
-The check fires in the reader thread immediately after ANSI stripping, before
-any allocation, so oversized lines never reach the scoring path.
+With a non-nil cap, the native reader normalizes each record incrementally. It
+retains at most N decoded characters before the newline arrives. ANSI payloads
+and discarded suffix bytes do not increase the partial-record buffer. Excluded
+bytes do not enter the candidate arena or the scorer. A nil cap permits an
+unbounded producer record.
 
 #+begin_src emacs-lisp :tangle yes
   (setq fzfa-max-line-length nil)   ; no limit

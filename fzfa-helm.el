@@ -518,6 +518,13 @@ and `fzfa-helm--read' (batch with bulk-stop)."
                                    :directory dir
                                    :display 'hidden))
          (active t)
+         (render-epoch 0)
+         (render-result nil)
+         (render-revoke-tag (make-symbol "fzfa-helm--render-revoked"))
+         (render-check
+          (lambda (epoch)
+            (unless (= epoch render-epoch)
+              (throw render-revoke-tag render-result))))
          (owner-token nil)
          (owner-p
           (lambda ()
@@ -606,8 +613,11 @@ and `fzfa-helm--read' (batch with bulk-stop)."
                       map)
             :candidates
             (lambda ()
-              (when (and active (funcall claim-owner))
-                (pcase-let* ((`(,cmd . ,filter)
+              (let ((my-epoch (cl-incf render-epoch)))
+                (catch render-revoke-tag
+                  (when (and active (funcall claim-owner))
+                    (funcall render-check my-epoch)
+                    (pcase-let* ((`(,cmd . ,filter)
                               (fzfa--split
                                (or helm-pattern "")
                                (fzfa-source-display-state source)
@@ -616,31 +626,42 @@ and `fzfa-helm--read' (batch with bulk-stop)."
                   ;; deadline and revokes it when input returns to the live
                   ;; command.
                   (fzfa-source--debounce-restart source cmd refresh-fn)
+                  (funcall render-check my-epoch)
                   (when (and (funcall owner-p)
                              (fzfa-source-handle source))
+                    (funcall render-check my-epoch)
                     (let ((r (while-no-input
                                (fzfa--source-async-candidates
                                 source filter limit))))
+                      (funcall render-check my-epoch)
                       ;; Native materialization and highlighting can enter a
                       ;; nested Helm.  The old closure loses publication rights
                       ;; immediately when its exact owner token changes.
                       (when (funcall owner-p)
+                        (funcall render-check my-epoch)
                         (cond
                          ((eq r t)
                           (fzfa-source--schedule-retry
                            source fzfa-input-debounce refresh-fn)
+                          (funcall render-check my-epoch)
                           (when (funcall owner-p)
-                            (fzfa-source-last-result source)))
+                            (funcall render-check my-epoch)
+                            render-result))
                          ((eq (car-safe r) 'failed)
                           (fzfa-source--cancel-retry source)
+                          (funcall render-check my-epoch)
                           (when (funcall owner-p)
-                            (fzfa-source-last-result source)))
+                            (funcall render-check my-epoch)
+                            render-result))
                          (t
                           (fzfa-source--cancel-retry source)
+                          (funcall render-check my-epoch)
                           (when (funcall owner-p)
+                            (funcall render-check my-epoch)
                             (setf (fzfa-source-last-result source) r
                                   (fzfa-source-last-query source) filter)
-                            r)))))))))
+                            (setq render-result r)
+                            r)))))))))))
             :match-dynamic t
             :nohighlight t
             :candidate-number-limit limit
@@ -760,6 +781,17 @@ producers use the shared fetch protocol; async delivery triggers
                                    :candidates (and producer-kind-p
                                                     items)))
          (active t)
+         ;; Helm can recursively invoke one source's candidate closure from a
+         ;; user highlight hook without changing the Helm session token.  A
+         ;; source-local epoch distinguishes that reentry from Helm's normal
+         ;; sequential evaluation of different sources.
+         (render-epoch 0)
+         (render-result nil)
+         (render-revoke-tag (make-symbol "fzfa-helm--render-revoked"))
+         (render-check
+          (lambda (epoch)
+            (unless (= epoch render-epoch)
+              (throw render-revoke-tag render-result))))
          (owner-token nil)
          (owner-p
           (lambda ()
@@ -798,67 +830,79 @@ producers use the shared fetch protocol; async delivery triggers
                      map)
            :candidates
            (lambda ()
-             (when (and active (funcall claim-owner))
-               (let* ((pat (or helm-pattern ""))
-                    ;; For producer kinds, split CMD from FILTER and
-                    ;; route CMD to the producer; for static kinds the
-                    ;; whole pattern is the FILTER.
-                    (split (and producer-kind-p
-                                (fzfa--split pat
-                                             (fzfa-source-display-state source)
-                                             (fzfa-source-command source))))
-                    (cmd (and split (car split)))
-                    (filter (if split (cdr split) pat))
-                    (all
-                     (cl-case kind
-                       (list items)
-                       (zero (funcall items))
-                       (producer
-                        ;; Producer protocol + async-refresh dispatch
-                        ;; live in the shared `fzfa--source-fetch'
-                        ;; helper; the closure adapts its REFRESH-FN
-                        ;; contract to helm's `helm-force-update'
-                        ;; gated on `helm-alive-p'.
-                        (fzfa--source-fetch
-                         source cmd
-                         (lambda ()
-                           (when (funcall owner-p)
-                             (helm-force-update)
-                             (funcall owner-p))))
-                        (fzfa-source-snapshot source))))
-                    (r (while-no-input
-                         (if (string-empty-p filter)
-                             (if history (fzfa--history-rank all history) all)
-                           (let ((fzfa-batch-highlight nil))
-                             (fzfa--bridge-defcustoms
-                              #'fzf-native-score-all all filter))))))
-               ;; Producer callbacks, history ranking, and native highlighting
-               ;; can enter another Helm.  Publish only while this closure
-               ;; still owns the exact result/minibuffer pair.
-               (when (funcall owner-p)
-                 (cond
-                  ((eq r t)
-                   (fzfa-source--schedule-retry
-                    source fzfa-input-debounce
-                    (lambda ()
-                      (when (funcall owner-p)
-                        (helm-force-update)
-                        (funcall owner-p))))
-                   (when (funcall owner-p)
-                     (if (equal filter (fzfa-source-last-query source))
-                         (fzfa-source-last-result source)
-                       nil)))
-                  (t
-                   (fzfa-source--cancel-retry source)
-                   (when (funcall owner-p)
-                     (let ((ranked
-                            (fzfa--rank-and-highlight r filter history)))
-                       (when (funcall owner-p)
-                         (setf (fzfa-source-total source) (length all)
-                               (fzfa-source-filtered source) (length ranked)
-                               (fzfa-source-last-result source) ranked
-                               (fzfa-source-last-query source) filter)
-                         ranked)))))))))
+             (let ((my-epoch (cl-incf render-epoch)))
+               (catch render-revoke-tag
+                 (when (and active (funcall claim-owner))
+                   (funcall render-check my-epoch)
+                   (let* ((pat (or helm-pattern ""))
+                          ;; For producer kinds, split CMD from FILTER and
+                          ;; route CMD to the producer; for static kinds the
+                          ;; whole pattern is the FILTER.
+                          (split (and producer-kind-p
+                                      (fzfa--split pat
+                                                   (fzfa-source-display-state source)
+                                                   (fzfa-source-command source))))
+                          (cmd (and split (car split)))
+                          (filter (if split (cdr split) pat))
+                          (all
+                           (cl-case kind
+                             (list items)
+                             (zero (funcall items))
+                             (producer
+                              ;; Producer protocol + async-refresh dispatch
+                              ;; live in the shared `fzfa--source-fetch'
+                              ;; helper; the closure adapts its REFRESH-FN
+                              ;; contract to helm's `helm-force-update'
+                              ;; gated on `helm-alive-p'.
+                              (fzfa--source-fetch
+                               source cmd
+                               (lambda ()
+                                 (when (funcall owner-p)
+                                   (helm-force-update)
+                                   (funcall owner-p))))
+                              (fzfa-source-snapshot source))))
+                          (r (while-no-input
+                               (if (string-empty-p filter)
+                                   (if history (fzfa--history-rank all history) all)
+                                 (let ((fzfa-batch-highlight nil))
+                                   (fzfa--bridge-defcustoms
+                                    #'fzf-native-score-all all filter))))))
+                     (funcall render-check my-epoch)
+                     ;; Producer callbacks, history ranking, and native highlighting
+                     ;; can enter another Helm.  Publish only while this closure
+                     ;; still owns the exact result/minibuffer pair.
+                     (when (funcall owner-p)
+                       (funcall render-check my-epoch)
+                       (cond
+                        ((eq r t)
+                         (fzfa-source--schedule-retry
+                          source fzfa-input-debounce
+                          (lambda ()
+                            (when (funcall owner-p)
+                              (helm-force-update)
+                              (funcall owner-p))))
+                         (funcall render-check my-epoch)
+                         (when (funcall owner-p)
+                           (funcall render-check my-epoch)
+                           (if (equal filter (fzfa-source-last-query source))
+                               (fzfa-source-last-result source)
+                             nil)))
+                        (t
+                         (fzfa-source--cancel-retry source)
+                         (funcall render-check my-epoch)
+                         (when (funcall owner-p)
+                           (funcall render-check my-epoch)
+                           (let ((ranked
+                                  (fzfa--rank-and-highlight r filter history)))
+                             (funcall render-check my-epoch)
+                             (when (funcall owner-p)
+                               (funcall render-check my-epoch)
+                               (setf (fzfa-source-total source) (length all)
+                                     (fzfa-source-filtered source) (length ranked)
+                                     (fzfa-source-last-result source) ranked
+                                     (fzfa-source-last-query source) filter)
+                               (setq render-result ranked)
+                               ranked)))))))))))
            :match-dynamic t
            :nohighlight t
            :candidate-number-limit limit
@@ -1197,6 +1241,16 @@ for fuzzy-multi-source UX."
          ;; helm-buffer doesn't sit through two throttle windows waiting
          ;; for the producer + scoring round-trip on the cold session.
          (first-cands-shown nil)
+         ;; Per-source, rather than session-wide: Helm evaluates source
+         ;; candidate closures sequentially during one ordinary update.  Only
+         ;; recursive evaluation of the *same* source revokes an older frame.
+         (render-epochs (make-vector n-sources 0))
+         (render-results (make-vector n-sources nil))
+         (render-revoke-tag (make-symbol "fzfa-helm--render-revoked"))
+         (render-check
+          (lambda (idx epoch)
+            (unless (= epoch (aref render-epochs idx))
+              (throw render-revoke-tag (aref render-results idx)))))
          (session-active t)
          (helm-owner-token nil)
          (helm-owner-p
@@ -1334,49 +1388,66 @@ for fuzzy-multi-source UX."
                                    (fzfa-source-handle source))))
                         :candidates
                         (lambda ()
-                          (when (and active (funcall helm-claim-owner))
-                            (pcase-let* ((`(,split-cmd . ,filter)
-                                          (fzfa--split
-                                           (or helm-pattern "")
-                                           (fzfa-source-display-state source)
-                                           (fzfa-source-command source))))
-                              ;; CMD edited in compact / full →
-                              ;; reconcile the shell handle on every redraw.
-                              (fzfa-source--debounce-restart
-                               source split-cmd refresh-fn)
-                              (when (and active (funcall helm-owner-p))
-                                (let ((r (while-no-input
-                                           (fzfa--source-async-candidates
-                                            source filter limit))))
+                          (let ((my-epoch
+                                 (cl-incf (aref render-epochs i))))
+                            (catch render-revoke-tag
+                              (when (and active (funcall helm-claim-owner))
+                                (funcall render-check i my-epoch)
+                                (pcase-let* ((`(,split-cmd . ,filter)
+                                              (fzfa--split
+                                               (or helm-pattern "")
+                                               (fzfa-source-display-state source)
+                                               (fzfa-source-command source))))
+                                  ;; CMD edited in compact / full →
+                                  ;; reconcile the shell handle on every redraw.
+                                  (fzfa-source--debounce-restart
+                                   source split-cmd refresh-fn)
+                                  (funcall render-check i my-epoch)
                                   (when (and active (funcall helm-owner-p))
-                                    (cond
-                                     ((eq r t)
-                                      (fzfa-source--schedule-retry
-                                       source fzfa-input-debounce helm-refresh)
-                                      (when (and active
-                                                 (funcall helm-owner-p))
-                                        (fzfa-source-last-result source)))
-                                     ((eq (car-safe r) 'failed)
-                                      (fzfa-source--cancel-retry source)
-                                      (when (and active
-                                                 (funcall helm-owner-p))
-                                        (fzfa-source-last-result source)))
-                                     (t
-                                      (fzfa-source--cancel-retry source)
-                                      (when (and active
-                                                 (funcall helm-owner-p))
-                                        (let ((rank
-                                               (fzfa--multi-rank
-                                                r filter t)))
+                                    (funcall render-check i my-epoch)
+                                    (let ((r (while-no-input
+                                               (fzfa--source-async-candidates
+                                                source filter limit))))
+                                      (funcall render-check i my-epoch)
+                                      (when (and active (funcall helm-owner-p))
+                                        (funcall render-check i my-epoch)
+                                        (cond
+                                         ((eq r t)
+                                          (fzfa-source--schedule-retry
+                                           source fzfa-input-debounce helm-refresh)
+                                          (funcall render-check i my-epoch)
                                           (when (and active
                                                      (funcall helm-owner-p))
-                                            (when (and r
-                                                       (not first-cands-shown))
-                                              (setq first-cands-shown t))
-                                            (setf
-                                             (fzfa-source-last-result source) r
-                                             (fzfa-source-rank source) rank)
-                                            r)))))))))))
+                                            (funcall render-check i my-epoch)
+                                            (aref render-results i)))
+                                         ((eq (car-safe r) 'failed)
+                                          (fzfa-source--cancel-retry source)
+                                          (funcall render-check i my-epoch)
+                                          (when (and active
+                                                     (funcall helm-owner-p))
+                                            (funcall render-check i my-epoch)
+                                            (aref render-results i)))
+                                         (t
+                                          (fzfa-source--cancel-retry source)
+                                          (funcall render-check i my-epoch)
+                                          (when (and active
+                                                     (funcall helm-owner-p))
+                                            (funcall render-check i my-epoch)
+                                            (let ((rank
+                                                   (fzfa--multi-rank
+                                                    r filter t)))
+                                              (funcall render-check i my-epoch)
+                                              (when (and active
+                                                         (funcall helm-owner-p))
+                                                (funcall render-check i my-epoch)
+                                                (when (and r
+                                                           (not first-cands-shown))
+                                                  (setq first-cands-shown t))
+                                                (setf
+                                                 (fzfa-source-last-result source) r
+                                                 (fzfa-source-rank source) rank)
+                                                (aset render-results i r)
+                                                r)))))))))))))
                         :match-dynamic t
                         :nohighlight t
                         :candidate-number-limit limit
@@ -1435,90 +1506,105 @@ for fuzzy-multi-source UX."
                                             (fzfa-source-total source))))
                         :candidates
                         (lambda ()
-                          (when (funcall helm-claim-owner)
-                            (let* ((pat (or helm-pattern ""))
-                                 ;; #CMD#FILTER split — producer
-                                 ;; kinds route CMD to INPUT and
-                                 ;; FILTER to fzf scoring.  Static
-                                 ;; kinds have no CMD; whole pattern
-                                 ;; is the FILTER.  Use the
-                                 ;; display-state-aware `fzfa--split'
-                                 ;; \(not the raw `fzfa--split-input')
-                                 ;; so non-shell producer sources in
-                                 ;; hidden mode (e.g.
-                                 ;; `fzfa-replay--file-producer') route
-                                 ;; the whole pattern through FILTER
-                                 ;; instead of treating it as CMD and
-                                 ;; leaving FILTER empty.
-                                 (split (and (eq kind 'producer)
-                                             (fzfa--split
-                                              pat
-                                              (fzfa-source-display-state source)
-                                              (fzfa-source-command source))))
-                                 (cmd (and split (car split)))
-                                 (filter (if split (cdr split) pat))
-                                 (all
-                                  (cl-case kind
-                                    (list cands)
-                                    (zero (funcall cands))
-                                    (producer
-                                     ;; Producer protocol + async-refresh
-                                     ;; dispatch live in the shared
-                                     ;; `fzfa--source-fetch' helper; the
-                                     ;; closure adapts its REFRESH-FN
-                                     ;; contract to helm's
-                                     ;; `helm-force-update' gated on
-                                     ;; `helm-alive-p'.  Meanwhile we
-                                     ;; return the current snapshot
-                                     ;; (possibly stale for one tick).
-                                     (fzfa--source-fetch
-                                      source cmd
-                                      helm-refresh)
-                                     (fzfa-source-snapshot source))))
-                                 (r (while-no-input
-                                      (if (string-empty-p filter)
-                                          (if history
-                                              (fzfa--history-rank all history)
-                                            all)
-                                        (let ((fzfa-batch-highlight nil))
-                                          (fzfa--bridge-defcustoms
-                                           #'fzf-native-score-all all filter))))))
-                            (when (funcall helm-owner-p)
-                              (cond
-                               ((eq r t)
-                                (fzfa-source--schedule-retry
-                                 source fzfa-input-debounce helm-refresh)
-                                (when (funcall helm-owner-p)
-                                  (if (equal
-                                       filter
-                                       (fzfa-source-last-query source))
-                                      (fzfa-source-last-result source)
-                                    nil)))
-                               (t
-                                (fzfa-source--cancel-retry source)
-                                (when (funcall helm-owner-p)
-                                  (let ((ranked
-                                         (fzfa--rank-and-highlight
-                                          r filter history)))
-                                    (when (funcall helm-owner-p)
-                                      (let ((rank
-                                             (fzfa--multi-rank
-                                              ranked filter nil)))
-                                        (when (funcall helm-owner-p)
-                                          (when (and ranked
-                                                     (not first-cands-shown))
-                                            (setq first-cands-shown t))
-                                          (setf
-                                           (fzfa-source-total source)
-                                           (length all)
-                                           (fzfa-source-filtered source)
-                                           (length ranked)
-                                           (fzfa-source-last-result source)
-                                           ranked
-                                           (fzfa-source-last-query source)
-                                           filter
-                                           (fzfa-source-rank source) rank)
-                                          ranked)))))))))))
+                          (let ((my-epoch
+                                 (cl-incf (aref render-epochs i))))
+                            (catch render-revoke-tag
+                              (when (funcall helm-claim-owner)
+                                (funcall render-check i my-epoch)
+                                (let* ((pat (or helm-pattern ""))
+                                       ;; #CMD#FILTER split — producer
+                                       ;; kinds route CMD to INPUT and
+                                       ;; FILTER to fzf scoring.  Static
+                                       ;; kinds have no CMD; whole pattern
+                                       ;; is the FILTER.  Use the
+                                       ;; display-state-aware `fzfa--split'
+                                       ;; \(not the raw `fzfa--split-input')
+                                       ;; so non-shell producer sources in
+                                       ;; hidden mode (e.g.
+                                       ;; `fzfa-replay--file-producer') route
+                                       ;; the whole pattern through FILTER
+                                       ;; instead of treating it as CMD and
+                                       ;; leaving FILTER empty.
+                                       (split (and (eq kind 'producer)
+                                                   (fzfa--split
+                                                    pat
+                                                    (fzfa-source-display-state source)
+                                                    (fzfa-source-command source))))
+                                       (cmd (and split (car split)))
+                                       (filter (if split (cdr split) pat))
+                                       (all
+                                        (cl-case kind
+                                          (list cands)
+                                          (zero (funcall cands))
+                                          (producer
+                                           ;; Producer protocol + async-refresh
+                                           ;; dispatch live in the shared
+                                           ;; `fzfa--source-fetch' helper; the
+                                           ;; closure adapts its REFRESH-FN
+                                           ;; contract to helm's
+                                           ;; `helm-force-update' gated on
+                                           ;; `helm-alive-p'.  Meanwhile we
+                                           ;; return the current snapshot
+                                           ;; (possibly stale for one tick).
+                                           (fzfa--source-fetch
+                                            source cmd
+                                            helm-refresh)
+                                           (fzfa-source-snapshot source))))
+                                       (r (while-no-input
+                                            (if (string-empty-p filter)
+                                                (if history
+                                                    (fzfa--history-rank all history)
+                                                  all)
+                                              (let ((fzfa-batch-highlight nil))
+                                                (fzfa--bridge-defcustoms
+                                                 #'fzf-native-score-all all filter))))))
+                                  (funcall render-check i my-epoch)
+                                  (when (funcall helm-owner-p)
+                                    (funcall render-check i my-epoch)
+                                    (cond
+                                     ((eq r t)
+                                      (fzfa-source--schedule-retry
+                                       source fzfa-input-debounce helm-refresh)
+                                      (funcall render-check i my-epoch)
+                                      (when (funcall helm-owner-p)
+                                        (funcall render-check i my-epoch)
+                                        (if (equal
+                                             filter
+                                             (fzfa-source-last-query source))
+                                            (aref render-results i)
+                                          nil)))
+                                     (t
+                                      (fzfa-source--cancel-retry source)
+                                      (funcall render-check i my-epoch)
+                                      (when (funcall helm-owner-p)
+                                        (funcall render-check i my-epoch)
+                                        (let ((ranked
+                                               (fzfa--rank-and-highlight
+                                                r filter history)))
+                                          (funcall render-check i my-epoch)
+                                          (when (funcall helm-owner-p)
+                                            (funcall render-check i my-epoch)
+                                            (let ((rank
+                                                   (fzfa--multi-rank
+                                                    ranked filter nil)))
+                                              (funcall render-check i my-epoch)
+                                              (when (funcall helm-owner-p)
+                                                (funcall render-check i my-epoch)
+                                                (when (and ranked
+                                                           (not first-cands-shown))
+                                                  (setq first-cands-shown t))
+                                                (setf
+                                                 (fzfa-source-total source)
+                                                 (length all)
+                                                 (fzfa-source-filtered source)
+                                                 (length ranked)
+                                                 (fzfa-source-last-result source)
+                                                 ranked
+                                                 (fzfa-source-last-query source)
+                                                 filter
+                                                 (fzfa-source-rank source) rank)
+                                                (aset render-results i ranked)
+                                                ranked)))))))))))))
                         :match-dynamic t
                         :nohighlight t
                         :candidate-number-limit limit

@@ -33,6 +33,8 @@
 (defvar helm-move-selection-after-hook)
 (defvar helm--execute-persistent-action-timer)
 (defvar ivy-mode)
+(defvar ivy-text)
+(defvar ivy-last)
 (defvar ivy--actions-list)
 (defvar ivy-count-format)
 (defvar ivy-pre-prompt-function)
@@ -261,6 +263,18 @@ SPECS is a list of source plists.  CANDIDATES is an alist of
     (should (equal (fzfa-resolve-candidate tagged s)
                    (expand-file-name clean "/root/")))))
 
+(ert-deftest fzfa-resolve-candidate-tag-survives-stale-route-table ()
+  "A tagged path still resolves when a nested render replaced its route map."
+  (let* ((clean "paper.pdf")
+         (tagged (concat clean (fzfa--tofu-suffix 1)))
+         (s (fzfa-test--make-session
+             '((:command "fd" :directory "/videos/" :resolve-paths auto)
+               (:command "fd" :directory "/docs/" :resolve-paths auto))
+             nil)))
+    (should (equal (fzfa-candidate-directory tagged s) "/docs/"))
+    (should (equal (fzfa-resolve-candidate tagged s)
+                   (expand-file-name clean "/docs/")))))
+
 (ert-deftest fzfa-tofu-tagging-preserves-high-plane-candidate-suffixes ()
   "U+100000 and U+10FFFF candidate data must survive a tag round trip."
   (dolist (codepoint '(#x100000 #x10ffff))
@@ -289,6 +303,145 @@ SPECS is a list of source plists.  CANDIDATES is an alist of
                               :directory)
                    "/docs/"))
     (should (null (fzfa-session-source-of s "not-in-map")))))
+
+(ert-deftest fzfa-session-source-of-tag-survives-stale-route-table ()
+  "A tagged result retains its source when a nested render replaced routes."
+  (let* ((specs '((:name "videos" :directory "/videos/")
+                  (:name "docs" :directory "/docs/")))
+         (session (fzfa-test--make-session specs nil))
+         (tagged (concat "paper.pdf" (fzfa--tofu-suffix 1))))
+    (should (equal (plist-get (fzfa-session-source-of session tagged) :name)
+                   "docs"))
+    ;; A syntactically valid tag outside this session's source vector is not
+    ;; allowed to index past the session-owned routing state.
+    (should (null
+             (fzfa-session-source-of
+             session (concat "unknown" (fzfa--tofu-suffix 2)))))))
+
+(ert-deftest fzfa-multi-source-idx-tag-survives-stale-route-table ()
+  "A tagged candidate keeps its index without an entry in the live route map."
+  (let ((tagged (concat "paper.pdf" (fzfa--tofu-suffix 1))))
+    (should (= (fzfa--multi-source-idx
+                tagged (make-hash-table :test #'equal))
+               1))))
+
+(ert-deftest fzfa-multi-stale-selection-exit-canonicalizes-action ()
+  "The exit hook removes a stripped tofu suffix after nested rendering."
+  (let* ((owner (generate-new-buffer " *fzfa stale selection owner*"))
+         (window (selected-window))
+         (original-buffer (window-buffer window))
+         (fzfa-preview-functions nil)
+         (fzfa-prompt-function (lambda (&rest _) nil))
+         (fzfa-batch-highlight nil)
+         table old inner triggered actions result)
+    (unwind-protect
+        (cl-letf
+            (((symbol-function 'fzfa--ensure-category-override) #'ignore)
+             ((symbol-function 'fzfa--sessions-push) #'ignore)
+             ((symbol-function 'fzfa--minibuffer-format-reset) #'ignore)
+             ((symbol-function 'active-minibuffer-window) (lambda () window))
+             ((symbol-function 'minibuffer-prompt-end) #'point-min)
+             ((symbol-function 'completing-read)
+              (lambda (_prompt collection &rest _)
+                (setq table collection)
+                (set-window-buffer window owner)
+                (with-current-buffer owner
+                  (erase-buffer)
+                  (run-hooks 'minibuffer-setup-hook)
+                  (setq old (funcall table "old" nil t))
+                  (let* ((metadata (funcall table "" nil 'metadata))
+                         (group (cdr (assq 'group-function metadata))))
+                    ;; The callback publishes a new route table while the
+                    ;; frontend retains its old displayed selection.
+                    (funcall group (car old) t))
+                  (erase-buffer)
+                  (insert (car old))
+                  (goto-char (point-max))
+                  (run-hooks 'minibuffer-exit-hook))
+                ;; Model the normal removal of minibuffer text properties.
+                (substring-no-properties (car old)))))
+          (setq result
+                (fzfa--read
+                 `((:name "A" :narrow "a"
+                          :candidates ("a-old-match" "a-new-match")
+                    :group ,(lambda (candidate transform)
+                              (when (and transform (not triggered))
+                                (setq triggered t
+                                      inner (funcall table "new" nil t)))
+                              (format "GA:%s" candidate))
+                    :action ,(lambda (candidate)
+                               (push (list 'A candidate) actions)
+                               candidate))
+                   (:name "B" :narrow "b"
+                          :candidates ("b-old-match" "b-new-match")
+                    :action ,(lambda (candidate)
+                               (push (list 'B candidate) actions)
+                               candidate)))
+                 :prompt "probe: ")))
+      (when (window-live-p window)
+        (set-window-buffer window original-buffer))
+      (kill-buffer owner))
+    (should (equal (mapcar #'fzfa--tofu-hide old)
+                   '("a-old-match" "b-old-match")))
+    (should (equal (mapcar #'fzfa--tofu-hide inner)
+                   '("a-new-match" "b-new-match")))
+    (should (equal (mapcar #'car actions) '(A)))
+    (should (equal (cadar actions) "a-old-match"))
+    (should (equal result "a-old-match"))
+    (should-not (fzfa--tagged-p result))))
+
+(ert-deftest fzfa-single-stale-selection-exit-canonicalizes-action ()
+  "A single-source exit keeps the displayed result after nested rendering."
+  (let* ((owner (generate-new-buffer " *fzfa single stale selection*"))
+         (window (selected-window))
+         (original-buffer (window-buffer window))
+         (fzfa-preview-functions nil)
+         (fzfa-prompt-function (lambda (&rest _) nil))
+         (fzfa-batch-highlight nil)
+         table old inner triggered actions result)
+    (unwind-protect
+        (cl-letf
+            (((symbol-function 'fzfa--ensure-category-override) #'ignore)
+             ((symbol-function 'fzfa--sessions-push) #'ignore)
+             ((symbol-function 'fzfa--minibuffer-format-reset) #'ignore)
+             ((symbol-function 'active-minibuffer-window) (lambda () window))
+             ((symbol-function 'minibuffer-prompt-end) #'point-min)
+             ((symbol-function 'completing-read)
+              (lambda (_prompt collection &rest _)
+                (setq table collection)
+                (set-window-buffer window owner)
+                (with-current-buffer owner
+                  (erase-buffer)
+                  (run-hooks 'minibuffer-setup-hook)
+                  (setq old (funcall table "old" nil t))
+                  (let* ((metadata (funcall table "" nil 'metadata))
+                         (group (cdr (assq 'group-function metadata))))
+                    (funcall group (car old) t))
+                  (erase-buffer)
+                  (insert (car old))
+                  (goto-char (point-max))
+                  (run-hooks 'minibuffer-exit-hook))
+                (substring-no-properties (car old)))))
+          (setq result
+                (fzfa--read
+                 `((:name "only" :candidates ("old-match" "new-match")
+                    :group ,(lambda (candidate transform)
+                              (when (and transform (not triggered))
+                                (setq triggered t
+                                      inner (funcall table "new" nil t)))
+                              candidate)
+                    :action ,(lambda (candidate)
+                               (push candidate actions)
+                               candidate)))
+                 :prompt "single: ")))
+      (when (window-live-p window)
+        (set-window-buffer window original-buffer))
+      (kill-buffer owner))
+    (should (equal (mapcar #'fzfa--tofu-hide old) '("old-match")))
+    (should (equal (mapcar #'fzfa--tofu-hide inner) '("new-match")))
+    (should (equal actions '("old-match")))
+    (should (equal result "old-match"))
+    (should-not (fzfa--tagged-p result))))
 
 ;;; fzfa--default-dir
 
@@ -1344,6 +1497,39 @@ when the inner sources arrive without `:narrow'."
     (should (equal events
                    '(setup-a setup-b exit-a exit-b (return-a nil))))))
 
+(ert-deftest fzfa-multi-router-reentrant-exit-does-not-resurrect-setup ()
+  "Teardown entered from :setup aborts that setup and all later children."
+  (let (router events)
+    (let* ((handler
+            (list
+             :setup (lambda (&optional _session)
+                      (setq events (append events '(setup)))
+                      (funcall (plist-get router :exit) 'session))
+             :exit (lambda (&optional _session)
+                     (setq events (append events '(exit))))
+             :return (lambda (&optional _candidate _session)
+                       (setq events (append events '(return))))))
+           (later-handler
+            (list
+             :setup (lambda (&optional _session)
+                      (setq events (append events '(later-setup))))
+             :exit (lambda (&optional _session)
+                     (setq events (append events '(later-exit))))))
+           (sources (vector (list :name "source" :preview handler)
+                            (list :name "later" :preview later-handler)))
+           (routes (make-hash-table :test #'equal))
+           (fzfa--preview-session (list nil)))
+      (setq router (fzfa--multi-build-router sources routes))
+      (setcar fzfa--preview-session router)
+      (fzfa-preview-put :origin-window nil)
+      (fzfa-preview-put :origin-buffer nil)
+      (fzfa-preview-put :default-directory "/tmp/")
+      (funcall (plist-get router :setup) 'session)
+      ;; All later teardown forms remain idempotent after nested :exit.
+      (funcall (plist-get router :exit) 'session)
+      (funcall (plist-get router :return) nil 'session)
+      (should (equal events '(setup exit))))))
+
 (ert-deftest fzfa-core-preview-install-setup-quit-clears-ownership ()
   "An aborted setup leaves neither handler resources nor minibuffer owners."
   (let* ((events nil)
@@ -1412,6 +1598,43 @@ when the inner sources arrive without `:narrow'."
                     'quit))))
     (fzfa--preview-return nil 'session)
     (should (equal (reverse events) '(setup exit)))))
+
+(ert-deftest fzfa-core-preview-ordinary-setup-error-rolls-back ()
+  "An ordinary setup error reaches the lifecycle transaction owner."
+  (let* ((events nil)
+         (handler
+          `(:setup ,(lambda ()
+                      (push 'setup events)
+                      (error "injected setup failure"))
+            :exit ,(lambda () (push 'exit events))
+            :return ,(lambda (&optional _candidate)
+                       (push 'return events))))
+         (fzfa--preview-session (list handler))
+         (window (selected-window)))
+    (with-temp-buffer
+      (setq-local minibuffer-exit-hook nil)
+      (setq-local post-command-hook nil)
+      (cl-letf (((symbol-function 'active-minibuffer-window)
+                 (lambda () window))
+                ((symbol-function 'minibuffer-selected-window)
+                 (lambda () window)))
+        (should-error (fzfa--preview-install 'session 0))))
+    ;; Normal outer cleanup after the failed install must not return it.
+    (fzfa--preview-return nil 'session)
+    (should (equal (reverse events) '(setup exit)))))
+
+(ert-deftest fzfa-preview-exit-error-is-visible-to-cleanup-owner ()
+  "Lifecycle dispatch must not report a failed exit as successful cleanup."
+  (let* ((attempts 0)
+         (handler
+          `(:exit ,(lambda ()
+                     (cl-incf attempts)
+                     (error "injected exit failure"))))
+         (fzfa--preview-session (list handler)))
+    (should-not
+     (fzfa--cleanup-call "preview exit probe"
+                         #'fzfa--preview-call :exit nil))
+    (should (= attempts 1))))
 
 (ert-deftest fzfa-preview-show-uses-same-window ()
   "`fzfa-preview-show' lands the buffer in the currently selected window.
@@ -3334,6 +3557,180 @@ even when their extension is excluded from `fzfa-extensions'."
       (kill-buffer action))
     (should (= updates 1))))
 
+(ert-deftest fzfa-helm-sync-reentrant-render-publishes-newest-query ()
+  "A recursive redraw of one sync source must revoke its outer result."
+  (let* ((owner (generate-new-buffer " *fzfa helm sync render owner*"))
+         (helm-map (make-sparse-keymap))
+         (helm-pattern "old")
+         (fzfa-preview-key nil)
+         (fzfa-display-key nil)
+         triggered candidates inner outer source)
+    (unwind-protect
+        (cl-letf (((symbol-function 'fzfa-helm--ensure-loaded) #'ignore)
+                  ((symbol-function 'fzfa-helm--current-session-token)
+                   (lambda () (cons owner owner)))
+                  ((symbol-function 'helm-make-source)
+                   (lambda (_name _class &rest args) args)))
+          (setq source
+                (fzfa-helm-make-sync-source
+                 :name "sync"
+                 :items '("old-match" "new-match")
+                 :action #'identity)
+                candidates (plist-get source :candidates))
+          (let ((fzf-native-highlight-fn
+                 (lambda (_candidate _positions)
+                   (unless triggered
+                     (setq triggered t
+                           helm-pattern "new"
+                           inner (funcall candidates))))))
+            (setq helm-pattern "old"
+                  outer (funcall candidates))))
+      (when-let* ((cleanup (and source (plist-get source :cleanup))))
+        (funcall cleanup))
+      (kill-buffer owner))
+    (should (equal inner '("new-match")))
+    (should (equal outer inner))))
+
+(ert-deftest fzfa-helm-sync-owner-check-reentry-publishes-newest-query ()
+  "Reentry from the final ownership check must revoke the older redraw."
+  (let* ((owner (generate-new-buffer " *fzfa helm claim render owner*"))
+         (helm-map (make-sparse-keymap))
+         (helm-pattern "old")
+         (fzfa-preview-key nil)
+         (fzfa-display-key nil)
+         (token-reads 0)
+         candidates inner outer source)
+    (unwind-protect
+        (cl-letf (((symbol-function 'fzfa-helm--ensure-loaded) #'ignore)
+                  ((symbol-function 'fzfa-helm--current-session-token)
+                   (lambda ()
+                     (when (= (cl-incf token-reads) 5)
+                       (setq helm-pattern "new"
+                             inner (funcall candidates)))
+                     (cons owner owner)))
+                  ((symbol-function 'helm-make-source)
+                   (lambda (_name _class &rest args) args)))
+          (setq source
+                (fzfa-helm-make-sync-source
+                 :name "claim"
+                 :items '("old-match" "new-match")
+                 :action #'identity)
+                candidates (plist-get source :candidates))
+          (setq helm-pattern "old"
+                outer (funcall candidates)))
+      (when-let* ((cleanup (and source (plist-get source :cleanup))))
+        (funcall cleanup))
+      (kill-buffer owner))
+    (should (equal inner '("new-match")))
+    (should (equal outer inner))))
+
+(ert-deftest fzfa-helm-async-reentrant-render-publishes-newest-query ()
+  "A callback inside one async redraw must revoke its outer result."
+  (let* ((owner (generate-new-buffer " *fzfa helm async render owner*"))
+         (helm-map (make-sparse-keymap))
+         (helm-pattern "old")
+         (fzfa-preview-key nil)
+         (fzfa-display-key nil)
+         triggered candidates inner outer source)
+    (unwind-protect
+        (cl-letf (((symbol-function 'fzfa-helm--ensure-loaded) #'ignore)
+                  ((symbol-function 'fzfa-helm--current-session-token)
+                   (lambda () (cons owner owner)))
+                  ((symbol-function 'helm-make-source)
+                   (lambda (_name _class &rest args) args))
+                  ((symbol-function 'fzfa--spawn)
+                   (lambda (&rest _) 'fake-handle))
+                  ((symbol-function 'fzfa-helm--make-poll-timer)
+                   (lambda (_callback) 'fake-poll-timer))
+                  ((symbol-function 'fzfa-source--debounce-restart)
+                   (lambda (&rest _) nil))
+                  ((symbol-function 'fzfa--source-async-candidates)
+                   (lambda (_source filter _limit)
+                     (list (concat filter "-match"))))
+                  ((symbol-function 'fzfa-source--cancel-retry)
+                   (lambda (_source)
+                     (unless triggered
+                       (setq triggered t
+                             helm-pattern "new"
+                             inner (funcall candidates)))
+                     nil))
+                  ((symbol-function 'fzfa-source--stop) #'ignore)
+                  ((symbol-function 'cancel-timer) #'ignore))
+          (setq source
+                (fzfa-helm-make-async-source
+                 :name "async"
+                 :command "producer"
+                 :action #'identity)
+                candidates (plist-get source :candidates))
+          (setq helm-pattern "old"
+                outer (funcall candidates)))
+      (when-let* ((cleanup (and source (plist-get source :cleanup))))
+        (funcall cleanup))
+      (kill-buffer owner))
+    (should (equal inner '("new-match")))
+    (should (equal outer inner))))
+
+(ert-deftest fzfa-helm-multi-reentrant-render-is-source-local ()
+  "Reentry revokes one source without revoking Helm's sequential pass."
+  (let* ((owner (generate-new-buffer " *fzfa helm multi render owner*"))
+         (helm-after-update-hook nil)
+         (helm-move-selection-after-hook nil)
+         (helm--execute-persistent-action-timer nil)
+         (helm-map (make-sparse-keymap))
+         (helm-alive-p t)
+         (helm-pattern "old")
+         (fzfa-preview-functions nil)
+         (fzfa-preview-key nil)
+         (fzfa-display-key nil)
+         triggered inner-a outer-a sequential-b)
+    (unwind-protect
+        (cl-letf (((symbol-function 'fzfa-helm--ensure-loaded) #'ignore)
+                  ((symbol-function 'fzfa-helm--current-session-token)
+                   (lambda () (cons owner owner)))
+                  ((symbol-function 'helm-make-source)
+                   (lambda (_name _class &rest args) args))
+                  ((symbol-function 'helm-force-update) #'ignore)
+                  ((symbol-function 'helm-window)
+                   (lambda () (selected-window)))
+                  ((symbol-function 'helm-empty-buffer-p) (lambda () t))
+                  ((symbol-function 'helm-goto-source) #'ignore)
+                  ((symbol-function 'helm-beginning-of-buffer) #'ignore)
+                  ((symbol-function 'helm-mark-current-line) #'ignore)
+                  ((symbol-function 'recenter) #'ignore)
+                  ((symbol-function 'run-at-time)
+                   (lambda (&rest _) 'fake-snap-timer))
+                  ((symbol-function 'fzfa-source--stop) #'ignore)
+                  ((symbol-function 'fzfa--sessions-push) #'ignore)
+                  ((symbol-function 'fzfa-helm--cancel-stranded-follow-timer)
+                   #'ignore)
+                  ((symbol-function 'helm)
+                   (lambda (&rest args)
+                     (let* ((helm-sources (plist-get args :sources))
+                            (a (plist-get (nth 0 helm-sources) :candidates))
+                            (b (plist-get (nth 1 helm-sources) :candidates)))
+                       (let ((fzf-native-highlight-fn
+                              (lambda (_candidate _positions)
+                                (unless triggered
+                                  (setq triggered t
+                                        helm-pattern "new"
+                                        inner-a (funcall a))))))
+                         (setq helm-pattern "old"
+                               outer-a (funcall a))
+                         ;; Helm asks every source for candidates in sequence.
+                         ;; Source B must not revoke source A merely because it
+                         ;; runs later in the same update.
+                         (setq helm-pattern "old"
+                               sequential-b (funcall b)))
+                       nil))))
+          (fzfa-helm--read
+           '((:name "A" :candidates ("a-old" "a-new") :action identity)
+             (:name "B" :candidates ("b-old" "b-new") :action identity))
+           :prompt "probe: "))
+      (kill-buffer owner))
+    (should (equal inner-a '("a-new")))
+    (should (equal outer-a inner-a))
+    (should (equal sequential-b '("b-old")))))
+
 (ert-deftest fzfa-helm-multi-source-preserves-last-result-on-failure ()
   "A terminal matcher failure must not blank a Helm multi source."
   (require 'fzfa-helm)
@@ -4069,7 +4466,7 @@ even when their extension is excluded from `fzfa-extensions'."
     (should-not scheduled)))
 
 (ert-deftest fzfa-ivy-interrupted-refresh-retries-before-generation-commit ()
-  "An interrupted Ivy render must retry and publish before acknowledging."
+  "An interrupted Ivy render must publish, even empty, before acknowledging."
   (let* ((owner (generate-new-buffer " *fzfa ivy owner*"))
          (original-maker (symbol-function 'fzfa-make-source))
          (ivy-mode t)
@@ -4107,7 +4504,9 @@ even when their extension is excluded from `fzfa-extensions'."
                        (cl-incf source-outs)
                        (if (= source-outs 1)
                            t
-                         '(final ("alpha") 1 1))))
+                         ;; A successful empty result is still a completed
+                         ;; frontend publication and must acknowledge GEN.
+                         '(final nil 0 1))))
                     ((symbol-function 'input-pending-p) (lambda () nil))
                     ((symbol-function 'active-minibuffer-window)
                      (lambda () (selected-window)))
@@ -4171,6 +4570,309 @@ even when their extension is excluded from `fzfa-extensions'."
           (should (= exhibits 2))
           (should (= prompt-inserts 2)))
       (kill-buffer owner))))
+
+(ert-deftest fzfa-pull-frontend-reentrant-publication-repairs-newest-state ()
+  "An outer pull-frontend exhibit repairs a nested same-session update."
+  (let* ((owner (generate-new-buffer " *fzfa pull publication owner*"))
+         (window (selected-window))
+         (original-buffer (window-buffer window))
+         (query 'old)
+         reentered visible publications)
+    (unwind-protect
+        (progn
+          (set-window-buffer window owner)
+          (with-current-buffer owner
+            (setq-local fzfa--minibuffer-marker t
+                        fzfa--minibuffer-session 'session)
+            (cl-letf (((symbol-function 'active-minibuffer-window)
+                       (lambda () window)))
+              (cl-labels
+                  ((exhibit
+                    ()
+                    ;; Model Vertico/Icomplete: capture candidates, invoke a
+                    ;; user metadata callback, then publish captured state.
+                    (let ((captured query))
+                      (unless reentered
+                        (setq reentered t query 'new)
+                        (fzfa--frontend-exhibit-around #'exhibit))
+                      (setq visible captured)
+                      (push captured publications))))
+                (fzfa--frontend-exhibit-around #'exhibit)))))
+      (when (window-live-p window)
+        (set-window-buffer window original-buffer))
+      (kill-buffer owner))
+    (should (eq visible 'new))
+    (should (equal (nreverse publications) '(new old new)))))
+
+(ert-deftest fzfa-pull-frontend-publication-clock-is-buffer-local ()
+  "A nested fzfa minibuffer does not revoke the outer buffer's exhibit."
+  (let* ((outer (generate-new-buffer " *fzfa pull outer*"))
+         (nested (generate-new-buffer " *fzfa pull nested*"))
+         (window (selected-window))
+         (original-buffer (window-buffer window))
+         (outer-calls 0)
+         (nested-calls 0)
+         entered)
+    (unwind-protect
+        (progn
+          (dolist (pair `((,outer . outer-session)
+                          (,nested . nested-session)))
+            (with-current-buffer (car pair)
+              (setq-local fzfa--minibuffer-marker t
+                          fzfa--minibuffer-session (cdr pair))))
+          (set-window-buffer window outer)
+          (with-current-buffer outer
+            (cl-letf (((symbol-function 'active-minibuffer-window)
+                       (lambda () window)))
+              (fzfa--frontend-exhibit-around
+               (lambda ()
+                 (cl-incf outer-calls)
+                 (unless entered
+                   (setq entered t)
+                   (set-window-buffer window nested)
+                   (with-current-buffer nested
+                     (fzfa--frontend-exhibit-around
+                      (lambda () (cl-incf nested-calls))))
+                   (set-window-buffer window outer)))))))
+      (when (window-live-p window)
+        (set-window-buffer window original-buffer))
+      (kill-buffer outer)
+      (kill-buffer nested))
+    (should (= outer-calls 1))
+    (should (= nested-calls 1))))
+
+(ert-deftest fzfa-ivy-reentrant-publication-repairs-newest-result ()
+  "An older Ivy setter must repair the nested render that it overwrites."
+  (let* ((owner (generate-new-buffer " *fzfa ivy publication owner*"))
+         (window (selected-window))
+         (original-buffer (window-buffer window))
+         (ivy-mode t)
+         (ivy-text "old")
+         (ivy-last nil)
+         (ivy--actions-list nil)
+         (ivy-count-format "")
+         (fzfa-preview-functions nil)
+         (fzfa-prompt-function (lambda (&rest _) nil))
+         (fzfa-batch-highlight nil)
+         first-producer-callback idle-work captured-push
+         publication-reentered visible publications)
+    (unwind-protect
+        (cl-letf
+            (((symbol-function 'fzfa--ensure-category-override) #'ignore)
+             ((symbol-function 'fzfa--sessions-push) #'ignore)
+             ((symbol-function 'fzfa--minibuffer-format-reset) #'ignore)
+             ((symbol-function 'active-minibuffer-window) (lambda () window))
+             ((symbol-function 'minibuffer-prompt-end) #'point-min)
+             ((symbol-function 'cancel-timer) #'ignore)
+             ((symbol-function 'sit-for) #'ignore)
+             ((symbol-function 'run-with-idle-timer)
+              (lambda (_delay _repeat function &rest args)
+                (setq idle-work
+                      (append idle-work
+                              (list (lambda () (apply function args)))))
+                (list 'idle (length idle-work))))
+             ((symbol-function 'fzfa--frontend-push)
+              (lambda (ivy-push)
+                (setq captured-push ivy-push)
+                (funcall ivy-push)))
+             ((symbol-function 'ivy--set-candidates)
+              (lambda (candidates)
+                ;; Model :before advice that publishes a newer render before
+                ;; the older setter commits its captured argument.
+                (unless publication-reentered
+                  (setq publication-reentered t
+                        ivy-text "new")
+                  (funcall captured-push))
+                (setq visible candidates)
+                (push (mapcar #'fzfa--tofu-hide candidates) publications)))
+             ((symbol-function 'ivy--exhibit) #'ignore)
+             ((symbol-function 'ivy--insert-prompt) #'ignore)
+             ((symbol-function 'completing-read)
+              (lambda (_prompt collection &rest _)
+                (set-window-buffer window owner)
+                (with-current-buffer owner
+                  (setq-local ivy-mode t
+                              ivy-text "old"
+                              ivy-last nil)
+                  (run-hooks 'minibuffer-setup-hook)
+                  (funcall collection "old" nil t)
+                  (funcall first-producer-callback '("old-match"))
+                  (funcall (pop idle-work)))
+                nil)))
+          (fzfa--read
+           (list
+            (list :name "one"
+                  :candidates
+                  (let ((calls 0))
+                    (lambda (input callback)
+                      (if (= (cl-incf calls) 1)
+                          (setq first-producer-callback callback)
+                        (funcall callback
+                                 (list (format "%s-match" input))))))
+                  :action #'identity))
+           :prompt "ivy: "))
+      (when (window-live-p window)
+        (set-window-buffer window original-buffer))
+      (kill-buffer owner))
+    (setq publications (nreverse publications))
+    (should (equal (mapcar #'fzfa--tofu-hide visible) '("new-match")))
+    (should (equal (car (last publications)) '("new-match")))
+    (should (equal publications
+                   '(("new-match") ("old-match") ("new-match"))))))
+
+(ert-deftest fzfa-ivy-reentrant-prompt-repairs-newest-result ()
+  "An older Ivy prompt callback must not leave stale candidates or counts."
+  (let* ((owner (generate-new-buffer " *fzfa ivy prompt owner*"))
+         (window (selected-window))
+         (original-buffer (window-buffer window))
+         (ivy-mode t)
+         (ivy-text "old")
+         (ivy-last nil)
+         (ivy--actions-list nil)
+         (ivy-count-format "")
+         (fzfa-preview-functions nil)
+         (fzfa-batch-highlight nil)
+         first-producer-callback idle-work captured-push prompt-reentered
+         visible-candidates visible-prompt prompt-publications)
+    (let ((fzfa-prompt-function
+           (lambda (args)
+             (let ((count (plist-get args :filtered)))
+               (when (and captured-push
+                          (= count 1)
+                          (not prompt-reentered))
+                 (setq prompt-reentered t
+                       ivy-text "new")
+                 (funcall captured-push))
+               (format "count:%s" count)))))
+      (unwind-protect
+          (cl-letf
+              (((symbol-function 'fzfa--ensure-category-override) #'ignore)
+               ((symbol-function 'fzfa--sessions-push) #'ignore)
+               ((symbol-function 'fzfa--minibuffer-format-reset) #'ignore)
+               ((symbol-function 'active-minibuffer-window) (lambda () window))
+               ((symbol-function 'minibuffer-prompt-end) #'point-min)
+               ((symbol-function 'cancel-timer) #'ignore)
+               ((symbol-function 'sit-for) #'ignore)
+               ((symbol-function 'run-with-idle-timer)
+                (lambda (_delay _repeat function &rest args)
+                  (setq idle-work
+                        (append idle-work
+                                (list (lambda () (apply function args)))))
+                  (list 'idle (length idle-work))))
+               ((symbol-function 'fzfa--frontend-push)
+                (lambda (ivy-push)
+                  (setq captured-push ivy-push)
+                  (funcall ivy-push)))
+               ((symbol-function 'ivy--set-candidates)
+                (lambda (candidates)
+                  (setq visible-candidates candidates)))
+               ((symbol-function 'ivy--exhibit) #'ignore)
+               ((symbol-function 'ivy--insert-prompt)
+                (lambda ()
+                  (let ((rendered (funcall ivy-pre-prompt-function)))
+                    (setq visible-prompt rendered)
+                    (push rendered prompt-publications))))
+               ((symbol-function 'completing-read)
+                (lambda (_prompt collection &rest _)
+                  (set-window-buffer window owner)
+                  (with-current-buffer owner
+                    (setq-local ivy-mode t
+                                ivy-text "old"
+                                ivy-last nil)
+                    (run-hooks 'minibuffer-setup-hook)
+                    (funcall collection "old" nil t)
+                    (funcall first-producer-callback '("old-match"))
+                    (funcall (pop idle-work)))
+                  nil)))
+            (fzfa--read
+             (list
+              (list :name "one"
+                    :candidates
+                    (let ((calls 0))
+                      (lambda (input callback)
+                        (if (= (cl-incf calls) 1)
+                            (setq first-producer-callback callback)
+                          (funcall callback
+                                   (if (equal input "new")
+                                       '("new-match" "new-other")
+                                     '("old-match"))))))
+                    :action #'identity))
+             :prompt "ivy: "))
+        (when (window-live-p window)
+          (set-window-buffer window original-buffer))
+        (kill-buffer owner)))
+    (setq prompt-publications (nreverse prompt-publications))
+    (should (equal visible-prompt "count:2"))
+    (should (equal (mapcar #'fzfa--tofu-hide visible-candidates)
+                   '("new-match" "new-other")))
+    (should (equal (car (last prompt-publications)) "count:2"))))
+
+(ert-deftest fzfa-pull-reentrant-prompt-publishes-newest-result ()
+  "A nested pull render must revoke the older prompt publication."
+  (let* ((owner (generate-new-buffer " *fzfa pull prompt owner*"))
+         (window (selected-window))
+         (original-buffer (window-buffer window))
+         (ivy-mode nil)
+         (fzfa-preview-functions nil)
+         (fzfa-batch-highlight nil)
+         table prompt-reentered outer inner prompt-overlay overlay-display
+         publications)
+    (let ((fzfa-prompt-function
+           (lambda (args)
+             (let ((count (plist-get args :filtered)))
+               (when (and table (= count 1) (not prompt-reentered))
+                 (setq prompt-reentered t
+                       inner (funcall table "new" nil t)))
+               (format "count:%s" count)))))
+      (unwind-protect
+          (cl-letf
+              (((symbol-function 'fzfa--ensure-category-override) #'ignore)
+               ((symbol-function 'fzfa--sessions-push) #'ignore)
+               ((symbol-function 'fzfa--minibuffer-format-reset) #'ignore)
+               ((symbol-function 'active-minibuffer-window) (lambda () window))
+               ((symbol-function 'minibuffer-prompt-end) #'point-min)
+               ((symbol-function 'cancel-timer) #'ignore)
+               ((symbol-function 'sit-for) #'ignore)
+               ((symbol-function 'completing-read)
+                (lambda (_prompt collection &rest _)
+                  (setq table collection)
+                  (set-window-buffer window owner)
+                  (with-current-buffer owner
+                    (erase-buffer)
+                    (run-hooks 'minibuffer-setup-hook)
+                    (setq outer (funcall table "old" nil t))
+                    (setq overlay-display
+                          (and prompt-overlay
+                               (overlay-get prompt-overlay 'display))))
+                  nil)))
+            (let ((original-overlay-put (symbol-function 'overlay-put)))
+              (cl-letf (((symbol-function 'overlay-put)
+                         (lambda (overlay property value)
+                           (when (eq property 'display)
+                             (setq prompt-overlay overlay)
+                             (push value publications))
+                           (funcall original-overlay-put
+                                    overlay property value))))
+                (fzfa--read
+                 (list
+                  (list :name "one"
+                        :candidates
+                        (lambda (input callback)
+                          (funcall callback
+                                   (if (equal input "new")
+                                       '("new-match" "new-other")
+                                     '("old-match"))))
+                        :action #'identity))
+                 :prompt "pull: "))))
+        (when (window-live-p window)
+          (set-window-buffer window original-buffer))
+        (kill-buffer owner)))
+    (should (equal (nreverse publications) '("count:2")))
+    (should (equal overlay-display "count:2"))
+    (should (equal (mapcar #'fzfa--tofu-hide inner)
+                   '("new-match" "new-other")))
+    (should (equal (mapcar #'fzfa--tofu-hide outer)
+                   '("new-match" "new-other")))))
 
 (ert-deftest fzfa-session-poller-defers-commit-until-owned-refresh-succeeds ()
   "A queued refresh must stay retryable and become inert after teardown."
@@ -4428,6 +5130,70 @@ even when their extension is excluded from `fzfa-extensions'."
       (should (= (fzfa--async-submit 'fake-handle query 10) 1))
       (should (eq seen query))
       (should (equal seen query)))))
+
+(ert-deftest fzfa-session-end-to-end-invalid-utf8-prefix-rescans ()
+  "An invalid cached query must not poison its valid UTF-8 extension.
+
+E2 84 is an incomplete byte prefix of U+212A KELVIN SIGN.  In case-ignore
+mode, the completed codepoint folds to ASCII k.  Exercise the real fzfa/native
+session boundary for both fuzzy and leading-quote exact queries."
+  (skip-unless (and (fboundp 'fzf-native-async-start)
+                    (fboundp 'fzf-native-async-submit)))
+  (let ((default-directory "/tmp/")
+        (fzfa-case-mode 'ignore)
+        (fzfa-fuzzy t)
+        (fzfa-highlight nil))
+    (cl-labels
+        ((wait-producer
+          (handle)
+          (let ((deadline (+ (float-time) 3.0)) status)
+            (while (and (< (float-time) deadline)
+                        (progn
+                          (setq status (fzf-native-async-status handle))
+                          (not (plist-get status :reader-done))))
+              (sleep-for 0.01))
+            (should (plist-get status :reader-done))))
+         (wait-output
+          (source query)
+          (let ((deadline (+ (float-time) 3.0)) output)
+            (while (and (< (float-time) deadline)
+                        (progn
+                          (setq output
+                                (fzfa--source-async-out source query 10))
+                          (not (memq (car-safe output) '(final failed)))))
+              (sleep-for 0.01))
+            (should (memq (car-safe output) '(final failed)))
+            output))
+         (run-queries
+          (queries)
+          (let* ((command "printf 'k\\n'")
+                 (source (fzfa-make-source
+                          :command command :directory default-directory))
+                 outputs)
+            (setf (fzfa-source-handle source)
+                  (fzf-native-async-start command default-directory)
+                  (fzfa-source-current-cmd source) command)
+            (unwind-protect
+                (progn
+                  (wait-producer (fzfa-source-handle source))
+                  (dolist (query queries)
+                    (push (wait-output source query) outputs))
+                  (nreverse outputs))
+              (fzfa-source--stop source)))))
+      (dolist (quoted '(nil t))
+        (let ((invalid-prefix
+               (apply #'unibyte-string
+                      (if quoted '(39 #xe2 #x84) '(#xe2 #x84))))
+              (kelvin-query
+               (apply #'unibyte-string
+                      (if quoted '(39 #xe2 #x84 #xaa)
+                        '(#xe2 #x84 #xaa)))))
+          ;; Establish the matching oracle independently of cache history.
+          (should (equal (run-queries (list kelvin-query))
+                         '((final ("k") 1 1))))
+          (should (equal (run-queries (list invalid-prefix kelvin-query))
+                         '((final nil 0 1)
+                           (final ("k") 1 1)))))))))
 
 (ert-deftest fzfa-producer-failure-with-partial-output-reports-once ()
   "A partial candidate list must not conceal a failed producer."
@@ -4786,42 +5552,16 @@ even when their extension is excluded from `fzfa-extensions'."
     (should (eq (fzfa-source-restart-timer src) 'nested-timer))
     (should (equal cancelled '(outer-timer)))))
 
-(ert-deftest fzfa-source-restart-producer-fires-callback ()
-  "`fzfa-source--restart' on a producer source fires the producer and
-updates snapshot, total, filtered, last-result."
-  (let* ((default-directory "/tmp/")
-         (src (fzfa-make-source :candidates '("x" "y" "z")))
-         (refresh-fired 0))
-    (setf (fzfa-source-request-id src) 42
-          (fzfa-source-request-signature src) '("old" 10 smart t))
-    (fzfa-source--restart src "ignored"
-                          (lambda () (cl-incf refresh-fired)))
-    (should (equal (fzfa-source-snapshot src) '("x" "y" "z")))
-    (should (= (fzfa-source-total src) 3))
-    (should (= (fzfa-source-filtered src) 3))
-    (should (equal (fzfa-source-last-result src) '("x" "y" "z")))
-    (should (= refresh-fired 1))
-    (should (equal (fzfa-source-current-cmd src) "ignored"))
-    (should (= (fzfa-source-request-id src) 0))
-    (should-not (fzfa-source-request-signature src))))
-
-(ert-deftest fzfa-source-restart-producer-stale-callback-dropped ()
-  "Later prod-token bump invalidates an in-flight producer callback."
-  ;; Use an async-firing producer (captures the callback for deferred firing).
-  (let* ((default-directory "/tmp/")
-         (deferred-cb nil)
-         (src (fzfa-make-source
-               :candidates (lambda (_input cb)
-                             (setq deferred-cb cb)))))
-    ;; Fire restart; producer captures cb but doesn't call it.
-    (fzfa-source--restart src "first" #'ignore)
-    (let ((stashed-cb deferred-cb))
-      ;; Bump token so the next restart invalidates the stashed callback.
-      (fzfa-source--restart src "second" #'ignore)
-      ;; Invoke the stashed (now-stale) callback.
-      (funcall stashed-cb '("stale"))
-      ;; Snapshot should not have updated from the stale callback.
-      (should-not (equal (fzfa-source-snapshot src) '("stale"))))))
+(ert-deftest fzfa-shell-restart-rejects-candidate-producer-sources ()
+  "Candidate producers cannot enter the duplicate shell restart state machine."
+  (let* ((src (fzfa-make-source :candidates '("x" "y" "z")))
+         (token (fzfa-source-prod-token src)))
+    (should-error (fzfa-source--restart src "ignored" #'ignore))
+    (should-error (fzfa-source--debounce-restart src "ignored" #'ignore))
+    (should (= (fzfa-source-prod-token src) token))
+    (should (eq (fzfa-source-prod-input src) :unfetched))
+    (should-not (fzfa-source-snapshot src))
+    (should-not (fzfa-source-current-cmd src))))
 
 (ert-deftest fzfa-source-display-cycle-hidden-to-compact ()
   "Hidden→compact transition materializes #CMD# in the buffer."
@@ -6268,6 +7008,22 @@ snapshot — a refresh would be a redundant tick."
           (fzfa-source-total source) 1)
     (fzfa--source-fetch source "q" nil (lambda (_cands) 42))
     (should-error (funcall callback '("bad")) :type 'wrong-type-argument)
+    (should (eq (fzfa-source-prod-state source) 'failed))
+    (should (eq (fzfa-source-prod-input source) :unfetched))
+    (should (equal (fzfa-source-snapshot source) '("good")))
+    (should (= (fzfa-source-total source) 1))))
+
+(ert-deftest fzfa-source-fetch-circular-delivery-preserves-last-snapshot ()
+  "A circular producer list fails validation before replacing good output."
+  (let* ((cyclic (list "candidate"))
+         (producer
+          (lambda (_input callback)
+            (setcdr cyclic cyclic)
+            (funcall callback cyclic)))
+         (source (fzfa-make-source :spec `(:candidates ,producer))))
+    (setf (fzfa-source-snapshot source) '("good")
+          (fzfa-source-total source) 1)
+    (should-error (fzfa--source-fetch source "q"))
     (should (eq (fzfa-source-prod-state source) 'failed))
     (should (eq (fzfa-source-prod-input source) :unfetched))
     (should (equal (fzfa-source-snapshot source) '("good")))
