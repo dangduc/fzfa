@@ -4,7 +4,7 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.1.0
-;; Package-Requires: ((emacs "29.1") (fzf-native "2.5"))
+;; Package-Requires: ((emacs "29.1") (fzf-native "2.6"))
 ;; Keywords: matching, completion, fzf, fuzzy, fussy
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
