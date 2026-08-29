@@ -509,8 +509,12 @@ transformer, `fzfa-apply-current' from a keybinding).")
 
 Vertico and Icomplete evaluate completion metadata after the collection has
 returned.  Those callbacks are user Lisp and can recursively exhibit a newer
-query.  The clock lets the outer exhibit detect that its captured state was
-revoked and repair the complete frontend publication before returning.")
+  query.  The clock lets the outer exhibit detect that its captured state was
+  revoked and repair the complete frontend publication before returning.")
+(defconst fzfa--frontend-publication-repair-limit 1
+  "Maximum synchronous repair attempts after a revoked frontend publication.")
+(defvar-local fzfa--frontend-publication-repair-owner nil
+  "Timer owner for a coalesced deferred frontend publication repair.")
 (defvar-local fzfa--preview-run-fn nil
   "Buffer-local reference to the preview `run' closure.
 
@@ -727,7 +731,9 @@ Call ORIG with ARGS normally outside an active fzfa minibuffer.  Inside one,
 an exhibit owns a buffer-local epoch.  If user Lisp reached from completion
 metadata recursively exhibits a newer query in the same minibuffer, replay
 the complete outer exhibit against the current input.  The replay repairs the
-candidate state and overlay that the revoked outer frame may have overwritten."
+candidate state and overlay that the revoked outer frame may have overwritten.
+Bound synchronous repairs so a callback that always reenters cannot hang the
+minibuffer.  Defer one coalesced refresh when the bound is exhausted."
   (let ((owner-buffer (current-buffer)))
     (if (not (and fzfa--minibuffer-marker fzfa--minibuffer-session))
         (apply orig args)
@@ -737,11 +743,13 @@ candidate state and overlay that the revoked outer frame may have overwritten."
                       (fzfa--minibuffer-owner-p owner-buffer owner-window)))
             (apply orig args)
           (let ((epoch (cl-incf fzfa--frontend-publication-epoch))
+                (repairs 0)
                 result)
             (setq result
                   (with-current-buffer owner-buffer (apply orig args)))
             (while
                 (and (buffer-live-p owner-buffer)
+                     (< repairs fzfa--frontend-publication-repair-limit)
                      (/= epoch
                          (buffer-local-value
                           'fzfa--frontend-publication-epoch owner-buffer))
@@ -749,12 +757,51 @@ candidate state and overlay that the revoked outer frame may have overwritten."
                          (buffer-local-value
                           'fzfa--minibuffer-session owner-buffer))
                      (fzfa--minibuffer-owner-p owner-buffer owner-window))
+              (cl-incf repairs)
               (setq epoch
                     (buffer-local-value
                      'fzfa--frontend-publication-epoch owner-buffer)
                     result
                     (with-current-buffer owner-buffer (apply orig args))))
+            (when (and (buffer-live-p owner-buffer)
+                       (/= epoch
+                           (buffer-local-value
+                            'fzfa--frontend-publication-epoch owner-buffer))
+                       (eq owner-session
+                           (buffer-local-value
+                            'fzfa--minibuffer-session owner-buffer))
+                       (fzfa--minibuffer-owner-p owner-buffer owner-window))
+              (fzfa--frontend-defer-publication-repair
+               owner-buffer owner-window owner-session))
             result))))))
+
+(defun fzfa--frontend-defer-publication-repair (buffer window session)
+  "Schedule one deferred frontend repair for BUFFER, WINDOW, and SESSION.
+
+The buffer-local timer owner coalesces repeated revocations.  The callback
+validates the exact minibuffer before it invokes the frontend again."
+  (when (and (buffer-live-p buffer)
+             (fzfa--minibuffer-owner-p buffer window)
+             (eq session
+                 (buffer-local-value 'fzfa--minibuffer-session buffer)))
+    (with-current-buffer buffer
+      (unless fzfa--frontend-publication-repair-owner
+        (setq fzfa--frontend-publication-repair-owner
+              (fzfa--timer-owner-create)))
+      (unless (fzfa--timer-owner-timer
+               fzfa--frontend-publication-repair-owner)
+        (let ((owner fzfa--frontend-publication-repair-owner))
+          (fzfa--timer-owner-schedule
+           owner
+           (lambda (callback) (run-at-time 0 nil callback))
+           (lambda ()
+             (when (and (buffer-live-p buffer)
+                        (fzfa--minibuffer-owner-p buffer window)
+                        (eq session
+                            (buffer-local-value
+                             'fzfa--minibuffer-session buffer)))
+               (with-current-buffer buffer
+                 (fzfa--frontend-exhibit))))))))))
 
 (defun fzfa--frontend-push (ivy-push-fn)
   "Refresh the active completion display.
@@ -4963,6 +5010,7 @@ Per-source plist keys:
          frontend-owned-p
          (stats-overlay nil)
          (retry-owner (fzfa--timer-owner-create))
+         (publication-repair-owner (fzfa--timer-owner-create))
          ;; Captured by `minibuffer-exit-hook' from the propertized text
          ;; in the minibuffer before `completing-read' returns and strips
          ;; properties.  Reliable per-instance source dispatch even when
@@ -5252,8 +5300,12 @@ Per-source plist keys:
                       ;; with the newest aggregate and statistics.
                       (let ((publish-epoch my-epoch)
                             (publish-result cands)
+                            (attempts 0)
                             published)
-                        (while (not published)
+                        (while (and (not published)
+                                    (<= attempts
+                                        fzfa--frontend-publication-repair-limit))
+                          (cl-incf attempts)
                           (unless (funcall frontend-owned-p)
                             (throw render-revoke-tag render-result))
                           (if (/= publish-epoch render-epoch)
@@ -5280,13 +5332,19 @@ Per-source plist keys:
                                 (if (= publish-epoch render-epoch)
                                     (setq published t)
                                   (setq publish-epoch render-epoch
-                                        publish-result render-result)))))))
+                                        publish-result render-result))))))
+                        (unless published
+                          (fzfa--timer-owner-schedule
+                           publication-repair-owner
+                           (lambda (callback)
+                             (run-at-time 0 nil callback))
+                           multi-refresh-fn))
                         ;; Reaching here means the candidate, body, and prompt
                         ;; writes all committed for one current epoch.  Return
                         ;; an acknowledgement independent of the candidate
                         ;; list (an empty result is still a publication), so
                         ;; the poller may commit the native generation.
-                        :published)))))
+                        (and published :published)))))))
                  :published)))))
          ;; Ivy action list for narrow dispatch.  One entry per
          ;; source's :narrow key (mutates `narrow-idx' and refreshes
@@ -5559,12 +5617,25 @@ Per-source plist keys:
                       ;; Manual apply/preview commands require the exact top
                       ;; minibuffer's session even when no preview router is
                       ;; configured.
+                      (when fzfa--frontend-publication-repair-owner
+                        (fzfa--timer-owner-cancel
+                         fzfa--frontend-publication-repair-owner
+                         "previous publication repair timer"))
                       (setq fzfa--minibuffer-marker t
-                            fzfa--minibuffer-session session)
+                            fzfa--minibuffer-session session
+                            fzfa--frontend-publication-epoch 0
+                            fzfa--frontend-publication-repair-owner
+                            (fzfa--timer-owner-create))
                       (add-hook 'minibuffer-exit-hook
                                 (lambda ()
+                                  (when fzfa--frontend-publication-repair-owner
+                                    (fzfa--timer-owner-cancel
+                                     fzfa--frontend-publication-repair-owner
+                                     "frontend publication repair timer"))
                                   (setq fzfa--minibuffer-marker nil
-                                        fzfa--minibuffer-session nil))
+                                        fzfa--minibuffer-session nil
+                                        fzfa--frontend-publication-repair-owner
+                                        nil))
                                 nil 'local)
                       (add-hook 'post-command-hook refresh-overlay nil t)
                       (fzfa--minibuffer-format-reset wants-decoration)
@@ -5957,6 +6028,8 @@ Per-source plist keys:
       (fzfa--timer-owner-cancel poll-refresh-owner "poll refresh timer")
       (fzfa--timer-owner-cancel poll-owner "poll timer")
       (fzfa--timer-owner-cancel retry-owner "retry timer")
+      (fzfa--timer-owner-cancel publication-repair-owner
+                                "publication repair timer")
       (when (buffer-live-p frontend-buffer)
         (fzfa--cleanup-call
          "post-command hook"

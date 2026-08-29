@@ -4604,6 +4604,43 @@ even when their extension is excluded from `fzfa-extensions'."
     (should (eq visible 'new))
     (should (equal (nreverse publications) '(new old new)))))
 
+(ert-deftest fzfa-pull-frontend-recurring-reentry-defers-bounded-repair ()
+  "A metadata callback that always reenters cannot trap the minibuffer."
+  (let* ((owner (generate-new-buffer " *fzfa recurring pull owner*"))
+         (window (selected-window))
+         (original-buffer (window-buffer window))
+         (calls 0)
+         inside deferred)
+    (unwind-protect
+        (progn
+          (set-window-buffer window owner)
+          (with-current-buffer owner
+            (setq-local fzfa--minibuffer-marker t
+                        fzfa--minibuffer-session 'session)
+            (cl-letf (((symbol-function 'active-minibuffer-window)
+                       (lambda () window))
+                      ((symbol-function 'run-at-time)
+                       (lambda (_delay _repeat callback &rest args)
+                         (push (lambda () (apply callback args)) deferred)
+                         (list 'deferred (length deferred)))))
+              (cl-labels
+                  ((exhibit
+                    ()
+                    (cl-incf calls)
+                    (unless inside
+                      (setq inside t)
+                      (unwind-protect
+                          (fzfa--frontend-exhibit-around #'exhibit)
+                        (setq inside nil)))))
+                (fzfa--frontend-exhibit-around #'exhibit)
+                ;; A second revocation coalesces behind the same timer.
+                (fzfa--frontend-exhibit-around #'exhibit)))))
+      (when (window-live-p window)
+        (set-window-buffer window original-buffer))
+      (kill-buffer owner))
+    (should (= calls 8))
+    (should (= (length deferred) 1))))
+
 (ert-deftest fzfa-pull-frontend-publication-clock-is-buffer-local ()
   "A nested fzfa minibuffer does not revoke the outer buffer's exhibit."
   (let* ((outer (generate-new-buffer " *fzfa pull outer*"))
@@ -4719,6 +4756,84 @@ even when their extension is excluded from `fzfa-extensions'."
     (should (equal (car (last publications)) '("new-match")))
     (should (equal publications
                    '(("new-match") ("old-match") ("new-match"))))))
+
+(ert-deftest fzfa-ivy-recurring-reentry-defers-bounded-repair ()
+  "An Ivy setter that always reenters cannot trap the minibuffer."
+  (let* ((owner (generate-new-buffer " *fzfa recurring ivy owner*"))
+         (window (selected-window))
+         (original-buffer (window-buffer window))
+         (ivy-mode t)
+         (ivy-text "old")
+         (ivy-last nil)
+         (ivy--actions-list nil)
+         (ivy-count-format "")
+         (fzfa-preview-functions nil)
+         (fzfa-prompt-function (lambda (&rest _) nil))
+         (fzfa-batch-highlight nil)
+         first-producer-callback idle-work deferred-work captured-push
+         inside (setter-calls 0))
+    (unwind-protect
+        (cl-letf
+            (((symbol-function 'fzfa--ensure-category-override) #'ignore)
+             ((symbol-function 'fzfa--sessions-push) #'ignore)
+             ((symbol-function 'fzfa--minibuffer-format-reset) #'ignore)
+             ((symbol-function 'active-minibuffer-window) (lambda () window))
+             ((symbol-function 'minibuffer-prompt-end) #'point-min)
+             ((symbol-function 'cancel-timer) #'ignore)
+             ((symbol-function 'sit-for) #'ignore)
+             ((symbol-function 'run-with-idle-timer)
+              (lambda (_delay _repeat function &rest args)
+                (setq idle-work
+                      (append idle-work
+                              (list (lambda () (apply function args)))))
+                (list 'idle (length idle-work))))
+             ((symbol-function 'run-at-time)
+              (lambda (_delay _repeat function &rest args)
+                (setq deferred-work
+                      (append deferred-work
+                              (list (lambda () (apply function args)))))
+                (list 'deferred (length deferred-work))))
+             ((symbol-function 'fzfa--frontend-push)
+              (lambda (ivy-push)
+                (setq captured-push ivy-push)
+                (funcall ivy-push)))
+             ((symbol-function 'ivy--set-candidates)
+              (lambda (_candidates)
+                (cl-incf setter-calls)
+                (unless inside
+                  (setq inside t)
+                  (unwind-protect
+                      (funcall captured-push)
+                    (setq inside nil)))))
+             ((symbol-function 'ivy--exhibit) #'ignore)
+             ((symbol-function 'ivy--insert-prompt) #'ignore)
+             ((symbol-function 'completing-read)
+              (lambda (_prompt collection &rest _)
+                (set-window-buffer window owner)
+                (with-current-buffer owner
+                  (setq-local ivy-mode t ivy-text "old" ivy-last nil)
+                  (run-hooks 'minibuffer-setup-hook)
+                  (funcall collection "old" nil t)
+                  (funcall first-producer-callback '("old-match"))
+                  (funcall (pop idle-work)))
+                nil)))
+          (fzfa--read
+           (list
+            (list :name "one"
+                  :candidates
+                  (let ((calls 0))
+                    (lambda (input callback)
+                      (if (= (cl-incf calls) 1)
+                          (setq first-producer-callback callback)
+                        (funcall callback
+                                 (list (format "%s-match" input))))))
+                  :action #'identity))
+           :prompt "ivy: "))
+      (when (window-live-p window)
+        (set-window-buffer window original-buffer))
+      (kill-buffer owner))
+    (should (= setter-calls 4))
+    (should (= (length deferred-work) 1))))
 
 (ert-deftest fzfa-ivy-reentrant-prompt-repairs-newest-result ()
   "An older Ivy prompt callback must not leave stale candidates or counts."
