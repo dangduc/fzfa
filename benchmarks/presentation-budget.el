@@ -16,54 +16,61 @@
            collect (+ (/ limit source-count)
                       (if (< idx (% limit source-count)) 1 0))))
 
-(defun fzfa-benchmark--adaptive-pass (limit visible-counts &optional pending-p)
-  "Run one adaptive LIMIT pass over VISIBLE-COUNTS.
+(defun fzfa-benchmark--waterfill-pass (limit demands)
+  "Water-fill LIMIT across DEMANDS and return (PLAN RETAINED REMAINING).
 
-When PENDING-P is non-nil, reserve every allocation as unfinished work.
-Return (ALLOCATIONS RETAINED REMAINING)."
-  (let ((budget (fzfa--presentation-budget-create
-                 limit (length visible-counts) nil))
-        allocations
-        (retained 0))
-    (dolist (visible visible-counts)
-      (let* ((allocation (fzfa--presentation-budget-next budget))
-             (bounded (min visible allocation)))
-        (push allocation allocations)
-        (cl-incf retained bounded)
-        (fzfa--presentation-budget-finish
-         budget allocation bounded pending-p)))
-    (list (nreverse allocations) retained (aref budget 0))))
+Integer demands are completed full-match counts.  Pending demand uses
+`fzfa--presentation-pending' and reserves its allocation without retaining a
+candidate yet."
+  (let* ((plan (fzfa--presentation-waterfill limit demands))
+         (retained
+          (cl-loop for demand across demands
+                   for allocation across plan
+                   when (integerp demand)
+                   sum (min demand allocation)))
+         (allocated (apply #'+ (append plan nil))))
+    (list (append plan nil) retained (- limit allocated))))
 
 (defun fzfa-benchmark-presentation-budget (&optional iterations)
-  "Benchmark fixed and adaptive presentation allocation ITERATIONS times."
+  "Benchmark static and water-fill allocation ITERATIONS times."
   (let* ((iterations (or iterations 100000))
          (limit 10000)
          (sources 14)
-         (saturated (make-list sources limit))
-         (sparse (append (make-list (1- sources) 0) (list limit)))
+         (saturated (make-vector sources limit))
+         (sparse-first (make-vector sources 0))
+         (sparse-last (make-vector sources 0))
+         (pending (make-vector sources fzfa--presentation-pending))
          (static-result (fzfa-benchmark--static-shares limit sources))
          (saturated-result
-          (fzfa-benchmark--adaptive-pass limit saturated))
-         (sparse-result (fzfa-benchmark--adaptive-pass limit sparse))
-         (pending-result
-          (fzfa-benchmark--adaptive-pass
-           limit (make-list sources 0) t))
+          (fzfa-benchmark--waterfill-pass limit saturated))
+         sparse-first-result sparse-last-result
          (static-time
           (benchmark-run iterations
             (fzfa-benchmark--static-shares limit sources)))
          (saturated-time
           (benchmark-run iterations
-            (fzfa-benchmark--adaptive-pass limit saturated)))
-         (sparse-time
-          (benchmark-run iterations
-            (fzfa-benchmark--adaptive-pass limit sparse)))
+            (fzfa-benchmark--waterfill-pass limit saturated)))
+         sparse-first-time sparse-last-time
+         (pending-result (fzfa-benchmark--waterfill-pass limit pending))
          (pending-time
           (benchmark-run iterations
-            (fzfa-benchmark--adaptive-pass
-             limit (make-list sources 0) t))))
+            (fzfa-benchmark--waterfill-pass limit pending))))
+    (aset sparse-first 0 limit)
+    (aset sparse-last (1- sources) limit)
+    (setq sparse-first-result
+          (fzfa-benchmark--waterfill-pass limit sparse-first)
+          sparse-last-result
+          (fzfa-benchmark--waterfill-pass limit sparse-last)
+          sparse-first-time
+          (benchmark-run iterations
+            (fzfa-benchmark--waterfill-pass limit sparse-first))
+          sparse-last-time
+          (benchmark-run iterations
+            (fzfa-benchmark--waterfill-pass limit sparse-last)))
     ;; These invariants make the benchmark double as a work-bound probe.
     (cl-assert (= (nth 1 saturated-result) limit))
-    (cl-assert (= (nth 1 sparse-result) limit))
+    (cl-assert (= (nth 1 sparse-first-result) limit))
+    (cl-assert (= (nth 1 sparse-last-result) limit))
     (cl-assert (= (nth 1 pending-result) 0))
     (cl-assert (= (- limit (nth 2 pending-result)) limit))
     (cl-assert (equal (car saturated-result) static-result))
@@ -71,13 +78,17 @@ Return (ALLOCATIONS RETAINED REMAINING)."
      (format
       (concat "iterations=%d sources=%d limit=%d\n"
               "static-saturated  %S\n"
-              "adaptive-full     %S allocations=%S retained=%d\n"
-              "adaptive-sparse   %S last-allocation=%d retained=%d\n"
-              "adaptive-pending  %S allocations=%S reserved=%d\n")
+              "waterfill-full    %S allocations=%S retained=%d\n"
+              "waterfill-first   %S first-allocation=%d retained=%d\n"
+              "waterfill-last    %S last-allocation=%d retained=%d\n"
+              "waterfill-pending %S allocations=%S reserved=%d\n")
       iterations sources limit
       static-time
       saturated-time (car saturated-result) (nth 1 saturated-result)
-      sparse-time (car (last (car sparse-result))) (nth 1 sparse-result)
+      sparse-first-time (car (car sparse-first-result))
+      (nth 1 sparse-first-result)
+      sparse-last-time (car (last (car sparse-last-result)))
+      (nth 1 sparse-last-result)
       pending-time (car pending-result)
       (- limit (nth 2 pending-result))))))
 

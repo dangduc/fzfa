@@ -574,10 +574,13 @@ reuse that output.  The producer, such as ~find~, ~fd~, or ~ripgrep~, stays
 alive and continues to add candidates for native incremental retries.
 
 ~fzfa-max-candidates~ is one session-wide presentation budget.  A narrowed or
-single source receives the full budget.  A widened session allocates fair
-shares in declared source order.  Completed sparse sources donate unused slots
-to later sources, while unfinished async sources reserve their full share.
-Fzfa truncates the final merge as a second safety check.
+single source receives the full budget.  A widened session repeatedly
+water-fills fair shares against each source's full filtered demand.  Completed
+sparse sources donate unused slots to dense sources in either direction, while
+unfinished async sources reserve a fair share.  Demand evidence persists while
+a larger native LIMIT request is pending, so donated capacity converges instead
+of oscillating across redraws.  Fzfa truncates the final merge as a second
+safety check.
 
 This lets one prompt combine, say, ~recentf~ entries (sync list) alongside a
 streaming ~rg~ search (async producer) and have both groups score
