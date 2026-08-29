@@ -196,6 +196,17 @@ order via =sort='s stability.
   └────────────────────────────────────────────────────────────────────┘
 #+end_src
 
+Fzfa allocates the visible candidate cap in source order.  It calculates each
+share from the remaining cap and remaining eligible sources.  A completed
+source spends only the slots that it uses.  Later sources receive the unused
+slots.
+
+Pending or interrupted work reserves its complete share.  This rule prevents
+simultaneous async results from exceeding the session cap.  Fzfa trims retained
+results and routes when a pending source receives a smaller share on a later
+pass.  The completion-table and Ivy push renderers use the same allocator.
+Both renderers apply the final cap after merging.
+
 ** Source derivation: extract / inject
 
 Sources are not duplicated as parallel data structures.  Every existing
@@ -353,6 +364,11 @@ Two helpers route around vertico/icomplete/ivy differences:
 ivy uses a *push* model rather than pull, so it has its own dedicated
 path: a closure pushes via =ivy--set-candidates= then redraws via
 =ivy--exhibit=. ivy bypasses =completion-styles= entirely.
+
+One Ivy refresh is a publication transaction.  Ivy acknowledges a native
+generation only after it publishes candidates, the body, and the prompt for one
+live epoch.  An interruption or ownership loss returns no acknowledgement.
+The poller retries without committing the generation.
 
 * Timer model (async path only)
 
