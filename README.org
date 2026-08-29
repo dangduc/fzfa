@@ -563,12 +563,19 @@ Demo below:
 A meaningful difference from the alternatives is that ~fzfa-multi-read~
 can mix *both* synchronous and asynchronous sources in a single picker.
 
-On every changed query each source is re-filtered.  Sync sources use
-~fzf-native-score-all~.  Async sources submit one request, poll metadata, and
-materialize one authoritative snapshot through the request-aware session API.
-Stable redraws reuse that materialized output.  The producer (for example
-~find~, ~fd~, or ~ripgrep~) does not reset and continues generating candidates
-for native incremental retries.
+On every changed query, each active source is filtered again.  Sync sources
+use ~fzf-native-score-all~.  A literal list is fetched once and remains
+untagged while it is scored.  Fzfa applies the source's presentation budget
+before it copies candidates and records source routes.
+
+Async sources submit one request, poll metadata, and materialize one
+authoritative snapshot through the request-aware session API.  Stable redraws
+reuse that output.  The producer, such as ~find~, ~fd~, or ~ripgrep~, stays
+alive and continues to add candidates for native incremental retries.
+
+~fzfa-max-candidates~ is one session-wide presentation budget.  A narrowed or
+single source receives the full budget.  A widened session divides the budget
+between its sources and truncates the final merge as a second safety check.
 
 This lets one prompt combine, say, ~recentf~ entries (sync list) alongside a
 streaming ~rg~ search (async producer) and have both groups score
@@ -1139,14 +1146,16 @@ over a process pipe.
 (no CMD concept).
 
 ~:candidates~ as a 2-arg ~(INPUT CALLBACK)~ producer fn also routes to
-~fzfa-helm-make-sync-source~, but ~helm-pattern~ is split via
-~fzfa--split-input~ into (CMD . FILTER) — CMD goes to the producer's
-INPUT slot (refire only when CMD changes), FILTER scores the snapshot
-via ~fzf-native-score-all~.  Producer-kind detection (sync- vs async-firing)
-runs once at construction via a test fire with empty input;
-async callbacks update a closure-scoped snapshot and schedule
-~helm-force-update~.  The ~:display~ kwarg (~hidden~ / ~compact~ / ~full~)
-controls how the CMD half is rendered in the minibuffer;
+~fzfa-helm-make-sync-source~.  ~helm-pattern~ is split into (CMD . FILTER).
+CMD goes to the producer's INPUT slot and refires only when CMD changes.
+FILTER scores the latest raw snapshot with ~fzf-native-score-all~.
+
+Fzfa classifies producer kind from function arity.  It does not fire the
+producer as a construction probe.  A synchronous callback updates the current
+pass.  An asynchronous callback updates the owned snapshot and schedules
+~helm-force-update~.  Failed deliveries release their input for retry and
+cannot publish through a retained stale callback.  The ~:display~ argument
+(~hidden~, ~compact~, or ~full~) controls how CMD appears in the minibuffer.
 ~fzfa-display-key~ (default ~>~) cycles between states.
 
 Sync sources are built with ~:match-dynamic t~ (~helm~ asks for
@@ -1154,13 +1163,12 @@ filtered candidates on each input change rather than holding its own
 filtered list) and ~:nohighlight t~ (so ~helm~ doesn't paint over the
 ~completions-common-part~ faces already embedded by ~fzf-native~).
 
-For ~:command~ sources a polling timer checks
-~fzf-native-async-generation~ and calls ~helm-force-update~ as new
-candidates stream in.  The multi handler uses a single shared timer
-that watches every source's handle, throttled to one
-~helm-force-update~ per ~fzfa-input-throttle~, and skipped when
-~input-pending-p~ — keystrokes always win against producer-driven
-refreshes.
+For ~:command~ sources, a polling timer checks request-aware snapshot metadata
+and calls ~helm-force-update~ only after a new publication.  A stable redraw
+reuses the previous materialized result.  The multi handler uses one shared
+timer for all source handles.  It limits updates to one per
+~fzfa-input-throttle~ and skips them when ~input-pending-p~ is non-nil.  Thus,
+keystrokes take priority over producer-driven refreshes.
 
 *** Customization
 
@@ -1427,7 +1435,7 @@ We can view media thumbnails inside ~dired~ inside the preview like so:
 
 | Variable                       | Default                  | Description                                                                   |
 |--------------------------------+--------------------------+-------------------------------------------------------------------------------|
-| ~fzfa-max-candidates~          | 10000                    | Max candidates returned to Elisp (see note below).                            |
+| ~fzfa-max-candidates~          | 10000                    | Session-wide candidate presentation budget (see note below).                  |
 | ~fzfa-refresh-delay~           | 0.05                     | Seconds between generation polls.                                             |
 | ~fzfa-input-debounce~          | 0.1                      | Idle seconds to retry after an interrupted scoring.                           |
 | ~fzfa-input-throttle~          | 0.2                      | Min seconds between UI refreshes driven by new data.                          |
@@ -1566,13 +1574,17 @@ any allocation, so oversized lines never reach the scoring path.
   (setq fzfa-max-line-length -300)  ; truncate to 300 chars, keep all
 #+end_src
 
-~fzfa-max-candidates~ caps only the number of strings consed into the
-Emacs list returned to the completion UI.  The C layer always scores and
-sorts *all* candidates: every matching string is passed through the ~fzf~
-scoring threads, the full scored set is counting-sorted, and then only the
-top N are handed back to Elisp.  The ~[FILTERED]~ count in the prompt
-always reflects the true number of matches, not the capped return value.
-Lowering this number can be a huge performance improvement.
+~fzfa-max-candidates~ is the maximum number of candidates presented by one
+fzfa session.  A widened multi-source session divides this budget between
+sources.  A narrowed or single-source session gives the full budget to its
+active source.  Fzfa also truncates the merged list to this value.
+
+For command sources, the limit is passed to the native request before its
+snapshot crosses into Elisp.  For list and producer sources, fzfa keeps the raw
+snapshot untagged, scores it, applies its budget, and tags only the visible
+subset.  Literal lists are fetched once per session.  The limit reduces Elisp
+copying, route-table memory, and frontend rendering.  It does not limit the raw
+producer pool or guarantee that matching work stops after N candidates.
 
 ~fzfa-cache-size~ controls a per-session LRU result cache inside the
 C module.  Each entry stores the top-K results and the full matched-

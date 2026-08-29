@@ -1298,6 +1298,121 @@ when the inner sources arrive without `:narrow'."
                                                    (< (car a) (car b))))
                    '((0 . nil) (1 . "picked"))))))
 
+(ert-deftest fzfa-multi-router-setup-quit-unwinds-started-cells ()
+  "A partial setup is rolled back once, and only completed cells return."
+  (let* ((events nil)
+         (record (lambda (event) (setq events (append events (list event)))))
+         (fzfa-preview-functions
+          `((cat-a
+             :setup ,(lambda (&optional _session) (funcall record 'setup-a))
+             :exit ,(lambda (&optional _session) (funcall record 'exit-a))
+             :return ,(lambda (cand &optional _session)
+                        (funcall record (list 'return-a cand))))
+            (cat-b
+             :setup ,(lambda (&optional _session)
+                       (funcall record 'setup-b)
+                       (signal 'quit nil))
+             :exit ,(lambda (&optional _session) (funcall record 'exit-b))
+             :return ,(lambda (_cand &optional _session)
+                        (funcall record 'return-b)))
+            (cat-c
+             :setup ,(lambda (&optional _session) (funcall record 'setup-c))
+             :exit ,(lambda (&optional _session) (funcall record 'exit-c))
+             :return ,(lambda (_cand &optional _session)
+                        (funcall record 'return-c)))))
+         (sources-v (vector (list :name "A" :category 'cat-a)
+                            (list :name "B" :category 'cat-b)
+                            (list :name "C" :category 'cat-c)))
+         (router (fzfa--multi-build-router
+                  sources-v (make-hash-table :test 'equal)))
+         (fzfa--preview-session (list router)))
+    (fzfa-preview-put :origin-window nil)
+    (fzfa-preview-put :origin-buffer nil)
+    (fzfa-preview-put :default-directory "/")
+    (should (eq (condition-case nil
+                    (progn
+                      (funcall (plist-get router :setup) nil)
+                      'no-quit)
+                  (quit 'quit))
+                'quit))
+    (should (equal events
+                   '(setup-a setup-b exit-a exit-b (return-a nil))))
+    ;; Later outer cleanup remains idempotent.
+    (funcall (plist-get router :return) nil nil)
+    (funcall (plist-get router :exit) nil)
+    (funcall (plist-get router :return) nil nil)
+    (should (equal events
+                   '(setup-a setup-b exit-a exit-b (return-a nil))))))
+
+(ert-deftest fzfa-core-preview-install-setup-quit-clears-ownership ()
+  "An aborted setup leaves neither handler resources nor minibuffer owners."
+  (let* ((events nil)
+         (handler-a
+          `(:setup ,(lambda () (push 'setup-a events))
+            :exit ,(lambda () (push 'exit-a events))
+            :return ,(lambda (&optional _cand) (push 'return-a events))))
+         (handler-b
+          `(:setup ,(lambda ()
+                      (push 'setup-b events)
+                      (signal 'quit nil))
+            :exit ,(lambda () (push 'exit-b events))
+            :return ,(lambda (&optional _cand) (push 'return-b events))))
+         (router
+          (fzfa--multi-build-router
+           (vector (list :preview handler-a)
+                   (list :preview handler-b))
+           (make-hash-table :test 'equal)))
+         (fzfa--preview-session (list router))
+         (window (selected-window)))
+    (with-temp-buffer
+      (setq-local minibuffer-exit-hook nil)
+      (setq-local post-command-hook nil)
+      (cl-letf (((symbol-function 'active-minibuffer-window)
+                 (lambda () window))
+                ((symbol-function 'minibuffer-selected-window)
+                 (lambda () window)))
+        (should (eq (condition-case nil
+                        (progn (fzfa--preview-install 'session 0) 'no-quit)
+                      (quit 'quit))
+                    'quit)))
+      (should-not minibuffer-exit-hook)
+      (should-not post-command-hook)
+      (should-not fzfa--preview-timer-owner)
+      (should-not fzfa--preview-run-fn)
+      (should-not fzfa--minibuffer-marker)
+      (should-not fzfa--minibuffer-session))
+    (should (equal (reverse events)
+                   '(setup-a setup-b exit-a exit-b return-a)))
+    ;; The outer read cleanup sees the aborted marker and does not duplicate it.
+    (fzfa--preview-return nil 'session)
+    (should (equal (reverse events)
+                   '(setup-a setup-b exit-a exit-b return-a)))))
+
+(ert-deftest fzfa-core-preview-aborted-raw-setup-skips-return ()
+  "A raw handler whose setup aborts receives exit but not return."
+  (let* ((events nil)
+         (handler
+          `(:setup ,(lambda ()
+                      (push 'setup events)
+                      (signal 'quit nil))
+            :exit ,(lambda () (push 'exit events))
+            :return ,(lambda (&optional _cand) (push 'return events))))
+         (fzfa--preview-session (list handler))
+         (window (selected-window)))
+    (with-temp-buffer
+      (setq-local minibuffer-exit-hook nil)
+      (setq-local post-command-hook nil)
+      (cl-letf (((symbol-function 'active-minibuffer-window)
+                 (lambda () window))
+                ((symbol-function 'minibuffer-selected-window)
+                 (lambda () window)))
+        (should (eq (condition-case nil
+                        (progn (fzfa--preview-install 'session 0) 'no-quit)
+                      (quit 'quit))
+                    'quit))))
+    (fzfa--preview-return nil 'session)
+    (should (equal (reverse events) '(setup exit)))))
+
 (ert-deftest fzfa-preview-show-uses-same-window ()
   "`fzfa-preview-show' lands the buffer in the currently selected window.
 
@@ -1731,7 +1846,9 @@ even when their extension is excluded from `fzfa-extensions'."
     (should (= (fzfa-source-rank src) 0))
     (should (= (fzfa-source-total src) 0))
     (should (= (fzfa-source-filtered src) 0))
-    (should (eq (fzfa-source-prod-input src) :unfetched))))
+    (should (eq (fzfa-source-prod-input src) :unfetched))
+    (should (eq (fzfa-source-prod-state src) 'idle))
+    (should-not (fzfa-source-prod-error src))))
 
 (ert-deftest fzfa-source-make-from-spec-plist ()
   "Constructor with :spec (multi-source path) extracts keys from plist."
@@ -2321,7 +2438,7 @@ even when their extension is excluded from `fzfa-extensions'."
                  (setq runtime-source (apply original-maker args))))
               ((symbol-function 'helm-make-source)
                (lambda (_name _class &rest args) args))
-              ((symbol-function 'run-with-timer)
+              ((symbol-function 'fzfa-helm--make-poll-timer)
                (lambda (&rest _) 'fake-timer))
               ((symbol-function 'cancel-timer) #'ignore)
               ((symbol-function 'fzfa-source--stop) #'ignore)
@@ -2354,7 +2471,7 @@ even when their extension is excluded from `fzfa-extensions'."
                (lambda (&rest _) 'helm-handle))
               ((symbol-function 'helm-make-source)
                (lambda (_name _class &rest args) args))
-              ((symbol-function 'run-with-timer)
+              ((symbol-function 'fzfa-helm--make-poll-timer)
                (lambda (&rest _) 'helm-poll-timer))
               ((symbol-function 'cancel-timer)
                (lambda (_timer)
@@ -2397,8 +2514,8 @@ even when their extension is excluded from `fzfa-extensions'."
                  (setq runtime-source (apply original-maker args))))
               ((symbol-function 'helm-make-source)
                (lambda (_name _class &rest args) args))
-              ((symbol-function 'run-with-timer)
-               (lambda (_delay _repeat callback &rest _args)
+              ((symbol-function 'fzfa-helm--make-poll-timer)
+               (lambda (callback)
                  (setq poll-callback callback)
                  'helm-poll-timer))
               ((symbol-function 'cancel-timer) #'ignore)
@@ -2445,8 +2562,8 @@ even when their extension is excluded from `fzfa-extensions'."
                    (lambda (_name _class &rest args) args))
                   ((symbol-function 'helm-buffer-get)
                    (lambda () helm-buffer))
-                  ((symbol-function 'run-with-timer)
-                   (lambda (_delay _repeat function &rest _args)
+                  ((symbol-function 'fzfa-helm--make-poll-timer)
+                   (lambda (function)
                      (setq poll-callback function)
                      'outer-poll))
                   ((symbol-function 'cancel-timer) #'ignore)
@@ -6091,7 +6208,70 @@ snapshot — a refresh would be a redundant tick."
     (fzfa--source-fetch source "q")
     (should (equal (fzfa-source-snapshot source) '("a" "b" "c")))
     (should (= (fzfa-source-total source) 3))
-    (should (equal (fzfa-source-prod-input source) "q"))))
+    (should (equal (fzfa-source-prod-input source) "q"))
+    (should (eq (fzfa-source-prod-state source) 'ready))
+    (should-not (fzfa-source-prod-error source))))
+
+(ert-deftest fzfa-source-fetch-producer-failure-releases-input ()
+  "A producer signal records failure and permits an equal-query retry."
+  (let* ((calls 0)
+         (producer (lambda (_input callback)
+                     (cl-incf calls)
+                     (if (= calls 1)
+                         (error "producer failed")
+                       (funcall callback '("recovered")))))
+         (source (fzfa-make-source :spec `(:candidates ,producer))))
+    (should-error (fzfa--source-fetch source "q") :type 'error)
+    (should (= calls 1))
+    (should (eq (fzfa-source-prod-state source) 'failed))
+    (should (eq (car (fzfa-source-prod-error source)) 'error))
+    (should (eq (fzfa-source-prod-input source) :unfetched))
+    (should (fzfa--source-fetch source "q"))
+    (should (= calls 2))
+    (should (eq (fzfa-source-prod-state source) 'ready))
+    (should-not (fzfa-source-prod-error source))
+    (should (equal (fzfa-source-snapshot source) '("recovered")))))
+
+(ert-deftest fzfa-source-fetch-delivery-failure-releases-input ()
+  "An async ON-DELIVER signal fails its request without poisoning retry."
+  (let* ((calls 0)
+         (callbacks nil)
+         (fail-transform t)
+         (producer (lambda (_input callback)
+                     (cl-incf calls)
+                     (push callback callbacks)))
+         (source (fzfa-make-source :spec `(:candidates ,producer))))
+    (fzfa--source-fetch source "q" nil
+                        (lambda (cands)
+                          (if fail-transform
+                              (error "transform failed")
+                            cands)))
+    (should (eq (fzfa-source-prod-state source) 'pending))
+    (let ((failed-callback (car callbacks)))
+      (should-error (funcall failed-callback '("candidate")) :type 'error)
+      (should (eq (fzfa-source-prod-state source) 'failed))
+      (should (eq (fzfa-source-prod-input source) :unfetched))
+      ;; Failure revokes any retained callback for the failed request.
+      (setq fail-transform nil)
+      (funcall failed-callback '("late"))
+      (should-not (fzfa-source-snapshot source)))
+    (should (fzfa--source-fetch source "q"))
+    (should (= calls 2))
+    (should (eq (fzfa-source-prod-state source) 'pending))))
+
+(ert-deftest fzfa-source-fetch-invalid-delivery-preserves-last-snapshot ()
+  "A malformed transform result cannot partly overwrite good output."
+  (let* ((callback nil)
+         (producer (lambda (_input cb) (setq callback cb)))
+         (source (fzfa-make-source :spec `(:candidates ,producer))))
+    (setf (fzfa-source-snapshot source) '("good")
+          (fzfa-source-total source) 1)
+    (fzfa--source-fetch source "q" nil (lambda (_cands) 42))
+    (should-error (funcall callback '("bad")) :type 'wrong-type-argument)
+    (should (eq (fzfa-source-prod-state source) 'failed))
+    (should (eq (fzfa-source-prod-input source) :unfetched))
+    (should (equal (fzfa-source-snapshot source) '("good")))
+    (should (= (fzfa-source-total source) 1))))
 
 (ert-deftest fzfa-source-fetch-skips-on-equal-query ()
   "Re-firing with the same query no-ops — producer not called again."
@@ -6122,16 +6302,32 @@ overwrite the fresher snapshot."
 (ert-deftest fzfa-source-fetch-on-deliver-transforms-snapshot ()
   "ON-DELIVER's return becomes the snapshot value.
 
-This is the tagging seam: `fzfa--multi-candidates-fetch' threads
-its `fzfa--tag' mapper through here so candidates carry the
-source→idx mapping by the time they hit the snapshot.  Helm
-callers pass nil and take output verbatim."
+The transform runs before the ownership-checked snapshot commit."
   (let* ((producer (lambda (_in cb) (funcall cb '("a" "b"))))
          (source (fzfa-make-source :spec `(:candidates ,producer))))
     (fzfa--source-fetch source "q" nil
                         (lambda (cands)
                           (mapcar #'upcase cands)))
     (should (equal (fzfa-source-snapshot source) '("A" "B")))))
+
+(ert-deftest fzfa-source-fetch-on-deliver-rechecks-token-before-commit ()
+  "A transform that starts a new query revokes the old delivery commit."
+  (let* ((callbacks nil)
+         (producer (lambda (input callback)
+                     (push (cons input callback) callbacks)))
+         (source (fzfa-make-source :spec `(:candidates ,producer))))
+    (fzfa--source-fetch
+     source "q1" nil
+     (lambda (cands)
+       (fzfa--source-fetch source "q2")
+       cands))
+    (funcall (cdr (assoc "q1" callbacks)) '("stale"))
+    (should (equal (fzfa-source-prod-input source) "q2"))
+    (should (eq (fzfa-source-prod-state source) 'pending))
+    (should-not (fzfa-source-snapshot source))
+    (funcall (cdr (assoc "q2" callbacks)) '("fresh"))
+    (should (eq (fzfa-source-prod-state source) 'ready))
+    (should (equal (fzfa-source-snapshot source) '("fresh")))))
 
 (ert-deftest fzfa-source-fetch-async-schedules-refresh-fn ()
   "Async producer schedules REFRESH-FN; sync skips it.
@@ -6181,6 +6377,8 @@ locked even if the wrapper changes."
     (fzfa-source--stop source)
     (funcall async-cb '("late"))
     (should-not (fzfa-source-snapshot source))
+    (should (eq (fzfa-source-prod-state source) 'revoked))
+    (should (eq (fzfa-source-prod-input source) :unfetched))
     (should (= (length timer-idle-list) before))))
 
 (ert-deftest fzfa-source-fetch-sync-no-refresh ()
@@ -6530,6 +6728,177 @@ locked even if the wrapper changes."
     (should (equal outer-result '("new")))
     (should (equal (fzfa-source-last-result source) '("new")))
     (should (equal (fzfa-source-last-query source) "new"))))
+
+;;; Review-derived lifecycle and presentation regressions
+
+(ert-deftest fzfa-source-debounce-preserves-deadline-and-cancels-revert ()
+  "Equal redraws preserve one timer; reverting to the live command revokes it."
+  (let* ((source (fzfa-make-source :command "A"))
+         (fzfa-shell-command-debounce 0)
+         (fzfa-shell-command-throttle 0)
+         (schedules 0)
+         canceled)
+    (setf (fzfa-source-current-cmd source) "A")
+    (cl-letf (((symbol-function 'run-with-timer)
+               (lambda (&rest _)
+                 (cl-incf schedules)
+                 'timer-B))
+              ((symbol-function 'cancel-timer)
+               (lambda (timer) (push timer canceled))))
+      (fzfa-source--debounce-restart source "B" #'ignore)
+      (dotimes (_ 100)
+        (fzfa-source--debounce-restart source "B" #'ignore))
+      (should (= schedules 1))
+      (should (eq (fzfa-source-restart-timer source) 'timer-B))
+      (should (equal (fzfa-source-restart-command source) "B"))
+      (fzfa-source--debounce-restart source "A" #'ignore))
+    (should (equal canceled '(timer-B)))
+    (should-not (fzfa-source-restart-timer source))
+    (should-not (fzfa-source-restart-command source))))
+
+(ert-deftest fzfa-source-restart-spawn-failure-remains-retryable ()
+  "A failed replacement spawn must not claim the desired command is running."
+  (let ((source (fzfa-make-source :command "A"))
+        stopped)
+    (setf (fzfa-source-current-cmd source) "A"
+          (fzfa-source-handle source) 'handle-A)
+    (cl-letf (((symbol-function 'fzfa--defer-async-stop)
+               (lambda (handle) (push handle stopped)))
+              ((symbol-function 'fzfa--spawn)
+               (lambda (&rest _) (error "injected spawn failure"))))
+      (should-error (fzfa-source--restart source "B" #'ignore)))
+    (should (equal stopped '(handle-A)))
+    (should-not (fzfa-source-handle source))
+    (should-not (fzfa-source-current-cmd source))))
+
+(ert-deftest fzfa-setup-retries-failure-and-rejects-recursion ()
+  "Setup commits only after success and treats recursive entry as in progress."
+  (let ((fzfa--setup-done nil)
+        (fzfa-extensions nil)
+        (completion-styles-alist nil)
+        (loads 0))
+    (cl-letf (((symbol-function 'fzf-native-ensure-loaded)
+               (lambda ()
+                 (cl-incf loads)
+                 (if (= loads 1)
+                     (error "injected transient load failure")
+                   (fzfa--ensure-setup)))))
+      (should-error (fzfa--ensure-setup))
+      (should-not fzfa--setup-done)
+      (fzfa--ensure-setup))
+    (should (eq fzfa--setup-done t))
+    (should (= loads 2))
+    (should (assq 'fzfa completion-styles-alist))))
+
+(ert-deftest fzfa-helm-poll-timer-cancels-failed-activation ()
+  "Timer activation failure must cancel the already-owned timer object."
+  (require 'fzfa-helm)
+  (let (canceled)
+    (cl-letf (((symbol-function 'timer-create) (lambda () 'owned-timer))
+              ((symbol-function 'timer-set-time) #'ignore)
+              ((symbol-function 'timer-set-function) #'ignore)
+              ((symbol-function 'timer-activate)
+               (lambda (_) (error "injected activation failure")))
+              ((symbol-function 'cancel-timer)
+               (lambda (timer) (push timer canceled))))
+      (should-error (fzfa-helm--make-poll-timer #'ignore)))
+    (should (equal canceled '(owned-timer)))))
+
+(ert-deftest fzfa-helm-eager-constructor-rolls-back-partial-acquisition ()
+  "Helm source construction failure stops its producer and poll timer."
+  (require 'fzfa-helm)
+  (let ((helm-map (make-sparse-keymap))
+        stopped canceled)
+    (cl-letf (((symbol-function 'fzfa--spawn)
+               (lambda (&rest _) 'producer-handle))
+              ((symbol-function 'fzfa-helm--make-poll-timer)
+               (lambda (_) 'producer-timer))
+              ((symbol-function 'helm-make-source)
+               (lambda (&rest _) (error "injected Helm construction failure")))
+              ((symbol-function 'fzf-native-async-stop)
+               (lambda (handle) (push handle stopped)))
+              ((symbol-function 'cancel-timer)
+               (lambda (timer) (push timer canceled))))
+      (should-error
+       (fzfa-helm--async-source-and-stop
+        "test" "printf x" "/tmp/" #'identity 10)))
+    (should (equal stopped '(producer-handle)))
+    (should (equal canceled '(producer-timer)))))
+
+(ert-deftest fzfa-source-literal-candidates-fetch-once ()
+  "Literal candidate lists materialize once across changing match queries."
+  (let* ((source (fzfa-make-source :candidates '("a" "b" "c")))
+         (producer (fzfa-source-cands-fn source))
+         (calls 0))
+    (setf (fzfa-source-cands-fn source)
+          (lambda (&rest args)
+            (cl-incf calls)
+            (apply producer args)))
+    (dolist (query '("" "a" "ab" "a" "" "c"))
+      (fzfa--source-fetch source query))
+    (should (= calls 1))
+    (should (eq (fzfa-source-prod-input source) :literal))
+    (should (equal (fzfa-source-snapshot source) '("a" "b" "c")))))
+
+(ert-deftest fzfa-source-input-producer-sees-each-distinct-query ()
+  "A true two-argument producer remains query-sensitive."
+  (let (inputs)
+    (let ((source
+           (fzfa-make-source
+            :candidates
+            (lambda (input callback)
+              (push input inputs)
+              (funcall callback (list input))))))
+      (dolist (query '("a" "ab" "abc" "ab"))
+        (fzfa--source-fetch source query))
+      (should (equal (nreverse inputs) '("a" "ab" "abc" "ab"))))))
+
+(ert-deftest fzfa-source-producer-signal-releases-input-for-retry ()
+  "A synchronous producer signal must not suppress an equal retry."
+  (let* ((calls 0)
+         (source
+          (fzfa-make-source
+           :candidates
+           (lambda (_input _callback)
+             (cl-incf calls)
+             (error "injected producer failure")))))
+    (dotimes (_ 2)
+      (should-error (fzfa--source-fetch source "same")))
+    (should (= calls 2))
+    (should (eq (fzfa-source-prod-input source) :unfetched))))
+
+(ert-deftest fzfa-presentation-budget-is-session-wide ()
+  "Widened source shares add up to the configured session limit."
+  (let ((shares
+         (cl-loop for i below 14
+                  collect (fzfa--source-presentation-limit 10000 14 nil i))))
+    (should (= (apply #'+ shares) 10000))
+    (should (= (fzfa--source-presentation-limit 10000 14 3 3) 10000))
+    (should (= (fzfa--source-presentation-limit 10000 1 0 0) 10000))
+    (should (equal (cl-loop for i below 5
+                            collect (fzfa--source-presentation-limit
+                                     2 5 nil i))
+                   '(1 1 0 0 0)))))
+
+(ert-deftest fzfa-producer-publication-caps-and-replaces-routes ()
+  "Producer publication tags only its visible budget and drops old routes."
+  (let* ((routes (make-hash-table :test #'equal))
+         (source (fzfa-make-source
+                  :spec '(:candidates ("unused") :action identity)))
+         (first (cl-loop for i below 20 collect (format "old-%d" i)))
+         (second (cl-loop for i below 20 collect (format "new-%d" i))))
+    (setf (fzfa-source-total source) 20)
+    (should (= (length (fzfa--multi-publish-producer-output
+                        source first 0 routes t "" 10))
+               10))
+    (should (= (fzfa-source-filtered source) 20))
+    (should (= (hash-table-count routes) 10))
+    (let ((old-key (car (fzfa-source-route-keys source))))
+      (should (= (length (fzfa--multi-publish-producer-output
+                          source second 0 routes t "" 3))
+                 3))
+      (should (= (hash-table-count routes) 3))
+      (should-not (gethash old-key routes)))))
 
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here
