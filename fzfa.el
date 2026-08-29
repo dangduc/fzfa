@@ -219,9 +219,11 @@ the wrapper clears its exact handle before it calls CALLBACK."
   "Maximum visible candidates across one `fzfa-completing-read' session.
 
 Single and narrowed sources receive the complete budget.  A widened multi
-divides it across sources and applies a final session cap.  Full filtered and
-total counts are still tracked in the prompt.  Set to nil or 0 to disable the
-cap; large result sets can then make the frontend slow."
+allocates it in declared source order.  Completed sparse sources donate their
+unused slots to later sources; unfinished sources reserve their full share.
+The final merge applies the same session cap.  Full filtered and total counts
+are still tracked in the prompt.  Set to nil or 0 to disable the cap; large
+result sets can then make the frontend slow."
   :type '(choice (const  :tag "No cap" nil)
                  (integer :tag "Max candidates"))
   :group 'fzfa)
@@ -4143,17 +4145,42 @@ when it still maps to IDX, so one source cannot erase a newer owner's route."
              staged)
     (setf (fzfa-source-route-keys source) keys)))
 
-(defun fzfa--source-presentation-limit (limit source-count narrow-idx idx)
-  "Return SOURCE IDX's share of session LIMIT.
+(defun fzfa--presentation-budget-create (limit source-count narrow-idx)
+  "Return mutable adaptive presentation state for LIMIT.
 
-A single or narrowed source receives the complete budget.  A widened multi
-divides it deterministically across sources.  Return nil when LIMIT is nil.
-When LIMIT is smaller than SOURCE-COUNT, later sources receive zero slots."
+The vector stores `(REMAINING ELIGIBLE-SOURCES)'.  A narrowed session has one
+eligible source.  Return nil when LIMIT is nil, preserving the uncapped path."
   (when limit
-    (if (or (= source-count 1) narrow-idx)
-        limit
-      (+ (/ limit source-count)
-         (if (< idx (% limit source-count)) 1 0)))))
+    (vector limit (if narrow-idx 1 source-count))))
+
+(defun fzfa--presentation-budget-next (budget)
+  "Return the fair share for BUDGET's next eligible source.
+
+The ceiling division preserves the old declared-order allocation when every
+source fills its share.  Unused slots remain available to later sources."
+  (when budget
+    (let ((remaining (aref budget 0))
+          (sources (aref budget 1)))
+      (if (> sources 0)
+          (/ (+ remaining sources -1) sources)
+        0))))
+
+(defun fzfa--presentation-budget-finish
+    (budget allocation visible-count reserve-p)
+  "Finish one eligible source in BUDGET.
+
+ALLOCATION is the value returned by `fzfa--presentation-budget-next'.
+VISIBLE-COUNT is the bounded number of candidates retained for this source.
+When RESERVE-P is non-nil, charge the full allocation because interrupted or
+pending work can still fill it.  This keeps simultaneous async requests under
+the global cap while completed sparse sources donate unused slots."
+  (when budget
+    (let* ((remaining (aref budget 0))
+           (charge (if reserve-p allocation
+                     (min allocation visible-count))))
+      (aset budget 0 (max 0 (- remaining charge)))
+      (aset budget 1 (max 0 (1- (aref budget 1))))))
+  budget)
 
 (defun fzfa--limit-candidates (candidates limit)
   "Return at most LIMIT CANDIDATES, or CANDIDATES when LIMIT is nil."
@@ -4197,6 +4224,26 @@ producer pool."
         (fzfa-source-last-async-output source) nil
         (fzfa-source-filtered source) 0
         (fzfa-source-rank source) 0))
+
+(defun fzfa--multi-limit-source-presentation
+    (source idx candidate->source limit)
+  "Trim SOURCE IDX's retained presentation and routes to LIMIT.
+
+This is used for pending and failed async requests, whose last completed list
+can be larger than the source's current adaptive share.  Keep matcher totals
+and cached native-output identity intact; a changed request limit will replace
+the snapshot when native work completes."
+  (let ((current (fzfa-source-last-result source)))
+    (when (and limit (> (length current) limit))
+      (let ((visible (cl-subseq current 0 limit))
+            (routes (make-hash-table :test #'equal)))
+        (dolist (candidate visible)
+          (puthash candidate idx routes))
+        (fzfa--source-publish-routes
+         source idx routes candidate->source)
+        (setf (fzfa-source-last-result source) visible)
+        (setq current visible)))
+    current))
 
 (defun fzfa--multi-build-router (sources-v candidate->source)
   "Build a synthetic preview handler that dispatches per source.
@@ -5038,6 +5085,9 @@ Per-source plist keys:
                   ;; silently write to the wrong buffer otherwise.
                   (with-selected-window win
                 (let* ((interrupted nil)
+                       (presentation-budget
+                        (fzfa--presentation-budget-create
+                         limit n narrow-idx))
                        ;; When narrowed to a source whose display is
                        ;; `compact' / `full', split the buffer at
                        ;; `fzfa-separator' so CMD drives the producer /
@@ -5067,14 +5117,16 @@ Per-source plist keys:
                     (funcall render-check my-epoch))
                   (dotimes (i n)
                     (let* ((src (aref sources i))
+                           (excluded-p (and narrow-idx (/= narrow-idx i)))
                            (this-narrow (and narrow-active
                                              (eql i narrow-idx)))
                            (prod-input (if this-narrow narrow-cmd input))
                            (source-limit
-                            (fzfa--source-presentation-limit
-                             limit n narrow-idx i)))
-                      (if (or (and narrow-idx (/= narrow-idx i))
-                              (eql source-limit 0))
+                            (if excluded-p 0
+                              (fzfa--presentation-budget-next
+                               presentation-budget)))
+                           (reserve-budget nil))
+                      (if (or excluded-p (eql source-limit 0))
                           (fzfa--multi-clear-source-presentation
                            src i candidate->source)
                         (let* ((h     (fzfa-source-handle src))
@@ -5100,8 +5152,11 @@ Per-source plist keys:
                           ;; can all recursively render this session.
                           (funcall render-check my-epoch)
                           (cond
-                           ((eq out t) (setq interrupted t))
+                           ((eq out t)
+                            (setq interrupted t
+                                  reserve-budget t))
                            ((and h (eq (car-safe out) 'pending))
+                            (setq reserve-budget t)
                             (when (cdr out)
                               (setf (fzfa-source-total src) (cdr out))))
                            ((and h (eq (car-safe out) 'failed))
@@ -5121,7 +5176,14 @@ Per-source plist keys:
                                      multi-p query source-limit)))
                             (when (and out (not first-cands-shown))
                               (setq first-cands-shown t))))
-                          (funcall render-check my-epoch)))))
+                          (funcall render-check my-epoch)))
+                      (unless excluded-p
+                        (fzfa--multi-limit-source-presentation
+                         src i candidate->source source-limit)
+                        (fzfa--presentation-budget-finish
+                         presentation-budget source-limit
+                         (length (fzfa-source-last-result src))
+                         reserve-budget))))
                   (funcall render-check my-epoch)
                   (if interrupted
                       (progn
@@ -5718,6 +5780,9 @@ Per-source plist keys:
                             (catch render-revoke-tag
                               (let* ((input (fzfa--current-query str))
                                  (interrupted nil)
+                                 (presentation-budget
+                                  (fzfa--presentation-budget-create
+                                   limit n narrow-idx))
                                  (narrow-src
                                   (and narrow-idx (aref sources narrow-idx)))
                                  (narrow-active
@@ -5744,15 +5809,18 @@ Per-source plist keys:
                               (funcall render-check my-epoch))
                             (dotimes (i n)
                               (let* ((src (aref sources i))
+                                     (excluded-p
+                                      (and narrow-idx (/= narrow-idx i)))
                                      (this-narrow
                                       (and narrow-active (eql i narrow-idx)))
                                      (prod-input
                                       (if this-narrow narrow-cmd input))
                                      (source-limit
-                                      (fzfa--source-presentation-limit
-                                       limit n narrow-idx i)))
-                                (if (or (and narrow-idx (/= narrow-idx i))
-                                        (eql source-limit 0))
+                                      (if excluded-p 0
+                                        (fzfa--presentation-budget-next
+                                         presentation-budget)))
+                                     (reserve-budget nil))
+                                (if (or excluded-p (eql source-limit 0))
                                     ;; A narrow selection or a zero budget
                                     ;; excludes this source.  Drop its prior
                                     ;; results and filtered count.  Preserve
@@ -5783,12 +5851,15 @@ Per-source plist keys:
                                     ;; invoke producer, bridge, or advised Lisp.
                                     (funcall render-check my-epoch)
                                     (cond
-                                     ((eq out t) (setq interrupted t))
+                                     ((eq out t)
+                                      (setq interrupted t
+                                            reserve-budget t))
                                      ;; Async source whose result is not yet
                                      ;; final — keep the prior per-source slot;
                                      ;; refresh `total' so the overlay still
                                      ;; reflects the live pool.
                                      ((and h (eq (car-safe out) 'pending))
+                                      (setq reserve-budget t)
                                       (when (cdr out)
                                         (setf (fzfa-source-total src)
                                               (cdr out))))
@@ -5810,7 +5881,14 @@ Per-source plist keys:
                                                multi-p query source-limit)))
                                       (when (and out (not first-cands-shown))
                                         (setq first-cands-shown t))))
-                                    (funcall render-check my-epoch)))))
+                                    (funcall render-check my-epoch)))
+                                (unless excluded-p
+                                  (fzfa--multi-limit-source-presentation
+                                   src i candidate->source source-limit)
+                                  (fzfa--presentation-budget-finish
+                                   presentation-budget source-limit
+                                   (length (fzfa-source-last-result src))
+                                   reserve-budget))))
                             (funcall render-check my-epoch)
                             (when interrupted
                               (fzfa--timer-owner-schedule

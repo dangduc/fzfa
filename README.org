@@ -574,8 +574,10 @@ reuse that output.  The producer, such as ~find~, ~fd~, or ~ripgrep~, stays
 alive and continues to add candidates for native incremental retries.
 
 ~fzfa-max-candidates~ is one session-wide presentation budget.  A narrowed or
-single source receives the full budget.  A widened session divides the budget
-between its sources and truncates the final merge as a second safety check.
+single source receives the full budget.  A widened session allocates fair
+shares in declared source order.  Completed sparse sources donate unused slots
+to later sources, while unfinished async sources reserve their full share.
+Fzfa truncates the final merge as a second safety check.
 
 This lets one prompt combine, say, ~recentf~ entries (sync list) alongside a
 streaming ~rg~ search (async producer) and have both groups score
@@ -1578,9 +1580,11 @@ unbounded producer record.
 #+end_src
 
 ~fzfa-max-candidates~ is the maximum number of candidates presented by one
-fzfa session.  A widened multi-source session divides this budget between
-sources.  A narrowed or single-source session gives the full budget to its
-active source.  Fzfa also truncates the merged list to this value.
+fzfa session.  A widened multi-source session starts with deterministic fair
+shares, then gives unused capacity from each completed sparse source to later
+sources.  Pending work reserves its full share, so simultaneous output cannot
+overcommit the cap.  A narrowed or single-source session gives the full budget
+to its active source.  Fzfa also truncates the merged list to this value.
 
 For command sources, the limit is passed to the native request before its
 snapshot crosses into Elisp.  For list and producer sources, fzfa keeps the raw

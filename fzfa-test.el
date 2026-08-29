@@ -7623,18 +7623,178 @@ locked even if the wrapper changes."
     (should (= calls 2))
     (should (eq (fzfa-source-prod-input source) :unfetched))))
 
-(ert-deftest fzfa-presentation-budget-is-session-wide ()
-  "Widened source shares add up to the configured session limit."
-  (let ((shares
-         (cl-loop for i below 14
-                  collect (fzfa--source-presentation-limit 10000 14 nil i))))
-    (should (= (apply #'+ shares) 10000))
-    (should (= (fzfa--source-presentation-limit 10000 14 3 3) 10000))
-    (should (= (fzfa--source-presentation-limit 10000 1 0 0) 10000))
-    (should (equal (cl-loop for i below 5
-                            collect (fzfa--source-presentation-limit
-                                     2 5 nil i))
-                   '(1 1 0 0 0)))))
+(ert-deftest fzfa-presentation-budget-reclaims-unused-shares ()
+  "Completed sparse sources donate their unused slots to later sources."
+  (let ((budget (fzfa--presentation-budget-create 2 5 nil))
+        allocations)
+    (dolist (visible '(0 0 0 0 20))
+      (let ((allocation (fzfa--presentation-budget-next budget)))
+        (push allocation allocations)
+        (fzfa--presentation-budget-finish
+         budget allocation (min visible allocation) nil)))
+    (should (equal (nreverse allocations) '(1 1 1 1 2)))
+    (should (= (aref budget 0) 0)))
+  ;; The default cap is not diluted when thirteen earlier sources are empty.
+  (let ((budget (fzfa--presentation-budget-create 10000 14 nil))
+        last-allocation)
+    (dotimes (i 14)
+      (let ((allocation (fzfa--presentation-budget-next budget)))
+        (when (= i 13)
+          (setq last-allocation allocation))
+        (fzfa--presentation-budget-finish
+         budget allocation (if (= i 13) allocation 0) nil)))
+    (should (= last-allocation 10000))
+    (should (= (aref budget 0) 0))))
+
+(ert-deftest fzfa-presentation-budget-preserves-saturated-fairness ()
+  "Saturated sources keep the deterministic declared-order split."
+  (let ((budget (fzfa--presentation-budget-create 10 4 nil))
+        allocations)
+    (dotimes (_ 4)
+      (let ((allocation (fzfa--presentation-budget-next budget)))
+        (push allocation allocations)
+        (fzfa--presentation-budget-finish
+         budget allocation allocation nil)))
+    (should (equal (nreverse allocations) '(3 3 2 2)))
+    (should (= (aref budget 0) 0))))
+
+(ert-deftest fzfa-presentation-budget-reserves-pending-work ()
+  "Pending sources reserve capacity instead of overcommitting the cap."
+  (let ((budget (fzfa--presentation-budget-create 2 5 nil))
+        allocations)
+    (dotimes (_ 5)
+      (let ((allocation (fzfa--presentation-budget-next budget)))
+        (push allocation allocations)
+        (fzfa--presentation-budget-finish
+         budget allocation 0 t)))
+    (should (equal (nreverse allocations) '(1 1 0 0 0)))
+    (should (= (aref budget 0) 0))))
+
+(ert-deftest fzfa-presentation-budget-narrowed-source-gets-full-cap ()
+  "A narrowed source receives the complete presentation budget."
+  (let ((budget (fzfa--presentation-budget-create 37 14 9)))
+    (should (= (fzfa--presentation-budget-next budget) 37))
+    (fzfa--presentation-budget-finish budget 37 12 nil)
+    (should (= (aref budget 0) 25))
+    (should (= (aref budget 1) 0))))
+
+(ert-deftest fzfa-multi-pending-presentation-shrinks-routes-to-share ()
+  "A pending async source cannot retain candidates beyond its new share."
+  (let* ((routes (make-hash-table :test #'equal))
+         (source (fzfa-make-source :spec '(:name "async")))
+         (native-output (list :native-snapshot))
+         (tagged (mapcar (lambda (candidate)
+                           (fzfa--tag candidate 3 routes t nil))
+                         '("a" "b" "c"))))
+    (setf (fzfa-source-last-result source) tagged
+          (fzfa-source-route-keys source) (copy-sequence tagged)
+          (fzfa-source-filtered source) 99
+          (fzfa-source-last-async-output source) native-output)
+    (should (= (length (fzfa--multi-limit-source-presentation
+                        source 3 routes 1))
+               1))
+    (should (= (length (fzfa-source-last-result source)) 1))
+    (should (= (hash-table-count routes) 1))
+    (should (= (fzfa-source-filtered source) 99))
+    (should (eq (fzfa-source-last-async-output source) native-output))))
+
+(ert-deftest fzfa-multi-adaptive-budget-reaches-late-source ()
+  "A late nonempty source can consume slots donated by empty sources."
+  (let ((fzfa-max-candidates 2)
+        (fzfa-preview-functions nil)
+        (fzfa-prompt-function (lambda (&rest _) nil))
+        visible)
+    (cl-letf (((symbol-function 'fzfa--ensure-category-override) #'ignore)
+              ((symbol-function 'fzfa--default-dir)
+               (lambda () default-directory))
+              ((symbol-function 'fzfa--sessions-push) #'ignore)
+              ((symbol-function 'cancel-timer) #'ignore)
+              ((symbol-function 'sit-for) #'ignore)
+              ((symbol-function 'completing-read)
+               (lambda (_prompt collection &rest _)
+                 (setq visible (funcall collection "" nil t))
+                 nil)))
+      (fzfa--read
+       `((:name "empty-0" :candidates ,(lambda () nil) :action identity)
+         (:name "empty-1" :candidates ,(lambda () nil) :action identity)
+         (:name "empty-2" :candidates ,(lambda () nil) :action identity)
+         (:name "empty-3" :candidates ,(lambda () nil) :action identity)
+         (:name "late" :candidates ("late-a" "late-b" "late-c")
+          :action identity))
+       :prompt "budget: "))
+    (should (equal (mapcar #'fzfa--tofu-hide visible)
+                   '("late-a" "late-b")))))
+
+(ert-deftest fzfa-ivy-adaptive-budget-reaches-late-source ()
+  "The Ivy push renderer reclaims sparse shares for a late source."
+  (let* ((owner (generate-new-buffer " *fzfa ivy budget owner*"))
+         (window (selected-window))
+         (original-buffer (window-buffer window))
+         (ivy-mode t)
+         (ivy-text "")
+         (ivy-last nil)
+         (ivy--actions-list nil)
+         (ivy-count-format "")
+         (fzfa-max-candidates 2)
+         (fzfa-preview-functions nil)
+         (fzfa-prompt-function (lambda (&rest _) nil))
+         callbacks idle-work visible)
+    (unwind-protect
+        (cl-letf (((symbol-function 'fzfa--ensure-category-override) #'ignore)
+                  ((symbol-function 'fzfa--default-dir)
+                   (lambda () default-directory))
+                  ((symbol-function 'fzfa--sessions-push) #'ignore)
+                  ((symbol-function 'fzfa--minibuffer-format-reset) #'ignore)
+                  ((symbol-function 'active-minibuffer-window)
+                   (lambda () window))
+                  ((symbol-function 'minibuffer-prompt-end) #'point-min)
+                  ((symbol-function 'run-with-idle-timer)
+                   (lambda (_delay _repeat function &rest args)
+                     (setq idle-work
+                           (append idle-work
+                                   (list (lambda ()
+                                           (apply function args)))))
+                     (list 'idle (length idle-work))))
+                  ((symbol-function 'cancel-timer) #'ignore)
+                  ((symbol-function 'sit-for) #'ignore)
+                  ((symbol-function 'ivy--set-candidates)
+                   (lambda (candidates)
+                     (setq visible
+                           (mapcar #'fzfa--tofu-hide candidates))))
+                  ((symbol-function 'ivy--exhibit) #'ignore)
+                  ((symbol-function 'ivy--insert-prompt) #'ignore)
+                  ((symbol-function 'completing-read)
+                   (lambda (_prompt collection &rest _)
+                     (set-window-buffer window owner)
+                     (with-current-buffer owner
+                       (setq-local ivy-mode t ivy-text "" ivy-last nil)
+                       (run-hooks 'minibuffer-setup-hook)
+                       ;; Start each callback producer with no snapshots yet.
+                       (funcall collection "" nil t)
+                       ;; Make every source ready before one queued refresh
+                       ;; enters the Ivy-only push renderer.
+                       (dolist (entry callbacks)
+                         (funcall (cdr entry)
+                                  (if (= (car entry) 4)
+                                      '("late-a" "late-b" "late-c")
+                                    nil)))
+                       (should idle-work)
+                       (funcall (car (last idle-work))))
+                     nil)))
+          (fzfa--read
+           (cl-loop for i below 5
+                    collect
+                    (list :name (format "source-%d" i)
+                          :candidates
+                          (let ((idx i))
+                            (lambda (_input callback)
+                              (push (cons idx callback) callbacks)))
+                          :action #'identity))
+           :prompt "ivy budget: "))
+      (when (window-live-p window)
+        (set-window-buffer window original-buffer))
+      (kill-buffer owner))
+    (should (equal visible '("late-a" "late-b")))))
 
 (ert-deftest fzfa-producer-publication-caps-and-replaces-routes ()
   "Producer publication tags only its visible budget and drops old routes."
