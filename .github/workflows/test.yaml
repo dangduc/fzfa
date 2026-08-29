@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: fastducduc/fzf-native
-          ref: f87c42464c1e810fb03b12b80f36a3334a3762fb
+          ref: 4a1eb769910b164d4ec596111ed100814cd93d1b
           path: fzf-native
 
       # Build the same reviewed source in a separate checkout.  Keep the first
@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: fastducduc/fzf-native
-          ref: f87c42464c1e810fb03b12b80f36a3334a3762fb
+          ref: 4a1eb769910b164d4ec596111ed100814cd93d1b
           path: fzf-native-source
 
       # Optional Elisp deps that fzfa forward-declares from.  Checked
