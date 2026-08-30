@@ -334,13 +334,15 @@ group is produced."
 (defun fzfa-vertico--src-idx-of (part)
   "Return PART's first candidate source index, or `most-positive-fixnum'.
 
-Looked up via the session-bound `fzfa--candidate->source' hash; used as
-the sort key for the `source-idx' ordering mode."
+Uses the session route table first.  A tofu tag supplies the source after a
+recursive render replaces that table.  The result is the sort key for the
+`source-idx' ordering mode."
   (let ((c (cadr part)))
     (or (and (stringp c)
              (> (length c) 0)
-             (bound-and-true-p fzfa--candidate->source)
-             (gethash c fzfa--candidate->source))
+             (fzfa--multi-source-idx
+              c (and (boundp 'fzfa--candidate->source)
+                     fzfa--candidate->source)))
         most-positive-fixnum)))
 
 (defun fzfa-vertico--empty-query-p ()
