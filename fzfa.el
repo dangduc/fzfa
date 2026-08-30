@@ -212,9 +212,11 @@ the wrapper clears its exact handle before it calls CALLBACK."
   "Maximum visible candidates across one `fzfa-completing-read' session.
 
 Single and narrowed sources receive the complete budget.  A widened multi
-divides it across sources and applies a final session cap.  Full filtered and
-total counts are still tracked in the prompt.  Set to nil or 0 to disable the
-cap; large result sets can then make the frontend slow."
+water-fills fair shares across full filtered demand.  Sparse sources donate
+unused slots in either direction, while unfinished sources reserve a fair
+share.  The final merge applies the same session cap.  Full filtered and total
+counts are still tracked in the prompt.  Set to nil or 0 to disable the cap.
+Large result sets can make the frontend slow."
   :type '(choice (const  :tag "No cap" nil)
                  (integer :tag "Max candidates"))
   :group 'fzfa)
@@ -4095,17 +4097,108 @@ when it still maps to IDX, so one source cannot erase a newer owner's route."
              staged)
     (setf (fzfa-source-route-keys source) keys)))
 
-(defun fzfa--source-presentation-limit (limit source-count narrow-idx idx)
-  "Return SOURCE IDX's share of session LIMIT.
+(defconst fzfa--presentation-pending 'pending
+  "Demand marker for a source whose complete match count is not known yet.")
 
-A single or narrowed source receives the complete budget.  A widened multi
-divides it deterministically across sources.  Return nil when LIMIT is nil.
-When LIMIT is smaller than SOURCE-COUNT, later sources receive zero slots."
+(defconst fzfa--presentation-excluded 'excluded
+  "Demand marker for a source excluded by narrowing.")
+
+(defun fzfa--presentation-initial-demands (source-count narrow-idx)
+  "Return initial demand estimates for SOURCE-COUNT sources.
+
+Every eligible source starts pending, so it reserves a fair share until one
+completed result establishes its full filtered demand.  When NARROW-IDX is
+non-nil, only that source is eligible and all other entries are excluded."
+  (let ((demands (make-vector source-count fzfa--presentation-pending)))
+    (when narrow-idx
+      (dotimes (i source-count)
+        (unless (= i narrow-idx)
+          (aset demands i fzfa--presentation-excluded))))
+    demands))
+
+(defun fzfa--presentation-waterfill (limit demands)
+  "Allocate LIMIT fairly across vector DEMANDS.
+
+A nonnegative integer is a completed source's full filtered demand.
+`fzfa--presentation-pending' is unbounded demand and therefore reserves a
+fair share.  `fzfa--presentation-excluded' receives zero.  Repeated fair
+rounds redistribute every slot left by a sparse source in either direction.
+Declared order breaks indivisible remainders deterministically.
+
+Return nil when LIMIT is nil.  Otherwise return a fresh allocation vector."
   (when limit
-    (if (or (= source-count 1) narrow-idx)
-        limit
-      (+ (/ limit source-count)
-         (if (< idx (% limit source-count)) 1 0)))))
+    (let* ((count (length demands))
+           (allocations (make-vector count 0))
+           (active
+            (cl-loop for demand across demands
+                     for i from 0
+                     when (or (eq demand fzfa--presentation-pending)
+                              (and (integerp demand) (> demand 0)))
+                     collect i))
+           (remaining limit))
+      (while (and (> remaining 0) active)
+        (let* ((active-count (length active))
+               (base (/ remaining active-count))
+               (extra (% remaining active-count))
+               next-active
+               (position 0))
+          (dolist (i active)
+            (let* ((demand (aref demands i))
+                   (share (+ base (if (< position extra) 1 0)))
+                   (available
+                    (and (integerp demand)
+                         (- demand (aref allocations i))))
+                   (grant
+                    (min remaining share
+                         (if available (max 0 available) share))))
+              (aset allocations i (+ (aref allocations i) grant))
+              (setq remaining (- remaining grant))
+              (when (or (eq demand fzfa--presentation-pending)
+                        (and (integerp demand)
+                             (< (aref allocations i) demand)))
+                (push i next-active))
+              (setq position (1+ position))))
+          (setq active (nreverse next-active))))
+      allocations)))
+
+(defun fzfa--presentation-state-key (sources query narrow-idx)
+  "Return the semantic identity of SOURCES' presentation demand for QUERY.
+
+Adaptive native LIMIT changes deliberately do not occur in this key: match
+count is independent of LIMIT, so retaining it prevents an expansion request
+from resetting the allocator to its provisional equal split.  Query meaning,
+producer identity, command restarts, and narrowing do invalidate demand."
+  (list (substring-no-properties query)
+        narrow-idx
+        fzfa-case-mode
+        (and fzfa-fuzzy t)
+        (and (boundp 'fzf-native-filter-only-length)
+             (symbol-value 'fzf-native-filter-only-length))
+        (and (boundp 'fzf-native-filter-only-logic)
+             (symbol-value 'fzf-native-filter-only-logic))
+        (cl-loop for source across sources
+                 collect
+                 (list (fzfa-source-handle source)
+                       (fzfa-source-current-cmd source)
+                       (fzfa-source-prod-token source)))))
+
+(defun fzfa--presentation-effective-demands
+    (known observed-pending allocations)
+  "Return water-fill demands from KNOWN values and pending observations.
+
+KNOWN is the persistent demand vector.  OBSERVED-PENDING marks work which did
+not complete in this render.  A pending source with a prior finite demand
+keeps at least its current ALLOCATIONS share.  This both reserves displayed
+capacity and prevents a LIMIT-only expansion from oscillating back to the
+provisional split.  A source without prior evidence remains unbounded."
+  (let ((effective (copy-sequence known)))
+    (dotimes (i (length effective))
+      (when (and (aref observed-pending i)
+                 (integerp (aref effective i)))
+        (aset effective i
+              (max (aref effective i)
+                   (or (and allocations (aref allocations i)) 0)))))
+    effective))
 
 (defun fzfa--limit-candidates (candidates limit)
   "Return at most LIMIT CANDIDATES, or CANDIDATES when LIMIT is nil."
@@ -4149,6 +4242,219 @@ producer pool."
         (fzfa-source-last-async-output source) nil
         (fzfa-source-filtered source) 0
         (fzfa-source-rank source) 0))
+
+(defun fzfa--multi-limit-source-presentation
+    (source idx candidate->source limit)
+  "Trim SOURCE IDX's retained presentation and routes to LIMIT.
+
+This is used for pending and failed async requests, whose last completed list
+can be larger than the source's current adaptive share.  Keep matcher totals
+and cached native-output identity intact; a changed request limit will replace
+the snapshot when native work completes."
+  (let ((current (fzfa-source-last-result source)))
+    (when (and limit (> (length current) limit))
+      (let ((visible (cl-subseq current 0 limit))
+            (routes (make-hash-table :test #'equal)))
+        (dolist (candidate visible)
+          (puthash candidate idx routes))
+        (fzfa--source-publish-routes
+         source idx routes candidate->source)
+        (setf (fzfa-source-last-result source) visible)
+        (setq current visible)))
+    current))
+
+(defun fzfa--multi-render-presentations
+    (sources input query narrow-idx narrow-active narrow-cmd
+             candidate->source multi-p limit refresh-fn
+             saved-key saved-demands saved-plan render-check render-epoch)
+  "Run one two-phase multi-source presentation pass.
+
+SOURCES is the runtime source vector.  INPUT is the complete frontend input.
+QUERY is its matcher component.  NARROW-IDX, NARROW-ACTIVE, and NARROW-CMD
+describe command editing.  CANDIDATE->SOURCE and MULTI-P control tagging.
+LIMIT is the session-wide cap, or nil.  REFRESH-FN is the producer callback's
+frontend refresh.  SAVED-KEY, SAVED-DEMANDS, and SAVED-PLAN are persistent
+allocator state from the preceding owned render.  RENDER-CHECK and
+RENDER-EPOCH fence every callback-capable boundary.
+
+The first phase observes every eligible source.  A zero-allocation native
+source is probed with LIMIT 1 (native LIMIT 0 means unbounded), so later stream
+growth can make it eligible again.  The second phase water-fills against full
+filtered demand and publishes the resulting allocation.  Pending sources keep
+their prior demand and at least their current share.  Thus, async limit
+expansion converges instead of alternating between the provisional and donated
+allocations.
+
+Return a plist containing :interrupted, :first-candidates,
+:async-followup, and the replacement :key, :demands, and :plan."
+  (let* ((count (length sources))
+         (current-key
+          (fzfa--presentation-state-key sources query narrow-idx))
+         (_ (funcall render-check render-epoch))
+         (known
+          (if (and saved-demands (equal current-key saved-key))
+              (copy-sequence saved-demands)
+            (fzfa--presentation-initial-demands count narrow-idx)))
+         (current-plan
+          (if (and saved-plan (equal current-key saved-key))
+              (copy-sequence saved-plan)
+            (fzfa--presentation-waterfill limit known)))
+         (staged-output (make-vector count nil))
+         (staged-kind (make-vector count 'pending))
+         (observed-demand
+          (make-vector count fzfa--presentation-pending))
+         (observed-pending (make-vector count nil))
+         (used-request-limit (make-vector count nil))
+         interrupted)
+    ;; Phase one: obtain status/full sync results without committing any new
+    ;; candidate presentation.  A later interruption therefore leaves the
+    ;; preceding publication internally consistent.
+    (dotimes (i count)
+      (let* ((source (aref sources i))
+             (excluded-p (and narrow-idx (/= narrow-idx i)))
+             (this-narrow (and narrow-active (eql i narrow-idx)))
+             (producer-input (if this-narrow narrow-cmd input))
+             (presentation-limit
+              (and limit (if excluded-p 0 (aref current-plan i))))
+             (handle (fzfa-source-handle source))
+             (producer (fzfa-source-cands-fn source)))
+        (if excluded-p
+            (progn
+              (aset staged-kind i 'excluded)
+              (aset observed-demand i fzfa--presentation-excluded))
+          (let* ((request-limit
+                  (if (and handle limit (zerop presentation-limit))
+                      1
+                    presentation-limit))
+                 (output
+                  (cond
+                   (handle
+                    (aset used-request-limit i request-limit)
+                    (fzfa--source-async-out source query request-limit))
+                   (producer
+                    (fzfa--multi-candidates-fetch
+                     source i producer-input candidate->source
+                     multi-p refresh-fn)
+                    (let ((snapshot (fzfa-source-snapshot source)))
+                      (cond
+                       ((null snapshot) '())
+                       ((string-empty-p query) snapshot)
+                       (t
+                        (let ((fzfa-batch-highlight nil))
+                          (while-no-input
+                            (fzfa--bridge-defcustoms
+                             #'fzf-native-score-all snapshot query)))))))
+                   (t '()))))
+            (funcall render-check render-epoch)
+            (cond
+             ((eq output t)
+              (setq interrupted t)
+              (aset staged-kind i 'interrupted)
+              (aset observed-pending i t))
+             ((and handle (eq (car-safe output) 'pending))
+              (aset staged-kind i 'pending)
+              (aset observed-pending i t)
+              (when (cdr output)
+                (setf (fzfa-source-total source) (cdr output))))
+             ((and handle (eq (car-safe output) 'failed))
+              (aset staged-kind i 'failed)
+              ;; Failure is not a new demand observation.  Preserve the last
+              ;; completed full-match count so a failed LIMIT expansion cannot
+              ;; collapse the plan back to its provisional equal share.
+              (aset observed-pending i t)
+              (when (nth 2 output)
+                (setf (fzfa-source-total source) (nth 2 output))))
+             (handle
+              (aset staged-kind i 'async-final)
+              (aset staged-output i output)
+              (when limit
+                (aset observed-demand i
+                      (if (integerp (nth 2 output))
+                          (nth 2 output)
+                        (length (nth 1 output))))))
+             (t
+              (aset staged-kind i 'sync)
+              (aset staged-output i output)
+              (if (eq (fzfa-source-prod-state source) 'pending)
+                  (aset observed-pending i t)
+                (when limit
+                  (aset observed-demand i (length output))))))
+            (funcall render-check render-epoch)))))
+
+    (if interrupted
+        (list :interrupted t
+              :first-candidates nil
+              :async-followup nil
+              :key saved-key
+              :demands saved-demands
+              :plan saved-plan)
+      (let* ((outcome-key
+              (fzfa--presentation-state-key sources query narrow-idx))
+             (_ (funcall render-check render-epoch))
+             (next-known
+              (if (equal outcome-key current-key)
+                  known
+                (fzfa--presentation-initial-demands count narrow-idx)))
+             effective next-plan first-candidates async-followup)
+        (when limit
+          (dotimes (i count)
+            (let ((observation (aref observed-demand i)))
+              (cond
+               ((eq observation fzfa--presentation-excluded)
+                (aset next-known i fzfa--presentation-excluded))
+               ((integerp observation)
+                (aset next-known i observation)))))
+          (setq effective
+                (fzfa--presentation-effective-demands
+                 next-known observed-pending current-plan)
+                next-plan
+                (fzfa--presentation-waterfill limit effective)))
+
+        ;; Phase two: publish only after all demand is known.  Sync sources
+        ;; retain the full scored list in STAGED-OUTPUT, so donation in either
+        ;; direction is visible in this render.  Async sources expose their
+        ;; available top-K now and request any expanded K on the scheduled
+        ;; follow-up render.
+        (dotimes (i count)
+          (let* ((source (aref sources i))
+                 (kind (aref staged-kind i))
+                 (allocation (and limit (aref next-plan i))))
+            (pcase kind
+              ('excluded
+               (fzfa--multi-clear-source-presentation
+                source i candidate->source))
+              ('sync
+               (fzfa--multi-publish-producer-output
+                source (aref staged-output i) i candidate->source
+                multi-p query allocation))
+              ('async-final
+               (fzfa--multi-render-async-output
+                source (aref staged-output i) i candidate->source
+                multi-p query)
+               (fzfa--multi-limit-source-presentation
+                source i candidate->source allocation))
+              ((or 'pending 'failed)
+               (fzfa--multi-limit-source-presentation
+                source i candidate->source allocation)))
+            (when (fzfa-source-last-result source)
+              (setq first-candidates t))
+            (when (and (fzfa-source-handle source)
+                       limit
+                       (not (eq kind 'excluded)))
+              (let ((desired-request-limit
+                     (max 1 (aref next-plan i))))
+                ;; A smaller plan is satisfied by trimming the retained
+                ;; presentation.  Only growth needs another native request.
+                (when (> desired-request-limit
+                         (or (aref used-request-limit i) 0))
+                  (setq async-followup t))))
+            (funcall render-check render-epoch)))
+        (list :interrupted nil
+              :first-candidates first-candidates
+              :async-followup async-followup
+              :key outcome-key
+              :demands next-known
+              :plan next-plan)))))
 
 (defun fzfa--multi-build-router (sources-v candidate->source)
   "Build a synthetic preview handler that dispatches per source.
@@ -4888,6 +5194,13 @@ Per-source plist keys:
          ;; Read by the replay-snapshot block to persist the filter as
          ;; the narrow target's `:initial-input' for the next replay.
          (last-query "")
+         ;; Persistent demand and allocation evidence for the current query.
+         ;; Native result LIMIT does not affect full filtered demand, so a
+         ;; 5→10 expansion keeps this state while its replacement request is
+         ;; pending instead of falling back to 5 and oscillating forever.
+         (presentation-state-key nil)
+         (presentation-demands nil)
+         (presentation-plan nil)
          ;; When the narrow menu is on screen (during the
          ;; `narrow-handler''s `read-char') we must NOT overwrite the
          ;; overlay with the stats line on every tick — otherwise async
@@ -4984,6 +5297,7 @@ Per-source plist keys:
                   ;; silently write to the wrong buffer otherwise.
                   (with-selected-window win
                 (let* ((interrupted nil)
+                       (async-followup nil)
                        ;; When narrowed to a source whose display is
                        ;; `compact' / `full', split the buffer at
                        ;; `fzfa-separator' so CMD drives the producer /
@@ -5011,63 +5325,20 @@ Per-source plist keys:
                     ;; revokes an obsolete pending restart.
                     (funcall narrow-do-restart narrow-src narrow-cmd)
                     (funcall render-check my-epoch))
-                  (dotimes (i n)
-                    (let* ((src (aref sources i))
-                           (this-narrow (and narrow-active
-                                             (eql i narrow-idx)))
-                           (prod-input (if this-narrow narrow-cmd input))
-                           (source-limit
-                            (fzfa--source-presentation-limit
-                             limit n narrow-idx i)))
-                      (if (or (and narrow-idx (/= narrow-idx i))
-                              (eql source-limit 0))
-                          (fzfa--multi-clear-source-presentation
-                           src i candidate->source)
-                        (let* ((h     (fzfa-source-handle src))
-                               (prod  (fzfa-source-cands-fn src))
-                               (out
-                                (cond
-                                 (h (fzfa--source-async-out
-                                     src query source-limit))
-                                 (prod
-                                  (fzfa--multi-candidates-fetch
-                                   src i prod-input candidate->source
-                                   multi-p multi-refresh-fn)
-                                  (let ((snap (fzfa-source-snapshot src)))
-                                    (cond
-                                     ((null snap) '())
-                                     ((string-empty-p query) snap)
-                                     (t (let ((fzfa-batch-highlight nil))
-                                          (while-no-input
-                                            (fzfa--bridge-defcustoms
-                                             #'fzf-native-score-all
-                                             snap query))))))))))
-                          ;; Fetch, native materialization, and producer Lisp
-                          ;; can all recursively render this session.
-                          (funcall render-check my-epoch)
-                          (cond
-                           ((eq out t) (setq interrupted t))
-                           ((and h (eq (car-safe out) 'pending))
-                            (when (cdr out)
-                              (setf (fzfa-source-total src) (cdr out))))
-                           ((and h (eq (car-safe out) 'failed))
-                            ;; Terminal matcher failure: keep the last good
-                            ;; candidates but do not classify this source as
-                            ;; still computing.
-                            (when (nth 2 out)
-                              (setf (fzfa-source-total src) (nth 2 out))))
-                           (t
-                            (setq out
-                                  (if h
-                                      (fzfa--multi-render-async-output
-                                       src out i candidate->source
-                                       multi-p query)
-                                    (fzfa--multi-publish-producer-output
-                                     src out i candidate->source
-                                     multi-p query source-limit)))
-                            (when (and out (not first-cands-shown))
-                              (setq first-cands-shown t))))
-                          (funcall render-check my-epoch)))))
+                  (let ((pass
+                         (fzfa--multi-render-presentations
+                          sources input query narrow-idx narrow-active
+                          narrow-cmd candidate->source multi-p limit
+                          multi-refresh-fn presentation-state-key
+                          presentation-demands presentation-plan
+                          render-check my-epoch)))
+                    (setq interrupted (plist-get pass :interrupted)
+                          async-followup (plist-get pass :async-followup)
+                          presentation-state-key (plist-get pass :key)
+                          presentation-demands (plist-get pass :demands)
+                          presentation-plan (plist-get pass :plan))
+                    (when (plist-get pass :first-candidates)
+                      (setq first-cands-shown t)))
                   (funcall render-check my-epoch)
                   (if interrupted
                       (progn
@@ -5078,6 +5349,12 @@ Per-source plist keys:
                             fzfa-input-debounce nil callback))
                          multi-refresh-fn)
                         nil)
+                    (when async-followup
+                      (fzfa--timer-owner-schedule
+                       retry-owner
+                       (lambda (callback)
+                         (run-with-idle-timer 0 nil callback))
+                       multi-refresh-fn))
                     (let* ((order (number-sequence 0 (1- n)))
                            (empty-q (string-empty-p query))
                            (sorted
@@ -5686,7 +5963,8 @@ Per-source plist keys:
                           (let ((my-epoch (cl-incf render-epoch)))
                             (catch render-revoke-tag
                               (let* ((input (fzfa--current-query str))
-                                 (interrupted nil)
+                                     (interrupted nil)
+                                     (async-followup nil)
                                  (narrow-src
                                   (and narrow-idx (aref sources narrow-idx)))
                                  (narrow-active
@@ -5711,75 +5989,23 @@ Per-source plist keys:
                               (funcall narrow-do-restart
                                        narrow-src narrow-cmd)
                               (funcall render-check my-epoch))
-                            (dotimes (i n)
-                              (let* ((src (aref sources i))
-                                     (this-narrow
-                                      (and narrow-active (eql i narrow-idx)))
-                                     (prod-input
-                                      (if this-narrow narrow-cmd input))
-                                     (source-limit
-                                      (fzfa--source-presentation-limit
-                                       limit n narrow-idx i)))
-                                (if (or (and narrow-idx (/= narrow-idx i))
-                                        (eql source-limit 0))
-                                    ;; A narrow selection or a zero budget
-                                    ;; excludes this source.  Drop its prior
-                                    ;; results and filtered count.  Preserve
-                                    ;; `total' so widening restores the full
-                                    ;; collected size.
-                                    (fzfa--multi-clear-source-presentation
-                                     src i candidate->source)
-                                  (let* ((h     (fzfa-source-handle src))
-                                         (prod  (fzfa-source-cands-fn src))
-                                         (out
-                                          (cond
-                                           (h (fzfa--source-async-out
-                                               src query source-limit))
-                                           (prod
-                                            (fzfa--multi-candidates-fetch
-                                             src i prod-input candidate->source
-                                             multi-p multi-refresh-fn)
-                                            (let ((snap (fzfa-source-snapshot src)))
-                                              (cond
-                                               ((null snap) '())
-                                               ((string-empty-p query) snap)
-                                               (t (let ((fzfa-batch-highlight nil))
-                                                    (while-no-input
-                                                      (fzfa--bridge-defcustoms
-                                                       #'fzf-native-score-all
-                                                       snap query))))))))))
-                                    ;; Revalidate after every boundary that can
-                                    ;; invoke producer, bridge, or advised Lisp.
-                                    (funcall render-check my-epoch)
-                                    (cond
-                                     ((eq out t) (setq interrupted t))
-                                     ;; Async source whose result is not yet
-                                     ;; final — keep the prior per-source slot;
-                                     ;; refresh `total' so the overlay still
-                                     ;; reflects the live pool.
-                                     ((and h (eq (car-safe out) 'pending))
-                                      (when (cdr out)
-                                        (setf (fzfa-source-total src)
-                                              (cdr out))))
-                                     ((and h (eq (car-safe out) 'failed))
-                                      ;; Preserve the prior per-source slot;
-                                      ;; the failure was already reported once
-                                      ;; by `fzfa--source-async-out'.
-                                      (when (nth 2 out)
-                                        (setf (fzfa-source-total src)
-                                              (nth 2 out))))
-                                     (t
-                                      (setq out
-                                            (if h
-                                                (fzfa--multi-render-async-output
-                                                 src out i candidate->source
-                                                 multi-p query)
-                                              (fzfa--multi-publish-producer-output
-                                               src out i candidate->source
-                                               multi-p query source-limit)))
-                                      (when (and out (not first-cands-shown))
-                                        (setq first-cands-shown t))))
-                                    (funcall render-check my-epoch)))))
+                            (let ((pass
+                                   (fzfa--multi-render-presentations
+                                    sources input query narrow-idx narrow-active
+                                    narrow-cmd candidate->source multi-p limit
+                                    multi-refresh-fn presentation-state-key
+                                    presentation-demands presentation-plan
+                                    render-check my-epoch)))
+                              (setq interrupted (plist-get pass :interrupted)
+                                    async-followup
+                                    (plist-get pass :async-followup)
+                                    presentation-state-key
+                                    (plist-get pass :key)
+                                    presentation-demands
+                                    (plist-get pass :demands)
+                                    presentation-plan (plist-get pass :plan))
+                              (when (plist-get pass :first-candidates)
+                                (setq first-cands-shown t)))
                             (funcall render-check my-epoch)
                             (when interrupted
                               (fzfa--timer-owner-schedule
@@ -5787,6 +6013,12 @@ Per-source plist keys:
                                (lambda (callback)
                                  (run-with-idle-timer
                                   fzfa-input-debounce nil callback))
+                               multi-refresh-fn))
+                            (when (and (not interrupted) async-followup)
+                              (fzfa--timer-owner-schedule
+                               retry-owner
+                               (lambda (callback)
+                                 (run-with-idle-timer 0 nil callback))
                                multi-refresh-fn))
                             (when (funcall frontend-owned-p)
                               (with-selected-window frontend-window
