@@ -78,11 +78,20 @@ category, and reuse the same passthrough completion style.
     on change, schedule an idle-timer frontend exhibit
 #+end_src
 
-The request key lives in =fzfa-source=.  One changed key creates one native
-request, and every later status or snapshot names that request ID.  A submit or
-matcher failure is a terminal value for that key rather than work that redraw
-can silently retry.  Producer failure is reported independently, because a
-producer can fail after emitting a useful partial candidate set.
+The request key lives in =fzfa-source=.  Each key owns at most one active native
+request.  Every later status or snapshot names that request ID.
+
+A nonpublishing terminal state releases ownership.  The same key can then
+create a replacement request.  Submit and matcher failures remain terminal for
+that key.  A redraw does not retry them silently.
+
+Frontend code must cancel through =fzfa-source--stop=.  It revokes the local
+epoch before it stops the native handle.  A raw =fzf-native-async-stop= behind
+fzfa is not an atomic frontend operation.  Fzfa detects a quiet raw stop at the
+next native liveness check.  Caller advice must not return stale native values.
+
+Producer failure is reported independently.  A producer can fail after it
+emits a useful partial candidate set.
 
 The child producer, native reader, scoring coordinator, and process-wide
 workers run outside Elisp.  Elisp runs on its main thread and never waits for
@@ -172,11 +181,13 @@ order via =sort='s stability.
   │   • collection lambda's 't action:                                 │
   │       for each source:                                             │
   │         async → fzfa--source-async-out (submit/status/snapshot)   │
-  │         sync  → (fzf-native-score-all items query)                 │
+  │         sync  → score one raw snapshot; literal lists fetch once  │
+  │       assign each active source part of the session result budget │
+  │       cap output before copying/tagging and replace old routes    │
   │       pending/failed → preserve last result                        │
   │       final → update result, rank, filtered, total                 │
   │       sort sources by rank (stable → declared order on tie)        │
-  │       concat last-results in sorted order                          │
+  │       concat and enforce the session-wide final limit             │
   │   • affixation-function pads candidates to a uniform column        │
   │     before appending each source's :annotate output                │
   │   • group-function reads source via fzfa-src-idx text-prop    │
@@ -295,8 +306,8 @@ broken" in =project.org= for the full diagnosis.
 
 * C-side match highlighting
 
-Matched characters are highlighted inside =fzf_native_async_candidates=
-before strings reach the Elisp layer, so no Elisp regex pass is needed.
+Matched characters are highlighted inside the native module before a result
+reaches the completion UI.  No Elisp regular-expression pass is needed.
 
 The old approach — =completion-pcm--hilit-commonality= called from
 =fzfa-all-completions= — built a PCM pattern with one =any= token per
@@ -304,26 +315,25 @@ query character, which Emacs compiled to a regex with N nested =.*= groups.
 This caused exponential backtracking on non-matching candidates. For a 32-
 character query with 1038 candidates the hang was 18 seconds.
 
-The current approach:
+The request-aware async path separates scoring from materialization:
 
-1. In =fzf_native_async_candidates=, after dispatching the scoring job, the
-   C code reads =fzfa-highlight= via =symbol-value=:
-   - =nil= → skip highlighting.
-   - =t= → highlight all returned candidates (=hl_cap = rcount=).
-   - Integer N → highlight the top N candidates (=hl_cap = N=).
-2. Parse =filter_for_hilit= into an =fzf_pattern_t= (one shared pattern for
-   the whole highlight pass).
-3. For each =snap[0..hl_cap-1]= (highest-scoring candidates, prepended last
-   so they land at the front of the returned list):
-   - =fzf_get_positions(str, pattern, slab)= → =pos->data[]= in descending
-     byte-offset order.
-   - Iterate ascending, merge adjacent offsets into runs, call
-     =put-text-property= once per run with =face=completions-common-part=.
-4. Free pattern and slab before returning.
+1. =fzf-native-async-submit= starts or reuses one logical request.
+2. =fzf-native-async-status= returns metadata only.  It does not copy strings.
+3. Fzfa calls =fzf-native-async-snapshot= only for a new authoritative
+   snapshot generation.
+4. Snapshot materialization reads the bridged =fzf-native-async-highlight=
+   value.  Nil disables highlighting, t highlights all returned candidates,
+   and an integer limits highlighting to the top N.
+5. The module parses one shared fzf pattern.  It obtains match positions for
+   each highlighted candidate, merges adjacent positions into ranges, and
+   calls the configured highlight function.
 
-The Emacs string object already has the face applied when it is consed into
-the result list. Frontends (vertico, icomplete) display it without any
-further Elisp highlighting work.
+The batch path performs the same native position work in
+=fzf-native-score-all=.  Frontends can also request one lazy highlighted copy
+through =fzf-native-highlight-one=.
+
+The Emacs string already has the face when it enters the result list.  Vertico,
+icomplete, Ivy, and Helm do not need a second regular-expression pass.
 
 *Byte vs. character positions:* =fzf_get_positions= returns byte offsets;
 =put-text-property= uses character positions. For ASCII candidates (the
