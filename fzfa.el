@@ -4,7 +4,7 @@
 
 ;; Author: James Nguyen <james@jojojames.com>
 ;; Version: 1.0.2
-;; Package-Requires: ((emacs "29.1") (fzf-native "2.2"))
+;; Package-Requires: ((emacs "29.1") (fzf-native "2.7"))
 ;; Keywords: matching, completion, fzf, fuzzy, fussy
 ;; Homepage: https://github.com/jojojames/fzfa
 ;; Assisted-by: Claude:claude-opus-4-7
@@ -51,6 +51,7 @@
 (defvar fzf-native-fuzzy)
 (defvar fzf-native-async-highlight)
 (defvar fzf-native-batch-highlight)
+(defvar fzf-native-highlight-fn)
 (defvar fzf-native-max-line-length)
 (defvar fzf-native-async-cache-size)
 (defvar marginalia-annotate-file)
@@ -92,6 +93,12 @@
 (declare-function fzf-native-async-stats "ext:fzf-native-module" (handle))
 (declare-function fzf-native-async-result-fresh-p "ext:fzf-native-module"
                   (handle query))
+(declare-function fzf-native-async-submit "ext:fzf-native-module"
+                  (handle query &optional limit))
+(declare-function fzf-native-async-snapshot "ext:fzf-native-module"
+                  (handle &optional request-id))
+(declare-function fzf-native-async-status "ext:fzf-native-module"
+                  (handle &optional request-id))
 (declare-function fzf-native-highlight-all "ext:fzf-native-module"
                   (collection query))
 (declare-function fzf-native-highlight-one "ext:fzf-native-module" (cand query))
@@ -1839,6 +1846,38 @@ keeps fzfa functional on older fzf-native builds."
   (or r (and (fboundp 'fzf-native-async-result-fresh-p)
              (fzf-native-async-result-fresh-p handle query))))
 
+(defun fzfa--session-api-p ()
+  "Non-nil when fzf-native exposes the request-aware session API.
+
+The session API (`fzf-native-async-submit' / `-snapshot' /
+`-status') carries exact request ownership and authoritative
+completion state for each request."
+  (and (fboundp 'fzf-native-async-submit)
+       (fboundp 'fzf-native-async-snapshot)
+       (fboundp 'fzf-native-async-status)))
+
+(defun fzfa--command-api-p ()
+  "Non-nil when fzf-native can run persistent shell-command sources.
+
+fzf-native 2.7 provides this API on POSIX systems.  Its Windows module is
+batch-only, so `:candidates' sources remain available there while `:command'
+sources are rejected before calling an unavailable native function."
+  (and (fboundp 'fzf-native-async-start)
+       (fboundp 'fzf-native-async-stop)
+       (fzfa--session-api-p)))
+
+(defun fzfa--poll-generation (h)
+  "Return handle H's refresh generation for poll-tick comparison.
+
+The `:snapshot-generation' from `fzf-native-async-status' increments once per
+published completed result, including automatic candidate-growth retries.  A
+poll tick therefore fires exactly when there is a new result to display,
+without building a candidate list.
+
+Returns nil when H is dead or the command-session API is unavailable."
+  (when (fzfa--command-api-p)
+    (plist-get (fzf-native-async-status h) :snapshot-generation)))
+
 (defun fzfa--defer-async-stop (handles)
   "Stop each of HANDLES via `fzf-native-async-stop'.
 
@@ -2438,7 +2477,19 @@ on it identically regardless of which container holds it."
   handle                        ; fzf-native handle or nil
   command                       ; string — CMD the source wants
   current-cmd                   ; string — CMD the handle is running
-  last-gen                      ; integer
+  last-gen                      ; integer — snapshot-generation poll baseline;
+                                ; see `fzfa--poll-generation'
+  request-id                    ; integer — native request ID returned by the
+                                ; most recent `fzf-native-async-submit' for
+                                ; this source (0 = none)
+  request-signature             ; (QUERY LIMIT CASE-MODE FUZZY
+                                ;  FILTER-ONLY-LENGTH FILTER-ONLY-LOGIC),
+                                ; owned by fzfa; equal calls reuse request-id
+                                ; without relying on native submit deduplication
+  request-materialization-key   ; snapshot generation + presentation policy
+                                ; represented by request-output
+  request-output                ; cached (final CANDS FILTERED TOTAL), so a
+                                ; stable redraw polls metadata, not CANDS
   ;; Producer-fn (used when source was constructed from :candidates;
   ;; mutually exclusive with the async handle above).  `cands-fn' is
   ;; immutable; the rest is runtime state mutated by the producer
@@ -2505,6 +2556,10 @@ to eager-start via `fzf-native-async-start' or to defer."
      :command command
      :current-cmd nil
      :last-gen -1
+     :request-id 0
+     :request-signature nil
+     :request-materialization-key nil
+     :request-output nil
      :cands-fn (and candidates
                     (fzfa--normalize-candidates candidates))
      :snapshot nil
@@ -2522,6 +2577,194 @@ to eager-start via `fzf-native-async-start' or to defer."
      :filtered 0
      :preview-cell nil
      :source-name nil)))
+
+(defun fzfa--async-submit (handle query limit)
+  "Submit QUERY on HANDLE; return its request id or `(failed ERROR)'.
+A failed submit is terminal for this request signature.  It must not become
+an endless pending/resubmit loop, and nil must never reach snapshot because a
+nil request id means \"latest\" rather than \"this query\"."
+  (condition-case err
+      (or (fzf-native-async-submit
+           handle query limit)
+          '(failed "native matcher rejected request"))
+    (error
+     (list 'failed (error-message-string err)))))
+
+(defun fzfa--source-request-signature (query limit)
+  "Return the complete native request identity for QUERY and LIMIT."
+  (list (substring-no-properties query)
+        limit fzfa-case-mode (and fzfa-fuzzy t)
+        (and (boundp 'fzf-native-filter-only-length)
+             (symbol-value 'fzf-native-filter-only-length))
+        (and (boundp 'fzf-native-filter-only-logic)
+             (symbol-value 'fzf-native-filter-only-logic))))
+
+(defun fzfa--source-clear-request (src)
+  "Clear SRC's locally owned native request and materialized output."
+  (setf (fzfa-source-request-id src) 0
+        (fzfa-source-request-signature src) nil
+        (fzfa-source-request-materialization-key src) nil
+        (fzfa-source-request-output src) nil))
+
+(defun fzfa--source-materialization-key (snapshot-generation)
+  "Return the Lisp presentation identity for SNAPSHOT-GENERATION.
+
+Native scoring identity deliberately excludes highlighting.  Materializing a
+snapshot does not: changing either the highlight policy or hook must rebuild
+the Lisp strings without submitting a new native matcher request."
+  (list snapshot-generation
+        fzfa-highlight
+        (and (boundp 'fzf-native-highlight-fn)
+             (symbol-value 'fzf-native-highlight-fn))))
+
+(defun fzfa--source-submit (src query limit)
+  "Return SRC's request id or terminal failure for QUERY and LIMIT.
+
+An equal request is submitted only once.  This local ownership rule is
+independent of whether a particular fzf-native build deduplicates equal
+submissions.  On a changed or refused request, clear the old id before
+anything can poll it under the new query's identity."
+  (let* ((signature (fzfa--source-request-signature query limit))
+         (old-id (fzfa-source-request-id src)))
+    (if (equal signature (fzfa-source-request-signature src))
+        (if (and (integerp old-id) (> old-id 0))
+            old-id
+          (fzfa-source-request-output src))
+      (fzfa--source-clear-request src)
+      (let ((submission
+             (fzfa--async-submit (fzfa-source-handle src) query limit)))
+        (cond
+         ((and (integerp submission) (> submission 0))
+          (setf (fzfa-source-request-id src) submission
+                (fzfa-source-request-signature src) signature)
+          submission)
+         ((eq (car-safe submission) 'failed)
+          (let ((output (list 'failed (nth 1 submission) nil)))
+            (setf (fzfa-source-request-signature src) signature
+                  (fzfa-source-request-output src) output)
+            (fzfa--log "async submit failed: %s" (nth 1 output))
+            (funcall (if (minibufferp) #'minibuffer-message #'message)
+                     "fzfa: matcher request failed: %s" (nth 1 output))
+            output)))))))
+
+(defun fzfa--async-collected-total (status)
+  "Return the live collected-candidate count represented by STATUS.
+
+For a running or stale request, `:total' belongs to its retained completed
+snapshot and can lag the producer.  `:pool-generation' is the current pool
+boundary and therefore the prompt's collected-total value.  Use `:total' when
+status does not include a separate live-pool boundary."
+  (or (plist-get status :pool-generation)
+      (plist-get status :total)))
+
+
+(defun fzfa--source-materialize-session-output (src handle request-id)
+  "Build and cache REQUEST-ID's candidate output for SRC on HANDLE."
+  (let ((snapshot (while-no-input
+                    (fzf-native-async-snapshot handle request-id))))
+    (cond
+     ((eq snapshot t) t)
+     ((and (eq (plist-get snapshot :state) 'complete)
+           (not (plist-get snapshot :stale)))
+      (let ((output (list 'final
+                          (plist-get snapshot :candidates)
+                          (plist-get snapshot :filtered)
+                          (plist-get snapshot :total))))
+        (setf (fzfa-source-request-materialization-key src)
+              (fzfa--source-materialization-key
+               (plist-get snapshot :snapshot-generation))
+              (fzfa-source-request-output src) output)
+        output))
+     (t
+      (setf (fzfa-source-request-materialization-key src) nil
+            (fzfa-source-request-output src) nil)
+      (cons 'pending (fzfa--async-collected-total snapshot))))))
+
+(defun fzfa--source-terminal-request-output (src status)
+  "Return and cache SRC's terminal request failure from STATUS.
+
+The first observation is reported to the user.  Equal redraws reuse the
+cached `(failed ERROR TOTAL)' value, so a persistent native failure neither
+masquerades as in-flight work nor drives a submit/fail refresh loop.  A query
+signature change clears this marker through `fzfa--source-submit'."
+  (let ((cached (fzfa-source-request-output src)))
+    (if (eq (car-safe cached) 'failed)
+        (let ((updated (list 'failed (nth 1 cached)
+                             (fzfa--async-collected-total status))))
+          (setf (fzfa-source-request-output src) updated)
+          updated)
+      (let* ((state (plist-get status :state))
+             (error-text
+              (or (plist-get status :error)
+                  (format "native matcher request ended in %s" state)))
+             (output (list 'failed error-text
+                           (fzfa--async-collected-total status))))
+        (setf (fzfa-source-request-materialization-key src) nil
+              (fzfa-source-request-output src) output)
+        (fzfa--log "async request %s ended in %S: %s"
+                   (fzfa-source-request-id src) state error-text)
+        (funcall (if (minibufferp) #'minibuffer-message #'message)
+                 "fzfa: matcher request failed: %s" error-text)
+        output))))
+
+(defun fzfa--source-async-out (src query limit)
+  "Fetch QUERY's scored candidates from async SRC, tagged by finality.
+
+Returns one of:
+  t                            — pending input interrupted the fetch
+  (final CANDS FILTERED TOTAL) — authoritative result for QUERY;
+                                 CANDS may be nil (zero matches)
+  (failed ERROR TOTAL)         — terminal native matcher failure
+  (pending . TOTAL)            — QUERY is still in flight
+
+A changed request is submitted once.  Later renders poll metadata through
+`fzf-native-async-status'.  Candidate materialization occurs only when a new
+complete, non-stale snapshot generation appears."
+  (unless (fzfa--session-api-p)
+    (error "fzfa: fzf-native 2.7 session API is unavailable"))
+  (let* ((handle (fzfa-source-handle src))
+         (request-id (fzfa--source-submit src query limit)))
+    (cond
+     ((eq (car-safe request-id) 'failed) request-id)
+     ((null request-id)
+      (cons 'pending nil))
+     (t
+      (let ((status (while-no-input
+                      (fzf-native-async-status handle request-id))))
+        (cond
+         ((eq status t) t)
+         ((null status) (cons 'pending nil))
+         ((eq (plist-get status :state) 'failed)
+          (fzfa--source-terminal-request-output src status))
+         ((memq (plist-get status :state)
+                '(superseded cancelled unknown idle))
+          ;; These states cannot ever publish a result for REQUEST-ID.
+          ;; The poller commits the generation which exposed this state
+          ;; before entering this render.  Release ownership and submit
+          ;; the replacement now: waiting for another render can strand
+          ;; the source forever because no later native publication is
+          ;; guaranteed.  Unlike a matcher failure, these states are not
+          ;; a sticky user-visible error.
+          (let ((total (fzfa--async-collected-total status)))
+            (fzfa--source-clear-request src)
+            (let ((replacement
+                   (fzfa--source-submit src query limit)))
+              (if (eq (car-safe replacement) 'failed)
+                  replacement
+                (cons 'pending total)))))
+         ((or (not (eq (plist-get status :state) 'complete))
+              (plist-get status :stale))
+          (cons 'pending (fzfa--async-collected-total status)))
+         ((and (equal
+                (fzfa--source-materialization-key
+                 (plist-get status :snapshot-generation))
+                (fzfa-source-request-materialization-key src))
+               (eq (car-safe (fzfa-source-request-output src))
+                   'final))
+          (fzfa-source-request-output src))
+         (t
+          (fzfa--source-materialize-session-output
+           src handle request-id))))))))
 
 ;;; Session
 
@@ -2670,6 +2913,12 @@ it is off by default."
 
 Applies `fzfa-source-spawn-transform-function' first so extensions
 can rewrite CMD/DIR before the shell fork."
+  (unless (fzfa--command-api-p)
+    (user-error
+     (concat "fzfa: command sources require fzf-native 2.7's session API, "
+             "which is unavailable on %s; :candidates sources remain "
+             "supported")
+     system-type))
   (let ((pair (or (and fzfa-source-spawn-transform-function
                        (funcall fzfa-source-spawn-transform-function
                                 cmd dir))
@@ -2691,6 +2940,7 @@ frontend — typically a closure over the session's
 is needed.
 
 Updates CURRENT-CMD, LAST-GEN, and LAST-RESTART-TIME unconditionally."
+  (fzfa--source-clear-request source)
   (cond
    ((fzfa-source-cands-fn source)
     (let ((token (cl-incf (fzfa-source-prod-token source))))
@@ -2761,6 +3011,7 @@ callback discards on arrival."
   (when-let* ((h (fzfa-source-handle source)))
     (fzfa--defer-async-stop h)
     (setf (fzfa-source-handle source) nil))
+  (fzfa--source-clear-request source)
   (when (fzfa-source-cands-fn source)
     (cl-incf (fzfa-source-prod-token source))))
 

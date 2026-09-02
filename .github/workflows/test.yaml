@@ -24,10 +24,21 @@ jobs:
         with:
           path: fzf-async
 
+      # Test the declared fzf-native 2.7 dependency and its tracked artifacts.
       - uses: actions/checkout@v4
         with:
-          repository: jojojames/fzf-native
+          repository: dangduc/fzf-native
+          ref: "2.7"
           path: fzf-native
+
+      # Build the same reviewed source in a separate checkout.  Keep the first
+      # checkout untouched so tests cannot hide a stale committed artifact by
+      # replacing bin/ before it is loaded.
+      - uses: actions/checkout@v4
+        with:
+          repository: dangduc/fzf-native
+          ref: "2.7"
+          path: fzf-native-source
 
       # Optional Elisp deps that fzfa forward-declares from.  Checked
       # out only to give `make check-declare' an Elisp source to
@@ -127,18 +138,58 @@ jobs:
         shell: bash
         run: emacs --version
 
-      - name: Compile
+      - name: Inspect tracked fzf-native artifact
         shell: bash
         working-directory: fzf-async
-        run: make compile
+        run: |
+          emacs -Q --batch -L ../fzf-native \
+            -l fzf-native \
+            --eval '(let* ((relative (fzf-native--bundled-module-relative-path)) (path (expand-file-name relative fzf-native--bin-dir))) (unless (file-exists-p path) (error "tracked module is missing: %s" path)) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally path) (princ (format "tracked module: %s\nsha256: %s\n" path (secure-hash (quote sha256) (current-buffer))))))'
+
+      - name: Require tracked Windows batch-only contract
+        if: runner.os == 'Windows'
+        shell: bash
+        working-directory: fzf-async
+        run: |
+          emacs -Q --batch -L ../fzf-native -L . \
+            -l fzf-native -f fzf-native-load-dyn -l fzfa \
+            --eval '(unless (> (car (fzf-native-score "alpha" "alp")) 0) (error "paired fzf-native batch scorer is unavailable"))' \
+            --eval '(when (or (fboundp (quote fzf-native-async-start)) (fzfa--session-api-p)) (error "Windows artifact unexpectedly advertises the POSIX session API"))' \
+            --eval '(when (fzfa--command-api-p) (error "Windows unexpectedly supports command sources"))' \
+            --eval '(condition-case nil (progn (fzfa--spawn "echo alpha" default-directory) (error "batch-only command source did not fail")) (user-error nil))'
+
+      - name: Test against tracked artifact
+        shell: bash
+        working-directory: fzf-async
+        run: make test FZF_NATIVE_DIR=../fzf-native
 
       - name: Check declarations
         if: runner.os != 'Windows'
         shell: bash
         working-directory: fzf-async
-        run: make check-declare NOTMUCH_DIR=../notmuch/emacs
+        run: make check-declare FZF_NATIVE_DIR=../fzf-native NOTMUCH_DIR=../notmuch/emacs
 
-      - name: Test
+      - name: Build paired fzf-native source
+        shell: bash
+        working-directory: fzf-native-source
+        run: |
+          rm -rf bin
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+
+      - name: Require source-built Windows batch-only contract
+        if: runner.os == 'Windows'
         shell: bash
         working-directory: fzf-async
-        run: make test
+        run: |
+          emacs -Q --batch -L ../fzf-native-source -L . \
+            -l fzf-native -f fzf-native-load-dyn -l fzfa \
+            --eval '(unless (> (car (fzf-native-score "alpha" "alp")) 0) (error "source-built fzf-native batch scorer is unavailable"))' \
+            --eval '(when (or (fboundp (quote fzf-native-async-start)) (fzfa--session-api-p)) (error "Windows source build unexpectedly advertises the POSIX session API"))' \
+            --eval '(when (fzfa--command-api-p) (error "Windows unexpectedly supports command sources"))' \
+            --eval '(condition-case nil (progn (fzfa--spawn "echo alpha" default-directory) (error "batch-only command source did not fail")) (user-error nil))'
+
+      - name: Test against source-built module
+        shell: bash
+        working-directory: fzf-async
+        run: make test FZF_NATIVE_DIR=../fzf-native-source

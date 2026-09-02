@@ -189,7 +189,8 @@ the comparison.
 * Installation
 
 Required dependency (~fzfa~ installs this automatically.):
-[[https://github.com/dangduc/fzf-native][fzf-native]] (provides the C scoring module).
+[[https://github.com/dangduc/fzf-native][fzf-native 2.7]] (provides batch scoring
+and the request-aware command-session API).
 
 Minimal setup:
 
