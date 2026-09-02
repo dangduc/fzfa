@@ -565,23 +565,14 @@ mirroring `fzfa-helm-make-async-source' and the substrate.  For lists
 and zero-arg fns there is no CMD concept; `helm-pattern' is the FILTER
 directly and DISPLAY is ignored.
 
-Producer-kind detection runs once at source construction (a test fire
-with empty input observes whether the callback arrives synchronously).
-Async-firing producers (jsonrpc, `url-retrieve') keep their snapshot in
-source-local closure state and trigger `helm-force-update' from the
-callback so helm re-reads candidates with the fresh snapshot."
+Producer functions are classified by arity without firing them during
+source construction.  Both synchronously and asynchronously firing
+producers use the shared fetch protocol; async delivery triggers
+`helm-force-update' so helm re-reads the fresh snapshot."
   (fzfa-helm--ensure-loaded)
   (let* ((limit (or candidate-number-limit 10000))
-         (kind
-          (cond
-           ((listp items) 'list)
-           ((functionp items)
-            (if (>= (car (func-arity items)) 1)
-                (let ((fired nil))
-                  (funcall items "" (lambda (_x) (setq fired t)))
-                  (if fired 'sync 'async))
-              'zero))))
-         (producer-kind-p (memq kind '(sync async)))
+         (kind (fzfa--candidates-kind items))
+         (producer-kind-p (eq kind 'producer))
          (initial-char fzfa-separator)
          ;; Per-source state (display-state machinery, producer state,
          ;; result/score, retry-timer) on the struct.  Static kinds
@@ -635,11 +626,7 @@ callback so helm re-reads candidates with the fresh snapshot."
                      (cl-case kind
                        (list items)
                        (zero (funcall items))
-                       (sync (let (snap)
-                               (funcall items (or cmd "")
-                                        (lambda (x) (setq snap x)))
-                               snap))
-                       (async
+                       (producer
                         ;; Producer protocol + async-refresh dispatch
                         ;; live in the shared `fzfa--source-fetch'
                         ;; helper; the closure adapts its REFRESH-FN
@@ -1186,15 +1173,13 @@ for fuzzy-multi-source UX."
                ;; Same `while-no-input' + `last-result' cache +
                ;; `retry-timer' pattern as the async branch above.
                ;;
-               ;; Producer kind is detected once at construction:
-               ;; lists and zero-arg fns are static; 2-arg producers
-               ;; get a test fire to determine whether the callback
-               ;; arrives synchronously (regexp scan etc.) or
-               ;; asynchronously (jsonrpc, url-retrieve).  Async-
-               ;; firing sources keep their snapshot in source-local
-               ;; closure state and trigger `helm-force-update' when
-               ;; the callback arrives.
-               (let* ((source (fzfa-make-source :directory directory
+               ;; Producer kind is detected once from its arity.  Do not fire
+               ;; a producer during source construction: it can perform I/O
+               ;; or have other visible side effects.  Both synchronously and
+               ;; asynchronously firing producers use the shared fetch
+               ;; protocol and its token-based callback ownership.
+               (let* ((kind (fzfa--candidates-kind cands))
+                      (source (fzfa-make-source :directory directory
                                                 ;; Populate `cands-fn'
                                                 ;; on the struct so the
                                                 ;; async branch's
@@ -1202,17 +1187,9 @@ for fuzzy-multi-source UX."
                                                 ;; finds the producer.
                                                 ;; `--normalize-candidates'
                                                 ;; handles all shapes.
-                                                :candidates cands))
-                      (kind
-                       (cond
-                        ((listp cands) 'list)
-                        ((functionp cands)
-                         (if (>= (car (func-arity cands)) 1)
-                             (let ((fired nil))
-                               (funcall cands ""
-                                        (lambda (_x) (setq fired t)))
-                               (if fired 'sync 'async))
-                           'zero))))
+                                                :candidates
+                                                (and (eq kind 'producer)
+                                                     cands)))
                       (sync-stop
                        (lambda () (fzfa-source--stop source))))
                  (aset sources-v i source)
@@ -1244,7 +1221,7 @@ for fuzzy-multi-source UX."
                                  ;; the whole pattern through FILTER
                                  ;; instead of treating it as CMD and
                                  ;; leaving FILTER empty.
-                                 (split (and (memq kind '(sync async))
+                                 (split (and (eq kind 'producer)
                                              (fzfa--split
                                               pat
                                               (fzfa-source-display-state source)
@@ -1255,12 +1232,7 @@ for fuzzy-multi-source UX."
                                   (cl-case kind
                                     (list cands)
                                     (zero (funcall cands))
-                                    (sync (let (snap)
-                                            (funcall cands (or cmd "")
-                                                     (lambda (x)
-                                                       (setq snap x)))
-                                            snap))
-                                    (async
+                                    (producer
                                      ;; Producer protocol + async-refresh
                                      ;; dispatch live in the shared
                                      ;; `fzfa--source-fetch' helper; the
