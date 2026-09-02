@@ -559,10 +559,12 @@ Demo below:
 A meaningful difference from the alternatives is that ~fzfa-multi-read~
 can mix *both* synchronous and asynchronous sources in a single picker.
 
-On every keystroke each source is re-filtered — sync sources via
-~fzf-native-score-all~, async sources via ~fzf-native-async-candidates~
-against the live producer pool. The producer (e.g. ~find~, ~fd~, ~ripgrep~)
-does not reset and continues generating results we can score/filter against.
+On every changed query each source is re-filtered.  Sync sources use
+~fzf-native-score-all~.  Async sources submit one request, poll metadata, and
+materialize one authoritative snapshot through the request-aware session API.
+Stable redraws reuse that materialized output.  The producer (for example
+~find~, ~fd~, or ~ripgrep~) does not reset and continues generating candidates
+for native incremental retries.
 
 This lets one prompt combine, say, ~recentf~ entries (sync list) alongside a
 streaming ~rg~ search (async producer) and have both groups score
