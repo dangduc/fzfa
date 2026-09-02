@@ -83,12 +83,12 @@ into the void if they arrive late."
            (lambda (err)
              (when (= this-token token)
                (cl-decf remaining)
-               (message "fzfa-eglot: %S" err)))
+               (fzfa--print "fzfa-eglot: %S" err)))
            :timeout-fn
            (lambda ()
              (when (= this-token token)
                (cl-decf remaining)
-               (message "fzfa-eglot: workspace/symbol timed out")))))))))
+               (fzfa--print "fzfa-eglot: workspace/symbol timed out")))))))))
 
 (defun fzfa-eglot--visit (cand)
   "Jump to the SymbolInformation location encoded in CAND."

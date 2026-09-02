@@ -116,6 +116,24 @@ active minibuffer/mini-window display."
   (when (bound-and-true-p fzfa-debug)
     `(let ((inhibit-message t)) (message ,fmt ,@args))))
 
+(defun fzfa--print (fmt &rest args)
+  "Show a user-facing fzfa message without corrupting an active minibuffer.
+
+Formats FMT with ARGS.  Always writes to *Messages* so the entry survives
+minibuffer teardown and is copyable.  When a minibuffer is active,
+suppresses the echo-area flash — which would stomp the prompt or candidate
+display — and uses `minibuffer-message' for the transient inline cue.
+Outside a minibuffer, behaves like plain `message'.
+
+Use this for any user-facing notification that can fire while an fzfa
+completion session is on screen: producer failures, matcher errors,
+`fzfa-apply' errors, preview errors, and similar."
+  (let ((msg (apply #'format fmt args)))
+    (let ((inhibit-message (minibufferp)))
+      (message "%s" msg))
+    (when (minibufferp)
+      (minibuffer-message "%s" msg))))
+
 ;;; Customization
 
 (defcustom fzfa-max-candidates 10000
@@ -968,7 +986,7 @@ Silently no-ops when no `:apply' is defined for the source/session."
           (funcall apply-fn resolved)
           (fzfa--pin-window-buffer origin (current-buffer))
           (run-hooks 'fzfa-after-apply-hook))
-      (error (message "fzfa-apply: %s" (error-message-string err))))))
+      (error (fzfa--print "fzfa-apply: %s" (error-message-string err))))))
 
 (defun fzfa--minibuffer-install-apply-key ()
   "Bind `fzfa-apply-key' to `fzfa-apply-current' in the active minibuffer.
@@ -1234,8 +1252,8 @@ that don't care about session stay clean."
             (let ((default-directory (or dir default-directory)))
               (apply fn call-args)))
         (error
-         (message "fzfa preview %s error: %s"
-                  action (error-message-string err)))))))
+         (fzfa--print "fzfa preview %s error: %s"
+                      action (error-message-string err)))))))
 
 (defun fzfa--preview-install (session &optional delay)
   "Install live preview in the current minibuffer for the active session.
@@ -2653,8 +2671,7 @@ anything can poll it under the new query's identity."
               (setf (fzfa-source-request-signature src) signature
                     (fzfa-source-request-output src) output)
               (fzfa--log "async submit failed: %s" (nth 1 output))
-              (funcall (if (minibufferp) #'minibuffer-message #'message)
-                       "fzfa: matcher request failed: %s" (nth 1 output))
+              (fzfa--print "fzfa: matcher request failed: %s" (nth 1 output))
               (when (and (fzfa--source-request-owned-p
                           src handle 0 epoch)
                          (eq output (fzfa-source-request-output src)))
@@ -2684,10 +2701,9 @@ producer failure while preserving any partial final candidates."
                (not (memq handle fzfa--async-failed-producers)))
       (push handle fzfa--async-failed-producers)
       (fzfa--log "async producer failed: exit=%S err=%S" exit err)
-      (funcall (if (minibufferp) #'minibuffer-message #'message)
-               "fzfa: source command failed%s"
-               (if err (format ": %s" err)
-                 (format " (exit %s)" exit))))))
+      (fzfa--print "fzfa: source command failed%s"
+                   (if err (format ": %s" err)
+                     (format " (exit %s)" exit))))))
 
 (defun fzfa--source-async-candidates (src filter limit)
   "Return FILTER's candidates for SRC, or t while no result is ready.
@@ -2766,8 +2782,7 @@ signature change clears this marker through `fzfa--source-submit'."
                                (fzfa--async-collected-total status))))
             (fzfa--log "async request %s ended in %S: %s"
                        request-id state error-text)
-            (funcall (if (minibufferp) #'minibuffer-message #'message)
-                     "fzfa: matcher request failed: %s" error-text)
+            (fzfa--print "fzfa: matcher request failed: %s" error-text)
             (if (fzfa--source-request-owned-p
                  src handle request-id request-epoch)
                 (progn
