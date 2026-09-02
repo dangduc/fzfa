@@ -1150,10 +1150,10 @@ filtered candidates on each input change rather than holding its own
 filtered list) and ~:nohighlight t~ (so ~helm~ doesn't paint over the
 ~completions-common-part~ faces already embedded by ~fzf-native~).
 
-For ~:command~ sources a polling timer checks
-~fzf-native-async-generation~ and calls ~helm-force-update~ as new
-candidates stream in.  The multi handler uses a single shared timer
-that watches every source's handle, throttled to one
+For ~:command~ sources a polling timer checks the session's
+~:snapshot-generation~ through ~fzf-native-async-status~ and calls
+~helm-force-update~ when a completed result is published.  The multi handler
+uses a single shared timer that watches every source's handle, throttled to one
 ~helm-force-update~ per ~fzfa-input-throttle~, and skipped when
 ~input-pending-p~ — keystrokes always win against producer-driven
 refreshes.
