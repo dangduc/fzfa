@@ -1487,6 +1487,86 @@ even when their extension is excluded from `fzfa-extensions'."
     (should (equal (fzfa-helm--async-stats-suffix 'fake-handle)
                    " (5/125)"))))
 
+(ert-deftest fzfa-minibuffer-owner-rejects-nested-session ()
+  "A callback belongs only to the minibuffer session that created it."
+  (let* ((window (selected-window))
+         (original (window-buffer window))
+         (outer (generate-new-buffer " *fzfa owner outer*"))
+         (nested (generate-new-buffer " *fzfa owner nested*"))
+         (outer-session (list 'outer)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'active-minibuffer-window)
+                   (lambda () window)))
+          (set-window-buffer window outer)
+          (with-current-buffer outer
+            (setq fzfa--minibuffer-session outer-session))
+          (should (fzfa--minibuffer-owner-p
+                   outer window outer-session))
+          (set-window-buffer window nested)
+          (with-current-buffer nested
+            (setq fzfa--minibuffer-session (list 'nested)))
+          (should-not (fzfa--minibuffer-owner-p
+                       outer window outer-session)))
+      (set-window-buffer window original)
+      (kill-buffer outer)
+      (kill-buffer nested))))
+
+(ert-deftest fzfa-frontend-exhibit-acknowledges-supported-refresh ()
+  "The poller receives success only after a supported frontend refreshes."
+  (let* ((window (selected-window))
+         (previews 0)
+         (exhibits 0)
+         (fzfa--preview-run-fn (lambda () (cl-incf previews))))
+    (cl-progv '(vertico-mode icomplete-mode) '(t nil)
+      (cl-letf (((symbol-function 'active-minibuffer-window)
+                 (lambda () window))
+                ((symbol-function 'vertico--exhibit)
+                 (lambda () (cl-incf exhibits))))
+        (should (eq (fzfa--frontend-exhibit) t))
+        (should (= exhibits 1))
+        (should (= previews 1))
+        (set 'vertico-mode nil)
+        (should-not (fzfa--frontend-exhibit))
+        (should (= exhibits 1))
+        (should (= previews 1))))))
+
+(ert-deftest fzfa-manual-actions-recheck-minibuffer-owner ()
+  "Candidate lookup must not let old preview or apply code enter a new picker."
+  (let* ((window (selected-window))
+         (original (window-buffer window))
+         (outer (generate-new-buffer " *fzfa action outer*"))
+         (nested (generate-new-buffer " *fzfa action nested*"))
+         (outer-session (list 'outer))
+         previews applies)
+    (unwind-protect
+        (cl-letf (((symbol-function 'active-minibuffer-window)
+                   (lambda () window))
+                  ((symbol-function 'fzfa--frontend-candidate)
+                   (lambda ()
+                     (set-window-buffer window nested)
+                     "old candidate"))
+                  ((symbol-function 'fzfa--preview-call)
+                   (lambda (&rest args) (push args previews)))
+                  ((symbol-function 'fzfa--resolve-apply)
+                   (lambda (_candidate)
+                     (lambda (candidate) (push candidate applies))))
+                  ((symbol-function 'fzfa-resolve-candidate)
+                   (lambda (candidate _session) candidate))
+                  ((symbol-function 'minibuffer-selected-window)
+                   (lambda () window)))
+          (with-current-buffer outer
+            (setq fzfa--minibuffer-session outer-session))
+          (with-current-buffer nested
+            (setq fzfa--minibuffer-session (list 'nested)))
+          (dolist (command '(fzfa-preview-current fzfa-apply-current))
+            (set-window-buffer window outer)
+            (funcall command))
+          (should-not previews)
+          (should-not applies))
+      (set-window-buffer window original)
+      (kill-buffer outer)
+      (kill-buffer nested))))
+
 (ert-deftest fzfa-helm-single-source-preserves-last-result-on-failure ()
   "A terminal matcher failure must not blank a single Helm source."
   (require 'fzfa-helm)
@@ -1717,6 +1797,52 @@ even when their extension is excluded from `fzfa-extensions'."
       (should (= (fzfa-source-last-gen src) 1))
       (should (= (fzfa-source-request-id src) 18))
       (should (fzfa-source-request-signature src)))))
+
+(ert-deftest fzfa-session-poller-commits-after-scheduled-publication ()
+  "A scheduled refresh must publish before its generation is committed."
+  (let* ((src (fzfa-make-source :command "producer"))
+         (sources (vector src))
+         (fzfa-input-throttle 0)
+         transaction poll)
+    (setf (fzfa-source-handle src) 'handle
+          (fzfa-source-last-gen src) 0)
+    (cl-letf (((symbol-function 'fzfa--poll-generation) (lambda (_) 1))
+              ((symbol-function 'input-pending-p) (lambda () nil)))
+      (setq poll
+            (fzfa--make-poll-fn
+             sources (lambda () t) (lambda () t) (lambda () nil)
+             (lambda (callback) (setq transaction callback))))
+      (funcall poll)
+      (should transaction)
+      (should (= (fzfa-source-last-gen src) 0))
+      (funcall transaction)
+      (should (= (fzfa-source-last-gen src) 1)))))
+
+(ert-deftest fzfa-session-poller-rejects-revoked-publication ()
+  "A refresh must keep its generation pending after owner or handle changes."
+  (dolist (revoked '(owner handle))
+    (let* ((src (fzfa-make-source :command "producer"))
+           (sources (vector src))
+           (alive t)
+           (fzfa-input-throttle 0)
+           poll)
+      (setf (fzfa-source-handle src) 'old-handle
+            (fzfa-source-last-gen src) 0)
+      (cl-letf (((symbol-function 'fzfa--poll-generation) (lambda (_) 1))
+                ((symbol-function 'input-pending-p) (lambda () nil)))
+        (setq poll
+              (fzfa--make-poll-fn
+               sources
+               (lambda () alive)
+               (lambda ()
+                 (if (eq revoked 'owner)
+                     (setq alive nil)
+                   (setf (fzfa-source-handle src) 'new-handle))
+                 t)
+               (lambda () nil)
+               (lambda (callback) (funcall callback))))
+        (funcall poll)
+        (should (= (fzfa-source-last-gen src) 0))))))
 
 (ert-deftest fzfa-session-generation-change-rematerializes-result ()
   "A new native snapshot generation invalidates fzfa's candidate cache."

@@ -381,7 +381,7 @@ state via `fzfa-preview-get' / `fzfa-preview-put'.")
 (defvar-local fzfa--preview-last 'unset
   "Last previewed candidate in this minibuffer (for change detection).")
 (defvar-local fzfa--minibuffer-marker nil
-  "Buffer-local marker set on the fzfa minibuffer by `fzfa--preview-install'.
+  "Buffer-local marker set on every active fzfa minibuffer.
 
 Extensions (notably `fzfa-posframe') use this to detect whether a
 given minibuffer belongs to an fzfa session — needed because embark's
@@ -390,7 +390,7 @@ routing wants to peek at the parent-fzfa's context, not fire globally.")
 (defvar-local fzfa--minibuffer-session nil
   "Buffer-local `fzfa-session' for the current fzfa minibuffer.
 
-Set by `fzfa--preview-install' at session open, cleared on
+Set at session open, cleared on
 `minibuffer-exit-hook'.  Read via `fzfa--current-session' by
 fixed-arity integrations that can't take session by parameter (embark
 transformer, `fzfa-apply-current' from a keybinding).")
@@ -584,17 +584,23 @@ After the frontend commits new candidates, invokes
 this is how the initial preview lands for slow async producers, since
 `post-command-hook' does not fire while the user waits idly for the
 first batch of results.  Subsequent typing then re-triggers preview
-through the usual post-command-hook / idle-timer path."
+through the usual post-command-hook / idle-timer path.
+
+Return non-nil only when a supported frontend completed its refresh."
   (when-let* ((win (active-minibuffer-window)))
     (with-selected-window win
-      (cond
-       ((bound-and-true-p vertico-mode)
-        (setq vertico--input t)
-        (vertico--exhibit))
-       ((bound-and-true-p icomplete-mode)
-        (fzfa--icomplete-exhibit)))
-      (when (functionp fzfa--preview-run-fn)
-        (funcall fzfa--preview-run-fn)))))
+      (let ((published
+             (cond
+              ((bound-and-true-p vertico-mode)
+               (setq vertico--input t)
+               (vertico--exhibit)
+               t)
+              ((bound-and-true-p icomplete-mode)
+               (fzfa--icomplete-exhibit)
+               t))))
+        (when (and published (functionp fzfa--preview-run-fn))
+          (funcall fzfa--preview-run-fn))
+        published))))
 
 (defun fzfa--frontend-push (ivy-push-fn)
   "Refresh the active completion display.
@@ -606,6 +612,23 @@ IVY-PUSH-FN as the trailing argument, or called directly inline."
   (if (bound-and-true-p ivy-mode)
       (funcall ivy-push-fn)
     (fzfa--frontend-exhibit)))
+
+(defun fzfa--minibuffer-owner-p (buffer window session)
+  "Return non-nil when BUFFER, WINDOW, and SESSION own the minibuffer."
+  (and (buffer-live-p buffer)
+       (window-live-p window)
+       (eq window (active-minibuffer-window))
+       (eq buffer (window-buffer window))
+       (eq session
+           (buffer-local-value 'fzfa--minibuffer-session buffer))))
+
+(defun fzfa--active-minibuffer-context ()
+  "Return (BUFFER WINDOW SESSION) for the active fzfa minibuffer."
+  (when-let* ((window (active-minibuffer-window))
+              (buffer (window-buffer window))
+              (session (buffer-local-value
+                        'fzfa--minibuffer-session buffer)))
+    (list buffer window session)))
 
 (defun fzfa--insert-prompt-if-ivy ()
   "Force ivy to redraw its prompt if `ivy-mode' is active.
@@ -934,13 +957,15 @@ unwind path's implicit window-state restoration.
 
 Silently no-ops when no `:apply' is defined for the source/session."
   (interactive)
-  (when-let* ((cand (fzfa--frontend-candidate))
-              (apply (fzfa--resolve-apply cand))
-              (resolved (fzfa-resolve-candidate cand (fzfa--current-session)))
-              (origin (or (minibuffer-selected-window) (selected-window))))
+  (when-let* ((context (fzfa--active-minibuffer-context))
+              (cand (fzfa--frontend-candidate))
+              (apply-fn (fzfa--resolve-apply cand))
+              (resolved (fzfa-resolve-candidate cand (nth 2 context)))
+              (origin (or (minibuffer-selected-window) (selected-window)))
+              ((apply #'fzfa--minibuffer-owner-p context)))
     (condition-case err
         (with-selected-window origin
-          (funcall apply resolved)
+          (funcall apply-fn resolved)
           (fzfa--pin-window-buffer origin (current-buffer))
           (run-hooks 'fzfa-after-apply-hook))
       (error (message "fzfa-apply: %s" (error-message-string err))))))
@@ -980,10 +1005,12 @@ Looks up the active session's preview handler and dispatches `:preview'
 with the current candidate.  Silently no-ops when no handler is
 registered for this session."
   (interactive)
-  (when-let* ((cand (fzfa--frontend-candidate))
-              (session (fzfa--current-session)))
-    (setq fzfa--preview-last cand)
-    (fzfa--preview-call :preview session cand)))
+  (when-let* ((context (fzfa--active-minibuffer-context))
+              (cand (fzfa--frontend-candidate))
+              ((apply #'fzfa--minibuffer-owner-p context)))
+    (with-current-buffer (car context)
+      (setq fzfa--preview-last cand))
+    (fzfa--preview-call :preview (nth 2 context) cand)))
 
 (defun fzfa--minibuffer-install-preview-key ()
   "Bind `fzfa-preview-key' to `fzfa-preview-current' in the active minibuffer.
@@ -1229,17 +1256,15 @@ immediately on every selection change.  When both DELAY and
 preview only fires via `fzfa-preview-key' / `fzfa-preview-current'."
   (let* ((delay (or delay fzfa-preview-delay))
          (mb (current-buffer))
+         (mb-window (active-minibuffer-window))
          (run (lambda ()
-                ;; Suppress dispatch while a nested minibuffer is up
-                ;; (embark's action prompter or similar) — otherwise
-                ;; the idle timer would stomp embark's UI with a fresh
-                ;; preview swap.  Depth = 1 means we're inside just
-                ;; the fzfa session; > 1 means something nested.
-                (when (<= (minibuffer-depth) 1)
+                (when (fzfa--minibuffer-owner-p mb mb-window session)
                   (when-let* ((cand (fzfa--frontend-candidate)))
-                    (unless (equal cand fzfa--preview-last)
-                      (setq fzfa--preview-last cand)
-                      (fzfa--preview-call :preview session cand)))))))
+                    ;; Candidate lookup can call frontend or user code.
+                    (when (fzfa--minibuffer-owner-p mb mb-window session)
+                      (unless (equal cand fzfa--preview-last)
+                        (setq fzfa--preview-last cand)
+                        (fzfa--preview-call :preview session cand))))))))
     (fzfa-preview-put :origin-window (minibuffer-selected-window))
     (fzfa-preview-put :origin-buffer (window-buffer
                                       (minibuffer-selected-window)))
@@ -3674,52 +3699,71 @@ Returns non-nil iff a fetch was actually issued."
                  (fzfa--tag s idx candidate->source multi-p action))
                cands)))))
 
-(defun fzfa--multi-poll-bumped-p (sources-v)
-  "Non-nil iff any source in SOURCES-V has a fresh generation.
+(defun fzfa--multi-poll-bumps (sources-v)
+  "Return fresh (SOURCE HANDLE GENERATION) observations for SOURCES-V."
+  (cl-loop for source across sources-v
+           for handle = (fzfa-source-handle source)
+           for generation = (and handle (fzfa--poll-generation handle))
+           when (and generation
+                     (/= generation (fzfa-source-last-gen source)))
+           collect (list source handle generation)))
 
-Walks each source's CURRENT handle (not a frozen snapshot — so
-post-restart handles get polled) and compares the live generation
-to the source's `last-gen' slot.  Does not commit; pair with
-`fzfa--multi-poll-commit' inside the same poll tick to keep the
-detect/push throttle correct (commit only when actually pushing,
-otherwise the bump signal is silently dropped)."
-  (cl-loop for src across sources-v
-           thereis (when-let* ((h (fzfa-source-handle src))
-                               (g (fzfa--poll-generation h)))
-                     (/= g (fzfa-source-last-gen src)))))
+(defun fzfa--multi-poll-commit (bumps)
+  "Commit BUMPS whose sources still own their observed handles.
 
-(defun fzfa--multi-poll-commit (sources-v)
-  "Commit each SOURCES-V source's current generation to its `last-gen' slot.
+Return non-nil when at least one observation was committed."
+  (let (committed)
+    (dolist (bump bumps)
+      (pcase-let ((`(,source ,handle ,generation) bump))
+        (when (and (eq handle (fzfa-source-handle source))
+                   (< (fzfa-source-last-gen source) generation))
+          (setf (fzfa-source-last-gen source) generation
+                committed t))))
+    committed))
 
-Call after `fzfa--multi-poll-bumped-p' returned non-nil and you've
-decided to fire the frontend push, so the next tick starts from
-the published baseline."
-  (cl-loop for src across sources-v do
-           (when-let* ((h (fzfa-source-handle src))
-                       (g (fzfa--poll-generation h)))
-             (setf (fzfa-source-last-gen src) g))))
-
-(defun fzfa--make-poll-fn (sources-v alive-p refresh-fn first-shown-p)
+(defun fzfa--make-poll-fn (sources-v alive-p refresh-fn first-shown-p
+                                     &optional schedule-fn)
   "Return a 0-arg poll closure for SOURCES-V.
 
-ALIVE-P / REFRESH-FN / FIRST-SHOWN-P are 0-arg functions.  Each tick
-the closure checks ALIVE-P, `fzfa--multi-poll-bumped-p', and
-`input-pending-p', then a `fzfa-input-throttle' gate that is
+ALIVE-P, REFRESH-FN, and FIRST-SHOWN-P are 0-arg functions.  Each tick
+checks ALIVE-P, generation changes, input, and the throttle gate.
+
+When SCHEDULE-FN is nil, preserve the immediate refresh behavior used by
+Helm.  Otherwise SCHEDULE-FN receives one 0-arg publication transaction.
+That transaction commits its observed generations only when REFRESH-FN
+returns non-nil and the owner and handles remain current.
+
+The throttle gate is
 bypassed while FIRST-SHOWN-P returns nil — so cold sessions paint
 as soon as the producer + scoring delivers, without sitting through
-a throttle window on the empty buffer.  When all checks pass, commit
-the generations and call REFRESH-FN."
-  (let ((last-exhibit 0.0))
+a throttle window on the empty buffer."
+  (let ((last-exhibit 0.0)
+        pending)
     (lambda ()
-      (when (and (funcall alive-p)
-                 (fzfa--multi-poll-bumped-p sources-v)
-                 (not (input-pending-p))
-                 (or (not (funcall first-shown-p))
-                     (>= (- (float-time) last-exhibit)
-                         fzfa-input-throttle)))
-        (fzfa--multi-poll-commit sources-v)
-        (setq last-exhibit (float-time))
-        (funcall refresh-fn)))))
+      (when (funcall alive-p)
+        (let ((bumps (fzfa--multi-poll-bumps sources-v)))
+          (when (and bumps
+                     (or (null schedule-fn) (not pending))
+                     (not (input-pending-p))
+                     (or (not (funcall first-shown-p))
+                         (>= (- (float-time) last-exhibit)
+                             fzfa-input-throttle)))
+            (if (null schedule-fn)
+                (progn
+                  (fzfa--multi-poll-commit bumps)
+                  (setq last-exhibit (float-time))
+                  (funcall refresh-fn))
+              (setq pending t)
+              (funcall
+               schedule-fn
+               (lambda ()
+                 (setq pending nil)
+                 (when (and (funcall alive-p)
+                            (not (input-pending-p))
+                            (funcall refresh-fn)
+                            (funcall alive-p)
+                            (fzfa--multi-poll-commit bumps))
+                   (setq last-exhibit (float-time))))))))))))
 
 (defun fzfa--multi-narrow->string (k)
   "Coerce narrow key value K (symbol, character, or string) to length-1 string."
@@ -4048,6 +4092,9 @@ Per-source plist keys:
                                        :narrow-name nil)))
                t))
          (stats-overlay nil)
+         owner-buffer
+         owner-window
+         frontend-owned-p
          ;; Captured by `minibuffer-exit-hook' from the propertized text
          ;; in the minibuffer before `completing-read' returns and strips
          ;; properties.  Reliable per-instance source dispatch even when
@@ -4077,10 +4124,11 @@ Per-source plist keys:
          (menu-active nil)
          (refresh-overlay
           (lambda ()
-            (when (and stats-overlay
+            (when (and (funcall frontend-owned-p)
+                       stats-overlay
                        (not menu-active)
-                       (active-minibuffer-window))
-              (with-selected-window (active-minibuffer-window)
+                       owner-window)
+              (with-selected-window owner-window
                 (overlay-put
                  stats-overlay 'display
                  (funcall
@@ -4098,7 +4146,8 @@ Per-source plist keys:
                                    (aref specs-v narrow-idx)
                                    :name)
                                   "?"))))))))
-            (fzfa--insert-prompt-if-ivy)))
+            (when (funcall frontend-owned-p)
+              (fzfa--insert-prompt-if-ivy))))
          ;; Forward placeholders — these closures reference each other
          ;; in a cycle (`ivy-push-multi' → `narrow-do-restart' →
          ;; `multi-refresh-fn' → `ivy-push-multi'), so they can't be
@@ -4118,7 +4167,8 @@ Per-source plist keys:
          ;; or this closure (ivy).
          (ivy-push-multi
           (lambda ()
-            (when-let* ((win   (active-minibuffer-window))
+            (when-let* (((funcall frontend-owned-p))
+                        (win owner-window)
                         ((or (not (bound-and-true-p ivy-last))
                              (ivy-state-dynamic-collection ivy-last)))
                         (input (and (boundp 'ivy-text) ivy-text)))
@@ -4278,13 +4328,15 @@ Per-source plist keys:
                                       (push (cdr slot) tails))))
                                 (append (nreverse leaders)
                                         (apply #'append (nreverse tails)))))))
-                      (ivy--set-candidates cands)
-                      (ivy--exhibit)
-                      ;; `ivy--exhibit' skips the prompt redraw when the
-                      ;; candidate body didn't change.  Force it so our
-                      ;; `ivy-pre-prompt-function' lambda runs again with
-                      ;; the freshest stats.
-                      (ivy--insert-prompt))))))))
+                      (when (funcall frontend-owned-p)
+                        (ivy--set-candidates cands)
+                        (ivy--exhibit)
+                        ;; `ivy--exhibit' skips the prompt redraw when the
+                        ;; candidate body didn't change.  Force it so our
+                        ;; `ivy-pre-prompt-function' lambda runs again with
+                        ;; the freshest stats.
+                        (ivy--insert-prompt)
+                        t))))))))
          ;; Ivy action list for narrow dispatch.  One entry per
          ;; source's :narrow key (mutates `narrow-idx' and refreshes
          ;; via `ivy-push-multi'), plus a widen entry on
@@ -4324,8 +4376,7 @@ Per-source plist keys:
                                     ;; after `force-hidden' mutates the
                                     ;; buffer.  See narrow-handler.
                                     (run-with-idle-timer
-                                     0 nil #'fzfa--frontend-push
-                                     ivy-push-multi)))
+                                     0 nil multi-refresh-fn)))
                                 (format "narrow → %s" name))
                           acts))))
               (when fzfa-multi-narrow-key
@@ -4341,8 +4392,7 @@ Per-source plist keys:
                                        (aref sources before)
                                        fzfa-separator))))
                                 (run-with-idle-timer
-                                 0 nil #'fzfa--frontend-push
-                                 ivy-push-multi)))
+                                 0 nil multi-refresh-fn)))
                             "widen")
                       acts))
               (nreverse acts))))
@@ -4421,7 +4471,7 @@ Per-source plist keys:
                         ;; push reads stale input.  An idle-0 timer
                         ;; lands after the hook and reads fresh text.
                         (run-with-idle-timer
-                         0 nil #'fzfa--frontend-push ivy-push-multi))
+                         0 nil multi-refresh-fn))
                       ;; Restore the normal overlay now that the menu
                       ;; is dismissed (the 't action's own refresh path
                       ;; only fires on candidate computations).
@@ -4457,8 +4507,15 @@ Per-source plist keys:
     ;; references `ivy-push-multi' (which was bound in let*);
     ;; `narrow-do-restart' references `multi-refresh-fn';
     ;; `narrow-display-cycle' references `ivy-push-multi'.
+    (setq frontend-owned-p
+          (lambda ()
+            (and owner-buffer owner-window
+                 (fzfa--minibuffer-owner-p
+                  owner-buffer owner-window session))))
     (setq multi-refresh-fn
-          (lambda () (fzfa--frontend-push ivy-push-multi)))
+          (lambda ()
+            (when (funcall frontend-owned-p)
+              (fzfa--frontend-push ivy-push-multi))))
     (setq narrow-do-restart
           (lambda (src cmd)
             (if (fzfa-source-cands-fn src)
@@ -4503,16 +4560,27 @@ Per-source plist keys:
                  0 fzfa-refresh-delay
                  (fzfa--make-poll-fn
                   sources
-                  (lambda () (active-minibuffer-window))
-                  (lambda ()
-                    (run-with-idle-timer
-                     0 nil #'fzfa--frontend-push ivy-push-multi))
-                  (lambda () first-cands-shown))))
+                  frontend-owned-p
+                  multi-refresh-fn
+                  (lambda () first-cands-shown)
+                  (lambda (transaction)
+                    (run-with-idle-timer 0 nil transaction)))))
           (add-hook 'post-command-hook refresh-overlay)
           (sit-for fzfa-refresh-delay)
           (setq result
                 (minibuffer-with-setup-hook
                     (lambda ()
+                      (setq owner-buffer (current-buffer)
+                            owner-window (active-minibuffer-window)
+                            fzfa--minibuffer-marker t
+                            fzfa--minibuffer-session session)
+                      (add-hook
+                       'minibuffer-exit-hook
+                       (lambda ()
+                         (when (eq fzfa--minibuffer-session session)
+                           (setq fzfa--minibuffer-marker nil
+                                 fzfa--minibuffer-session nil)))
+                       t t)
                       (fzfa--minibuffer-format-reset wants-decoration)
                       (when (bound-and-true-p icomplete-mode)
                         (add-hook 'post-command-hook
@@ -4829,9 +4897,9 @@ Per-source plist keys:
                                      fzfa-input-debounce nil
                                      (lambda ()
                                        (setq retry-timer nil)
-                                       (fzfa--frontend-push ivy-push-multi)))))
-                            (when-let* ((win (active-minibuffer-window)))
-                              (with-selected-window win
+                                       (funcall multi-refresh-fn)))))
+                            (when (funcall frontend-owned-p)
+                              (with-selected-window owner-window
                                 (unless stats-overlay
                                   (setq stats-overlay
                                         (make-overlay (point-min)
