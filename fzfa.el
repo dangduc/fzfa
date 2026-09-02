@@ -1674,32 +1674,55 @@ naturally.  Covers initial entry and backspace-to-empty alike."
   (fzfa--minibuffer-install-apply-key)
   (fzfa--minibuffer-install-preview-key)
   (when (bound-and-true-p icomplete-mode)
-    ;; Empty-input state hits the zero-length-overlay resize blind spot:
-    ;; the overlay's multi-line `after-string' isn't counted, so any
-    ;; redisplay collapses the pane to 1 line.  Toggle the resize policy
-    ;; based on input state — `grow-only' (plus an explicit fit) when
-    ;; empty so the pane stays visible, user's original value otherwise
-    ;; so narrowing can shrink naturally.  Covers initial entry and
-    ;; backspace-to-empty alike.
-    (let ((orig resize-mini-windows))
-      (setq-local resize-mini-windows 'grow-only)
-      (add-hook 'after-change-functions
-                (lambda (&rest _)
-                  (if (= (minibuffer-prompt-end) (point-max))
-                      (progn
-                        (setq-local resize-mini-windows 'grow-only)
-                        ;; `after-change-functions' fires during the
-                        ;; edit, BEFORE icomplete's post-command-hook
-                        ;; rebuilds the overlay.  Fitting now would
-                        ;; read stale content.  Defer so the fit sees
-                        ;; the freshly-rendered candidate list.
-                        (run-at-time
-                         0 nil #'fzfa--icomplete-fit-mini-window))
-                    (setq-local resize-mini-windows orig)))
-                nil t))
-    ;; One-shot fit after icomplete's initial `post-command-hook'-driven
-    ;; exhibit populates the overlay.
-    (run-at-time 0 nil #'fzfa--icomplete-fit-mini-window)))
+    ;; Pin `resize-mini-windows' to `grow-only' for the whole session.
+    ;; Native auto-resize would otherwise shrink the pane during
+    ;; filtering and fail to regrow on backspace-to-empty because the
+    ;; overlay's after-string is stale between the buffer change and
+    ;; icomplete's post-command-hook exhibit.  The :after advice
+    ;; installed just below re-fits after every icomplete render.
+    (setq-local resize-mini-windows 'grow-only)
+    (fzfa--icomplete-install-fit-advice)
+    (add-hook 'minibuffer-exit-hook
+              #'fzfa--icomplete-uninstall-fit-advice nil t)))
+
+(defvar fzfa--icomplete-exhibit-advice-count 0
+  "Refcount of live fzfa icomplete sessions holding the exhibit advice.
+
+Incremented by `fzfa--icomplete-install-fit-advice' at session setup
+and decremented by `fzfa--icomplete-uninstall-fit-advice' on
+`minibuffer-exit-hook'.  The advice on `icomplete-exhibit' is added
+on the 0→1 transition and removed on the 1→0 transition so icomplete's
+advice list is only mutated while a fzfa session is on screen, and
+nested sessions don't cause the outer session to lose the advice mid-
+flight.")
+
+(defun fzfa--icomplete-exhibit-fit-advice (&rest _)
+  "Fit the mini-window after every `icomplete-exhibit'.
+
+Installed and removed per fzfa icomplete session (refcounted via
+`fzfa--icomplete-exhibit-advice-count').  Gated additionally on
+`fzfa--minibuffer-session' being non-nil in the current buffer so a
+still-live advice from a partially-torn-down session cannot fire
+against a non-fzfa minibuffer."
+  (when (and (buffer-live-p (current-buffer))
+             (buffer-local-value 'fzfa--minibuffer-session
+                                 (current-buffer)))
+    (fzfa--icomplete-fit-mini-window)))
+
+(defun fzfa--icomplete-install-fit-advice ()
+  "Add the icomplete-exhibit fit advice, refcounted."
+  (when (zerop fzfa--icomplete-exhibit-advice-count)
+    (advice-add 'icomplete-exhibit :after
+                #'fzfa--icomplete-exhibit-fit-advice))
+  (cl-incf fzfa--icomplete-exhibit-advice-count))
+
+(defun fzfa--icomplete-uninstall-fit-advice ()
+  "Remove the fit advice when the last fzfa icomplete session exits."
+  (cl-decf fzfa--icomplete-exhibit-advice-count)
+  (when (<= fzfa--icomplete-exhibit-advice-count 0)
+    (setq fzfa--icomplete-exhibit-advice-count 0)
+    (advice-remove 'icomplete-exhibit
+                   #'fzfa--icomplete-exhibit-fit-advice)))
 
 (defun fzfa--commas (n)
   "Format integer N with comma thousand-separators.
