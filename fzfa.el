@@ -4243,7 +4243,14 @@ Per-source plist keys:
                                   (let ((snap (fzfa-source-snapshot src)))
                                     (cond
                                      ((null snap) '())
-                                     ((string-empty-p query) snap)
+                                     ;; Copy on empty-query return so
+                                     ;; Emacs's `completion-all-sorted-
+                                     ;; completions' `(nconc all base-size)'
+                                     ;; mutates the copy, not our internal
+                                     ;; snapshot cache.  Non-empty branch
+                                     ;; below returns a fresh list from the
+                                     ;; C scorer, so no copy is needed there.
+                                     ((string-empty-p query) (copy-sequence snap))
                                      (t (let ((fzfa-batch-highlight nil))
                                           (while-no-input
                                             (fzfa--bridge-defcustoms
@@ -4847,7 +4854,11 @@ Per-source plist keys:
                                             (let ((snap (fzfa-source-snapshot src)))
                                               (cond
                                                ((null snap) '())
-                                               ((string-empty-p query) snap)
+                                               ;; See ivy-path sibling — copy
+                                               ;; so Emacs's `(nconc all
+                                               ;; base-size)' can't mutate our
+                                               ;; snapshot cache.
+                                               ((string-empty-p query) (copy-sequence snap))
                                                (t (let ((fzfa-batch-highlight nil))
                                                     (while-no-input
                                                       (fzfa--bridge-defcustoms
