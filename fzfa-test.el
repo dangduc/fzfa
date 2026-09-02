@@ -1530,6 +1530,46 @@ even when their extension is excluded from `fzfa-extensions'."
         (should (= snapshots 1))
         (should (= (fzfa-source-request-id src) 18))))))
 
+(ert-deftest fzfa-session-poller-replaces-nonpublishing-request-in-one-refresh ()
+  "A committed terminal generation must not strand replacement work."
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source :command "ls"))
+         (sources (vector src))
+         (submits 0)
+         (refreshes 0)
+         (fzfa-input-throttle 0)
+         poll)
+    (setf (fzfa-source-handle src) 'fake-handle
+          (fzfa-source-last-gen src) 0
+          (fzfa-source-request-id src) 17
+          (fzfa-source-request-signature src)
+          (fzfa--source-request-signature "q" 10))
+    (cl-letf (((symbol-function 'fzfa--session-api-p) (lambda () t))
+              ((symbol-function 'fzfa--command-api-p) (lambda () t))
+              ((symbol-function 'fzf-native-async-status)
+               (lambda (_handle &optional request-id)
+                 (if request-id
+                     (list :request-id request-id :state 'superseded
+                           :snapshot-generation 1 :total 42)
+                   '(:snapshot-generation 1))))
+              ((symbol-function 'fzf-native-async-submit)
+               (lambda (&rest _)
+                 (+ 17 (cl-incf submits))))
+              ((symbol-function 'input-pending-p) (lambda () nil)))
+      (setq poll
+            (fzfa--make-poll-fn
+             sources (lambda () t)
+             (lambda ()
+               (cl-incf refreshes)
+               (fzfa--source-async-out src "q" 10))
+             (lambda () nil)))
+      (funcall poll)
+      (should (= refreshes 1))
+      (should (= submits 1))
+      (should (= (fzfa-source-last-gen src) 1))
+      (should (= (fzfa-source-request-id src) 18))
+      (should (fzfa-source-request-signature src)))))
+
 (ert-deftest fzfa-session-generation-change-rematerializes-result ()
   "A new native snapshot generation invalidates fzfa's candidate cache."
   (let* ((default-directory "/tmp/")

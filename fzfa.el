@@ -87,12 +87,6 @@
 (declare-function fzf-native-async-start "ext:fzf-native-module"
                   (command &optional dir))
 (declare-function fzf-native-async-stop "ext:fzf-native-module" (handle))
-(declare-function fzf-native-async-generation "ext:fzf-native-module" (handle))
-(declare-function fzf-native-async-candidates "ext:fzf-native-module"
-                  (handle filter &optional limit))
-(declare-function fzf-native-async-stats "ext:fzf-native-module" (handle))
-(declare-function fzf-native-async-result-fresh-p "ext:fzf-native-module"
-                  (handle query))
 (declare-function fzf-native-async-submit "ext:fzf-native-module"
                   (handle query &optional limit))
 (declare-function fzf-native-async-snapshot "ext:fzf-native-module"
@@ -134,21 +128,22 @@ Set to nil or 0 to disable the cap (may be slow for very large result sets)."
   :group 'fzfa)
 
 (defcustom fzfa-refresh-delay 0.05
-  "Seconds between polls for new C-side candidate generations.
+  "Seconds between polls for a new native result snapshot.
 
-The background reader thread increments a generation counter as lines
-arrive; this timer checks that counter and schedules a display refresh
-when new data is available.  Lower values feel more responsive but burn
-more CPU on the polling loop."
+With the session API, this timer reads metadata-only status and schedules a
+display refresh when `:snapshot-generation' changes.  Candidate growth causes
+the native session to retry the owned request; the timer does not copy the
+candidate list while that retry runs.  Lower values feel more responsive but
+use more CPU."
   :type 'float
   :group 'fzfa)
 
 (defcustom fzfa-input-debounce 0.1
-  "Seconds of idle time to wait before retrying after interrupted scoring.
+  "Seconds of idle time before retrying an interrupted display fetch.
 
-When the user types fast, `while-no-input' aborts the scoring call.  This
-idle timer fires once typing pauses and re-triggers the display so results
-self-heal."
+When the user types fast, `while-no-input' can interrupt status or snapshot
+materialization.  Native scoring continues independently.  This idle timer
+re-triggers the display after input pauses."
   :type 'float
   :group 'fzfa)
 
@@ -1821,30 +1816,6 @@ Nil disables the cap on the C side."
   (and fzfa-max-candidates
        (> fzfa-max-candidates 0)
        fzfa-max-candidates))
-
-(defun fzfa--final-p (r handle query)
-  "Return non-nil when R is the final answer for QUERY on HANDLE.
-
-R is the value returned by `fzf-native-async-candidates' for QUERY.
-The result is final in either of two cases:
-  - R is non-nil (candidates to display); or
-  - R is nil AND `fzf-native-async-result-fresh-p' reports the cache
-    fresh for QUERY — scoring has completed at the current pool size,
-    so zero matches is the authoritative answer.
-A nil return means scoring for QUERY is still in flight: an empty R
-should be treated as \"no information yet\", and callers should
-preserve the previous display rather than blanking it.
-
-Use this guard around any `setq' that updates a stored result, and
-around any side-effect that commits R to the display.
-
-When the loaded fzf-native predates `fzf-native-async-result-fresh-p',
-fall back to treating any nil R as in-flight.  That loses the
-authoritative-zero distinction (consult-style display will keep showing
-stale candidates when scoring legitimately matched nothing), but it
-keeps fzfa functional on older fzf-native builds."
-  (or r (and (fboundp 'fzf-native-async-result-fresh-p)
-             (fzf-native-async-result-fresh-p handle query))))
 
 (defun fzfa--session-api-p ()
   "Non-nil when fzf-native exposes the request-aware session API.
@@ -3622,7 +3593,7 @@ detect/push throttle correct (commit only when actually pushing,
 otherwise the bump signal is silently dropped)."
   (cl-loop for src across sources-v
            thereis (when-let* ((h (fzfa-source-handle src))
-                               (g (fzf-native-async-generation h)))
+                               (g (fzfa--poll-generation h)))
                      (/= g (fzfa-source-last-gen src)))))
 
 (defun fzfa--multi-poll-commit (sources-v)
@@ -3633,7 +3604,7 @@ decided to fire the frontend push, so the next tick starts from
 the published baseline."
   (cl-loop for src across sources-v do
            (when-let* ((h (fzfa-source-handle src))
-                       (g (fzf-native-async-generation h)))
+                       (g (fzfa--poll-generation h)))
              (setf (fzfa-source-last-gen src) g))))
 
 (defun fzfa--make-poll-fn (sources-v alive-p refresh-fn first-shown-p)
@@ -4106,9 +4077,8 @@ Per-source plist keys:
                                (prod  (fzfa-source-cands-fn src))
                                (out
                                 (cond
-                                 (h (while-no-input
-                                      (fzf-native-async-candidates
-                                       h query limit)))
+                                 (h (fzfa--source-async-out
+                                     src query limit))
                                  (prod
                                   (fzfa--multi-candidates-fetch
                                    src i prod-input candidate->source
@@ -4124,19 +4094,30 @@ Per-source plist keys:
                                              snap query))))))))))
                           (cond
                            ((eq out t) (setq interrupted t))
-                           ((and h (not (fzfa--final-p out h query)))
-                            (when-let* ((stats (fzf-native-async-stats h)))
-                              (setf (fzfa-source-total src) (cdr stats))))
+                           ((and h (eq (car-safe out) 'pending))
+                            (when (cdr out)
+                              (setf (fzfa-source-total src) (cdr out))))
+                           ((and h (eq (car-safe out) 'failed))
+                            ;; Terminal matcher failure: keep the last good
+                            ;; candidates but do not classify this source as
+                            ;; still computing.
+                            (when (nth 2 out)
+                              (setf (fzfa-source-total src) (nth 2 out))))
                            (t
-                            ;; Re-tag async candidates only.  Async handles
-                            ;; emit fresh elisp strings each call that have
-                            ;; never been tagged.  Producer-path output is
+                            ;; Async `(final CANDS FILTERED TOTAL)' —
+                            ;; unpack counts (atomic with CANDS) and
+                            ;; re-tag.  Async handles emit fresh elisp
+                            ;; strings each call that have never been
+                            ;; tagged.  Producer-path output is
                             ;; already tagged at fetch time: `fzf-native-
                             ;; score-all' returns input strings unchanged
                             ;; for the rank tail, and content-equal copies
                             ;; for the highlighted top-N — both dispatch
                             ;; through `candidate->source' via content-equality.
                             (when h
+                              (when (nth 2 out)
+                                (setf (fzfa-source-filtered src) (nth 2 out)
+                                      (fzfa-source-total src) (nth 3 out)))
                               (let ((src-action
                                      (plist-get (fzfa-source-spec src)
                                                 :action)))
@@ -4145,18 +4126,15 @@ Per-source plist keys:
                                        (lambda (c)
                                          (fzfa--tag c i candidate->source
                                                     multi-p src-action))
-                                       out))))
+                                       (nth 1 out)))))
                             (when (and out (not first-cands-shown))
                               (setq first-cands-shown t))
                             (setf (fzfa-source-last-result src) out
                                   (fzfa-source-rank src)
                                   (fzfa--multi-rank out query h))
-                            (cond
-                             (h (when-let* ((stats (fzf-native-async-stats h)))
-                                  (setf (fzfa-source-filtered src) (car stats)
-                                        (fzfa-source-total src) (cdr stats))))
-                             (t (setf (fzfa-source-filtered src)
-                                      (length out))))))))))
+                            (unless h
+                              (setf (fzfa-source-filtered src)
+                                    (length out)))))))))
                   (unless interrupted
                     (let* ((order (number-sequence 0 (1- n)))
                            (empty-q (string-empty-p query))
@@ -4685,9 +4663,8 @@ Per-source plist keys:
                                          (prod  (fzfa-source-cands-fn src))
                                          (out
                                           (cond
-                                           (h (while-no-input
-                                                (fzf-native-async-candidates
-                                                 h query limit)))
+                                           (h (fzfa--source-async-out
+                                               src query limit))
                                            (prod
                                             (fzfa--multi-candidates-fetch
                                              src i prod-input candidate->source
@@ -4707,20 +4684,34 @@ Per-source plist keys:
                                      ;; final — keep the prior per-source slot;
                                      ;; refresh `total' so the overlay still
                                      ;; reflects the live pool.
-                                     ((and h (not (fzfa--final-p
-                                                   out h query)))
-                                      (when-let* ((stats (fzf-native-async-stats h)))
-                                        (setf (fzfa-source-total src) (cdr stats))))
+                                     ((and h (eq (car-safe out) 'pending))
+                                      (when (cdr out)
+                                        (setf (fzfa-source-total src)
+                                              (cdr out))))
+                                     ((and h (eq (car-safe out) 'failed))
+                                      ;; Preserve the prior per-source slot;
+                                      ;; the failure was already reported once
+                                      ;; by `fzfa--source-async-out'.
+                                      (when (nth 2 out)
+                                        (setf (fzfa-source-total src)
+                                              (nth 2 out))))
                                      (t
-                                      ;; Re-tag async candidates only.
+                                      ;; Async `(final CANDS FILTERED TOTAL)'
+                                      ;; — unpack counts (atomic with CANDS)
+                                      ;; and re-tag async candidates only.
                                       ;; Producer-path output is already
                                       ;; tagged at fetch time and the
                                       ;; sync scorer preserves identity
                                       ;; (tail) or content-equality
                                       ;; (highlighted top-N) — both
                                       ;; dispatch through `candidate->source'.
-                                      ;; out may be nil (zero matches) — ok.
+                                      ;; CANDS may be nil (zero matches) — ok.
                                       (when h
+                                        (when (nth 2 out)
+                                          (setf (fzfa-source-filtered src)
+                                                (nth 2 out)
+                                                (fzfa-source-total src)
+                                                (nth 3 out)))
                                         (let ((src-action
                                                (plist-get
                                                 (fzfa-source-spec src)
@@ -4730,21 +4721,15 @@ Per-source plist keys:
                                                  (lambda (c)
                                                    (fzfa--tag c i candidate->source
                                                               multi-p src-action))
-                                                 out))))
+                                                 (nth 1 out)))))
                                       (when (and out (not first-cands-shown))
                                         (setq first-cands-shown t))
                                       (setf (fzfa-source-last-result src) out
                                             (fzfa-source-rank src)
                                             (fzfa--multi-rank out query h))
-                                      (cond
-                                       (h (when-let*
-                                              ((stats (fzf-native-async-stats h)))
-                                            (setf (fzfa-source-filtered src)
-                                                  (car stats)
-                                                  (fzfa-source-total src)
-                                                  (cdr stats))))
-                                       (t (setf (fzfa-source-filtered src)
-                                                (length out))))))))))
+                                      (unless h
+                                        (setf (fzfa-source-filtered src)
+                                              (length out)))))))))
                             (when interrupted
                               (when retry-timer (cancel-timer retry-timer))
                               (setq retry-timer
@@ -5389,6 +5374,8 @@ PATH is resolved against `default-directory' first."
 
     (advice-add 'fzf-native-async-start      :around #'fzfa--bridge-defcustoms)
     (advice-add 'fzf-native-async-candidates :around #'fzfa--bridge-defcustoms)
+    (advice-add 'fzf-native-async-submit     :around #'fzfa--bridge-defcustoms)
+    (advice-add 'fzf-native-async-snapshot   :around #'fzfa--bridge-defcustoms)
 
     (with-eval-after-load 'embark
       (dolist (entry '((fzfa-file     . embark-file-map)
