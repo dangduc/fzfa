@@ -1579,6 +1579,33 @@ even when their extension is excluded from `fzfa-extensions'."
       (should (equal (fzfa--source-async-out src "q" 10)
                      '(pending . 125))))))
 
+(ert-deftest fzfa-session-running-status-reports-producer-failure-once ()
+  "Producer failure is visible even before its matcher request completes."
+  (let* ((default-directory "/tmp/")
+         (fzfa--async-failed-producers nil)
+         (src (fzfa-make-source :command "bad-producer"))
+         messages)
+    (setf (fzfa-source-handle src) 'fake-handle)
+    (cl-letf (((symbol-function 'fzfa--session-api-p) (lambda () t))
+              ((symbol-function 'fzf-native-async-submit)
+               (lambda (&rest _) 77))
+              ((symbol-function 'fzf-native-async-status)
+               (lambda (&rest _)
+                 '(:state running :stale t :snapshot-generation 3
+                   :pool-generation 125 :total 100
+                   :producer-state failed :producer-error "read failed")))
+              ((symbol-function 'fzfa--log) #'ignore)
+              ((symbol-function 'message)
+               (lambda (format-string &rest args)
+                 (push (apply #'format format-string args) messages))))
+      (should (equal (fzfa--source-async-out src "q" 10)
+                     '(pending . 125)))
+      (should (equal (fzfa--source-async-out src "q" 10)
+                     '(pending . 125)))
+      (should (= (length messages) 1))
+      (should (string-match-p "source command failed" (car messages)))
+      (should (memq 'fake-handle fzfa--async-failed-producers)))))
+
 (ert-deftest fzfa-session-failed-request-is-terminal-and-reported-once ()
   "A persistent matcher failure is terminal, visible, and does not retry-loop."
   (let* ((default-directory "/tmp/")
@@ -1773,6 +1800,23 @@ even when their extension is excluded from `fzfa-extensions'."
       (should (eq seen query))
       (should (equal seen query)))))
 
+(ert-deftest fzfa-producer-failure-with-partial-output-reports-once ()
+  "A partial candidate list must not conceal a failed producer."
+  (let ((fzfa--async-failed-producers nil)
+        messages)
+    (cl-letf (((symbol-function 'message)
+               (lambda (format-string &rest args)
+                 (push (apply #'format format-string args) messages)))
+              ((symbol-function 'fzfa--log) #'ignore)
+              ((symbol-function 'minibufferp) (lambda (&rest _) nil)))
+      (let ((snapshot '(:candidates ("partial")
+                        :producer-error "producer exited with status 7"
+                        :producer-exit-status 7)))
+        (fzfa--async-note-producer-failure 'fake-handle snapshot)
+        (fzfa--async-note-producer-failure 'fake-handle snapshot))
+      (should (= (length messages) 1))
+      (should (string-match-p "source command failed" (car messages))))))
+
 (ert-deftest fzfa-session-end-to-end-polls-one-native-request ()
   "Repeated renders poll one real native request until it is final."
   (skip-unless (and (fboundp 'fzf-native-async-start)
@@ -1815,6 +1859,45 @@ even when their extension is excluded from `fzfa-extensions'."
           (should (equal result '(final ("alpha" "beta") 2 2)))
           (should (= submits 1))
           (should (= snapshots 1)))
+      (fzfa-source--stop src))))
+
+(ert-deftest fzfa-session-end-to-end-reports-partial-producer-failure ()
+  "Real partial output remains visible while its producer failure is shown."
+  (skip-unless (and (fboundp 'fzf-native-async-start)
+                    (fboundp 'fzf-native-async-submit)))
+  (let* ((default-directory "/tmp/")
+         (src (fzfa-make-source
+               :command "printf '%s\\n' partial; exit 7"))
+         (handle (fzf-native-async-start
+                  "printf '%s\\n' partial; exit 7" default-directory))
+         (fzfa--async-failed-producers nil)
+         messages
+         result)
+    (setf (fzfa-source-handle src) handle)
+    (unwind-protect
+        (progn
+          (let ((deadline (+ (float-time) 3.0)))
+            (while (and (< (float-time) deadline)
+                        (not (plist-get (fzf-native-async-status handle)
+                                        :reader-done)))
+              (sleep-for 0.01)))
+          (cl-letf (((symbol-function 'message)
+                     (lambda (format-string &rest args)
+                       (push (apply #'format format-string args) messages)))
+                    ((symbol-function 'fzfa--log) #'ignore)
+                    ((symbol-function 'minibufferp) (lambda (&rest _) nil)))
+            (let ((deadline (+ (float-time) 3.0)))
+              (while (and (< (float-time) deadline)
+                          (not (eq (car-safe
+                                    (setq result
+                                          (fzfa--source-async-out
+                                           src "part" 10)))
+                                   'final)))
+                (sleep-for 0.01))))
+          (should (equal result '(final ("partial") 1 1)))
+          (should (= (length messages) 1))
+          (should (string-match-p "source command failed"
+                                  (car messages))))
       (fzfa-source--stop src))))
 
 (ert-deftest fzfa-source-cands-fn-normalized ()

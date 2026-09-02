@@ -81,7 +81,8 @@ category, and reuse the same passthrough completion style.
 The request key lives in =fzfa-source=.  One changed key creates one native
 request, and every later status or snapshot names that request ID.  A submit or
 matcher failure is a terminal value for that key rather than work that redraw
-can silently retry.
+can silently retry.  Producer failure is reported independently, because a
+producer can fail after emitting a useful partial candidate set.
 
 The child producer, native reader, scoring coordinator, and process-wide
 workers run outside Elisp.  Elisp runs on its main thread and never waits for
