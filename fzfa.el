@@ -2628,6 +2628,25 @@ status does not include a separate live-pool boundary."
   (or (plist-get status :pool-generation)
       (plist-get status :total)))
 
+(defvar fzfa--async-failed-producers nil
+  "Handles whose producer failure has been reported this session.")
+
+(defun fzfa--async-note-producer-failure (handle snap)
+  "Report HANDLE's dead producer once, per SNAP's producer fields.
+A producer that dies after writing zero or more candidates still
+completes its matcher request with :error nil.  Report the independent
+producer failure while preserving any partial final candidates."
+  (let ((err (plist-get snap :producer-error))
+        (exit (plist-get snap :producer-exit-status)))
+    (when (and (or err (and (integerp exit) (> exit 0)))
+               (not (memq handle fzfa--async-failed-producers)))
+      (push handle fzfa--async-failed-producers)
+      (fzfa--log "async producer failed: exit=%S err=%S" exit err)
+      (funcall (if (minibufferp) #'minibuffer-message #'message)
+               "fzfa: source command failed%s"
+               (if err (format ": %s" err)
+                 (format " (exit %s)" exit))))))
+
 (defun fzfa--source-async-candidates (src filter limit)
   "Return FILTER's candidates for SRC, or t while no result is ready.
 
@@ -2652,6 +2671,7 @@ t for pending work."
      ((eq snapshot t) t)
      ((and (eq (plist-get snapshot :state) 'complete)
            (not (plist-get snapshot :stale)))
+      (fzfa--async-note-producer-failure handle snapshot)
       (let ((output (list 'final
                           (plist-get snapshot :candidates)
                           (plist-get snapshot :filtered)
@@ -2666,13 +2686,14 @@ t for pending work."
             (fzfa-source-request-output src) nil)
       (cons 'pending (fzfa--async-collected-total snapshot))))))
 
-(defun fzfa--source-terminal-request-output (src status)
+(defun fzfa--source-terminal-request-output (src handle status)
   "Return and cache SRC's terminal request failure from STATUS.
 
 The first observation is reported to the user.  Equal redraws reuse the
 cached `(failed ERROR TOTAL)' value, so a persistent native failure neither
 masquerades as in-flight work nor drives a submit/fail refresh loop.  A query
 signature change clears this marker through `fzfa--source-submit'."
+  (fzfa--async-note-producer-failure handle status)
   (let ((cached (fzfa-source-request-output src)))
     (if (eq (car-safe cached) 'failed)
         (let ((updated (list 'failed (nth 1 cached)
@@ -2717,11 +2738,17 @@ complete, non-stale snapshot generation appears."
      (t
       (let ((status (while-no-input
                       (fzf-native-async-status handle request-id))))
+        ;; Producer and matcher lifecycles are independent.  A source
+        ;; can fail after emitting useful candidates while this request
+        ;; remains running or stale, so report that failure before
+        ;; branching on matcher state.
+        (when (and status (not (eq status t)))
+          (fzfa--async-note-producer-failure handle status))
         (cond
          ((eq status t) t)
          ((null status) (cons 'pending nil))
          ((eq (plist-get status :state) 'failed)
-          (fzfa--source-terminal-request-output src status))
+          (fzfa--source-terminal-request-output src handle status))
          ((memq (plist-get status :state)
                 '(superseded cancelled unknown idle))
           ;; These states cannot ever publish a result for REQUEST-ID.
@@ -2945,6 +2972,8 @@ Updates CURRENT-CMD, LAST-GEN, and LAST-RESTART-TIME unconditionally."
    (t
     (when-let* ((old (fzfa-source-handle source)))
       (fzfa--defer-async-stop old)
+      (setq fzfa--async-failed-producers
+            (delq old fzfa--async-failed-producers))
       (setf (fzfa-source-handle source) nil))
     (setf (fzfa-source-current-cmd source) new-cmd
           (fzfa-source-last-gen source) -1
@@ -2996,6 +3025,8 @@ callback discards on arrival."
         (fzfa-source-display-overlays source) nil)
   (when-let* ((h (fzfa-source-handle source)))
     (fzfa--defer-async-stop h)
+    (setq fzfa--async-failed-producers
+          (delq h fzfa--async-failed-producers))
     (setf (fzfa-source-handle source) nil))
   (fzfa--source-clear-request source)
   (when (fzfa-source-cands-fn source)
