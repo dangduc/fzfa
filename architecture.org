@@ -58,47 +58,42 @@ category, and reuse the same passthrough completion style.
 * Async pipeline — =fzfa-async-completing-read=
 
 #+begin_src
-  user types "fo" in minibuffer
-       │
-       ▼
-  ┌──────────────────────────────────────────────────┐
-  │ Elisp: completion table lambda                   │
-  │  - reads minibuffer query                        │
-  │  - calls (fzf-native-async-candidates h "fo")    │
-  │  - returns whatever stale snapshot is current    │
-  └──────────────────────────────────────────────────┘
-       │ non-blocking
-       ▼
-  ┌──────────────────────────────────────────────────┐
-  │ C: dispatch (see fzf-native/architecture.org)    │
-  │  - signal scoring thread (or no-op if same query)│
-  │  - copy out current score_results                │
-  └──────────────────────────────────────────────────┘
-       │
-       │     (the C side does the real work in
-       │      its own threads; we'll see results
-       │      on a future poll)
-       ▼
-  ┌──────────────────────────────────────────────────┐
-  │ Elisp: 50ms regular timer                        │
-  │  - polls fzf-native-async-generation             │
-  │  - on change → schedule idle-timer exhibit       │
-  └──────────────────────────────────────────────────┘
-       │
-       ▼
-  ┌──────────────────────────────────────────────────┐
-  │ Elisp: idle-timer exhibit                        │
-  │  - calls fzfa--frontend-exhibit             │
-  │  - vertico/icomplete re-renders                  │
-  │  - completion table re-runs, picks up new data   │
-  └──────────────────────────────────────────────────┘
+  completion table(query)
+    key = (query, limit, case-mode, fuzzy,
+           filter-only-length, filter-only-logic)
+    if key changed:
+      clear old local ownership
+      request-id = fzf-native-async-submit(handle, query, limit)
+    status = fzf-native-async-status(handle, request-id)
+    if status is running or stale:
+      keep the prior displayed result
+    else if status failed:
+      retain and report one terminal error for this key
+    else if snapshot-generation changed:
+      request-output = fzf-native-async-snapshot(handle, request-id)
+    return request-output
+
+  regular timer (50 ms)
+    poll status :snapshot-generation without copying candidates
+    on change, schedule an idle-timer frontend exhibit
 #+end_src
 
-The C side runs three concurrent threads (reader, scorer, main); the
-Elisp side runs *zero* threads. Everything Elisp does is on the main
-thread, sequenced by the timer ticks. We get away with that because
-=fzf-native-async-candidates= is non-blocking — it returns the latest
-snapshot and dispatches the next scoring run, but never waits.
+The request key lives in =fzfa-source=.  One changed key creates one native
+request, and every later status or snapshot names that request ID.  A submit or
+matcher failure is a terminal value for that key rather than work that redraw
+can silently retry.
+
+The child producer, native reader, scoring coordinator, and process-wide
+workers run outside Elisp.  Elisp runs on its main thread and never waits for
+scoring.  =fzf-native-async-status= copies only metadata.  Candidate strings
+cross the module boundary once, through =fzf-native-async-snapshot=, when a new
+authoritative generation is ready.  The completion table retains that
+materialized output for stable redraws.
+
+Fzfa requires fzf-native 2.7.  Shell-command sources use the POSIX session API
+supplied by that release.  The Windows module provides batch scoring only, so
+static and callback-based =:candidates= sources remain available there while
+=:command= sources stop with a user-facing error.
 
 For the C-side mechanics — what =score_abort= does, how the same-
 filter rule prevents livelock, how the arena handles teardown — see
@@ -106,25 +101,26 @@ filter rule prevents livelock, how the arena handles teardown — see
 
 ** Result cache (C-side)
 
-Each session maintains an LRU result cache keyed by query string.  Its
-size is configurable via =fzfa-cache-size= (default 40, read at
-session start).  Each entry stores the top-K results delivered to Elisp
-plus the *full* matched-candidate index for that query.
+Each native session maintains an LRU result cache keyed by the complete matcher
+identity.  Its entry count is configured by =fzfa-cache-size= (default 40,
+read at session start); fzf-native also enforces its own byte budget.  An entry
+stores top-K output and, when the byte budget permits, membership evidence for
+refining a later request.
 
 On every dispatch, the C side classifies the lookup:
 
 | Outcome     | When                                          | Effect                                          |
 |-------------+-----------------------------------------------+-------------------------------------------------|
-| Exact-fresh | Same query, pool unchanged                    | Return cached top-K; no scoring scheduled.      |
-| Exact-stale | Same query, pool has grown since last score   | Return cached top-K; refine on m_idx + delta.   |
-| Prefix      | New query is a refinement of a cached one     | Return prefix's top-K; refine on prior m_idx.   |
-| Miss        | No usable cache entry                         | Return current score_results; full pool scan.   |
+| Exact-fresh | Same matcher identity, pool unchanged         | Publish cached top-K; no scoring scheduled.     |
+| Exact-stale | Same matcher identity, pool has grown         | Reuse membership and score the appended delta.  |
+| Refinement  | New query safely subsumes a cached query      | Score prior members plus the appended delta.    |
+| Miss        | No safe cache evidence                        | Scan the selected pool boundary.                 |
 
-The prefix path is what makes incremental typing fast: typing =foo=
-after =fo= rescores only the candidates that matched =fo=, not the
-full pool.  Subsumption uses both byte-prefix and parsed-term-set
-comparison (catches non-prefix AND-term additions and term reorders).
-OR queries (containing =|=) never participate.
+The refinement path is what makes incremental typing fast: typing =foo= after
+=fo= can rescore only candidates that matched =fo= plus later arrivals.
+Subsumption uses byte-prefix and parsed-term-set checks; unsafe forms fall back
+to a full scan.  Membership evidence is an optimization only.  Dropping it for
+the byte budget must not change result order or counts.
 
 For LRU details, =SharedIdx= refcounting, the subsumption rule, and
 the parsed-pattern caching, see =fzf-native/architecture.org= §
@@ -169,14 +165,15 @@ order via =sort='s stability.
 #+begin_src
   ┌────────────────────────────────────────────────────────────────────┐
   │ fzfa--multi-read (orchestrator)                               │
-  │   • per-source vectors: handles, sync-items, last-results,         │
-  │     rank, totals, filtered, last-gen                               │
-  │   • shared timer polls async generation counters                   │
+  │   • per-source structs: handle, request ID/key/output,              │
+  │     last result, rank, totals, filtered, last generation            │
+  │   • shared timer polls async snapshot generations                  │
   │   • collection lambda's 't action:                                 │
   │       for each source:                                             │
-  │         async → (fzf-native-async-candidates handle query limit)   │
+  │         async → fzfa--source-async-out (submit/status/snapshot)   │
   │         sync  → (fzf-native-score-all items query)                 │
-  │       update last-results[i], rank[i], filtered[i]                 │
+  │       pending/failed → preserve last result                        │
+  │       final → update result, rank, filtered, total                 │
   │       sort sources by rank (stable → declared order on tie)        │
   │       concat last-results in sorted order                          │
   │   • affixation-function pads candidates to a uniform column        │
@@ -352,14 +349,14 @@ Two timers, two purposes:
 
 | Timer                                         | Period | Purpose                                                     |
 |-----------------------------------------------+--------+-------------------------------------------------------------|
-| =fzfa-refresh-delay= (regular timer)     | 0.05s  | Polls =fzf-native-async-generation=. On change, *schedules an idle timer* (=run-with-idle-timer 0 nil=) to call =fzfa--frontend-exhibit=. Throttled by =fzfa-input-throttle=. |
+| =fzfa-refresh-delay= (regular timer)     | 0.05s  | Polls =:snapshot-generation= through metadata-only status. On change, *schedules an idle timer* (=run-with-idle-timer 0 nil=) to call =fzfa--frontend-exhibit=. Throttled by =fzfa-input-throttle=. |
 | =fzfa-input-debounce= (idle timer)       | 0.1s   | Self-healing: if a previous tick's exhibit was interrupted by =while-no-input=, this re-tries it after the user pauses typing.    |
 
 The double-indirection — regular timer detects, idle timer exhibits —
 is deliberate. Regular timer ticks count as pending input from the
 =while-no-input= perspective; calling =vertico--exhibit= directly from
-a regular timer trips that check and aborts every scoring run. Idle
-timers fire between events.
+a regular timer can interrupt status or snapshot materialization.  Native
+scoring continues independently.  Idle timers fire between events.
 
 =fzfa-input-throttle= (default 0.2s) caps how often the regular
 timer will actually schedule an exhibit. Streaming new candidates at
@@ -374,7 +371,7 @@ Format: =dir » idx/[sent](total) =
 | =dir=   | =(abbreviate-file-name default-directory)=                  |
 | =idx=   | =fzfa--frontend-index= (1-based; omitted on icomplete) |
 | =sent=  | =min(filtered, fzfa-max-candidates)=                   |
-| =total= | =cdr= of =fzf-native-async-stats= (full pool size)          |
+| =total= | Atomic status/snapshot metadata for the owned request. |
 
 Updated via =post-command-hook= so =idx= tracks live during
 navigation. =fzfa-max-candidates= (default 10 000) caps =sent= so
@@ -433,21 +430,22 @@ mid-typing.
 
 | Event                                      | Effect                                                  |
 |--------------------------------------------+---------------------------------------------------------|
-| C-side =gen= bumps                         | 50 ms regular timer detects → schedules idle-timer exhibit (subject to =fzfa-input-throttle=). |
-| Idle-timer exhibit fires                   | =fzfa--frontend-exhibit= calls into the active frontend; the completion table re-runs and picks up new data. |
+| Owned request's =:snapshot-generation= changes | 50 ms regular timer detects → schedules idle-timer exhibit (subject to =fzfa-input-throttle=). |
+| Idle-timer exhibit fires                       | =fzfa--frontend-exhibit= calls into the active frontend; the completion table polls status and materializes only a new authoritative snapshot. |
 
 ** Quit (=C-g= / ESC)
 
 | Event                                      | Effect                                                |
 |--------------------------------------------+-------------------------------------------------------|
-| User aborts =completing-read=              | =unwind-protect= runs: cancel timers, remove overlay, =fzf-native-async-stop= the handle (which tears down threads + arena — see fzf-native/architecture.org). |
+| User aborts =completing-read=              | =unwind-protect= runs: cancel timers, remove overlay, and =fzf-native-async-stop= each handle. Session-owned producer/reader/coordinator state and arena are destroyed; the process-wide native worker pool remains reusable. |
 
 * Concurrency model — quick reference (Elisp side)
 
 | Invariant                                                 | Why it holds                          |
 |-----------------------------------------------------------+---------------------------------------|
-| Idle-timer exhibits don't trip =while-no-input= inside =fzf-native-async-candidates=. | Idle timers don't count as pending input; regular timers do, which is why exhibits are *scheduled* by a regular timer but *fired* by an idle one. |
-| The Elisp side never blocks on the C scoring thread.      | =fzf-native-async-candidates= is non-blocking by contract — it returns the current snapshot immediately, regardless of scoring state. |
+| Idle-timer exhibits don't trip =while-no-input= around status/snapshot calls. | Idle timers don't count as pending input; regular timers do, which is why exhibits are *scheduled* by a regular timer but *fired* by an idle one. |
+| Stable redraw neither resubmits nor rematerializes.       | =fzfa-source= owns the full request key, native request ID, snapshot generation, and cached Elisp output. |
+| The Elisp side never blocks on the C scoring thread.      | Submit and status are non-blocking; snapshot copies only an already-published result and can be interrupted by pending input. |
 | Marginalia annotators don't pull candidates into a different completion style. | =fzfa-file= category routes file annotations through marginalia *and* keeps the completion style as =fzfa=. |
 
 * References
