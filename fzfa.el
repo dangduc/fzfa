@@ -1743,6 +1743,30 @@ DATA plist keys:
   :type 'function
   :group 'fzfa)
 
+(defun fzfa--candidates-kind (cands)
+  "Return the supported candidate source kind for CANDS.
+
+The result is `list', `zero', or `producer'.  A producer must be callable
+with the protocol arguments INPUT and CALLBACK.  Signal an error for every
+unsupported value or function arity."
+  (cond
+   ((functionp cands)
+    (pcase-let* ((`(,minimum . ,maximum) (func-arity cands))
+                 (accepts-two
+                  (and (<= minimum 2)
+                       (or (eq maximum 'many) (>= maximum 2)))))
+      (cond
+       ((zerop minimum) 'zero)
+       (accepts-two 'producer)
+       (t
+        (error (concat "fzfa: :candidates function must take no arguments "
+                       "or accept (INPUT CALLBACK); got arity %S")
+               (cons minimum maximum))))))
+   ((listp cands) 'list)
+   (t
+    (error "fzfa: :candidates must be list, zero-arg fn, or 2-arg fn, got %S"
+           cands))))
+
 (defun fzfa--normalize-candidates (cands)
   "Normalize CANDS to the (lambda (INPUT CALLBACK) ...) producer shape.
 
@@ -1753,21 +1777,15 @@ Accepted forms:
 - 2-arg function (lambda (INPUT CALLBACK) ...) → returned as-is
 
 Returns nil for nil input.  Signals on any other shape."
-  (cond
-   ((null cands) nil)
-   ((functionp cands)
-    (let ((min-args (car (func-arity cands))))
-      (cond
-       ((= min-args 0)
-        (let ((fn cands))
-          (lambda (_input callback) (funcall callback (funcall fn)))))
-       ((>= min-args 1) cands)
-       (t (error "fzfa: :candidates fn has unsupported arity %S" min-args)))))
-   ((listp cands)
-    (let ((lst cands))
-      (lambda (_input callback) (funcall callback lst))))
-   (t (error "fzfa: :candidates must be list, zero-arg fn, or 2-arg fn, got %S"
-             cands))))
+  (unless (null cands)
+    (pcase (fzfa--candidates-kind cands)
+      ('list
+       (let ((lst cands))
+         (lambda (_input callback) (funcall callback lst))))
+      ('zero
+       (let ((fn cands))
+         (lambda (_input callback) (funcall callback (funcall fn)))))
+      ('producer cands))))
 
 (defun fzfa--current-query (str)
   "Return the live query for a `completing-read' collection lambda.
