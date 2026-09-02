@@ -2668,7 +2668,8 @@ types something to re-tick the table arm.
 Inspects `timer-idle-list' for the scheduled timer rather than
 waiting for it to fire — `run-with-idle-timer 0 nil' needs idle
 events to elapse, which batch mode doesn't generate."
-  (let* ((refresh-fn (lambda () 'sentinel))
+  (let* ((refreshes 0)
+         (refresh-fn (lambda () (cl-incf refreshes)))
          (async-cb nil)                 ; captured callback, fired later
          (producer
           (lambda (_input cb)
@@ -2687,7 +2688,8 @@ events to elapse, which batch mode doesn't generate."
     ;; Scheduled an idle timer that wraps `refresh-fn'
     (should (= (length timer-idle-list) (1+ before)))
     (let ((tm (car timer-idle-list)))
-      (should (eq (timer--function tm) refresh-fn))
+      (apply (timer--function tm) (timer--args tm))
+      (should (= refreshes 1))
       (cancel-timer tm))))
 
 (ert-deftest fzfa-multi-candidates-fetch-sync-no-refresh ()
@@ -2776,7 +2778,8 @@ callers pass nil and take output verbatim."
 Same shape as `fzfa-multi-candidates-fetch-async-refresh' but
 exercises the underlying helper directly so the contract is
 locked even if the wrapper changes."
-  (let* ((refresh-fn (lambda () 'sentinel))
+  (let* ((refreshes 0)
+         (refresh-fn (lambda () (cl-incf refreshes)))
          (async-cb nil)
          (producer (lambda (_in cb) (setq async-cb cb)))
          (source (fzfa-make-source :spec `(:candidates ,producer)))
@@ -2787,7 +2790,24 @@ locked even if the wrapper changes."
     (should (equal (fzfa-source-snapshot source) '("alpha")))
     (should (= (length timer-idle-list) (1+ before)))
     (let ((tm (car timer-idle-list)))
-      (should (eq (timer--function tm) refresh-fn))
+      (apply (timer--function tm) (timer--args tm))
+      (should (= refreshes 1))
+      (cancel-timer tm))))
+
+(ert-deftest fzfa-source-fetch-queued-refresh-rechecks-token ()
+  "Cleanup after delivery must invalidate an already queued refresh."
+  (let* ((refreshes 0)
+         (async-cb nil)
+         (producer (lambda (_in cb) (setq async-cb cb)))
+         (source (fzfa-make-source :spec `(:candidates ,producer)))
+         (before (length timer-idle-list)))
+    (fzfa--source-fetch source "q" (lambda () (cl-incf refreshes)))
+    (funcall async-cb '("alpha"))
+    (should (= (length timer-idle-list) (1+ before)))
+    (let ((tm (car timer-idle-list)))
+      (fzfa-source--stop source)
+      (apply (timer--function tm) (timer--args tm))
+      (should (= refreshes 0))
       (cancel-timer tm))))
 
 (ert-deftest fzfa-source-fetch-sync-no-refresh ()
