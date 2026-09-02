@@ -2628,6 +2628,21 @@ status does not include a separate live-pool boundary."
   (or (plist-get status :pool-generation)
       (plist-get status :total)))
 
+(defun fzfa--source-async-candidates (src filter limit)
+  "Return FILTER's candidates for SRC, or t while no result is ready.
+
+This is the list-shaped adapter used by Helm.  It delegates to the
+status-first `fzfa--source-async-out' path, so an in-flight session request
+does not copy the preceding request's native candidate snapshot.  A final
+empty result returns nil.  A terminal failure remains a `(failed ...)' value
+so Helm can preserve its last completed list without scheduling retries.
+Helm callers also retain their last completed list when this function returns
+t for pending work."
+  (pcase (fzfa--source-async-out src filter limit)
+    ('t t)
+    (`(final ,candidates ,_filtered ,_total) candidates)
+    (`(pending . ,_total) t)
+    (`(failed ,error ,total) (list 'failed error total))))
 
 (defun fzfa--source-materialize-session-output (src handle request-id)
   "Build and cache REQUEST-ID's candidate output for SRC on HANDLE."
@@ -5372,10 +5387,9 @@ PATH is resolved against `default-directory' first."
                    fzfa-try-completion fzfa-all-completions
                    "Passthrough style for pre-scored async fzf completions."))
 
-    (advice-add 'fzf-native-async-start      :around #'fzfa--bridge-defcustoms)
-    (advice-add 'fzf-native-async-candidates :around #'fzfa--bridge-defcustoms)
-    (advice-add 'fzf-native-async-submit     :around #'fzfa--bridge-defcustoms)
-    (advice-add 'fzf-native-async-snapshot   :around #'fzfa--bridge-defcustoms)
+    (advice-add 'fzf-native-async-start    :around #'fzfa--bridge-defcustoms)
+    (advice-add 'fzf-native-async-submit   :around #'fzfa--bridge-defcustoms)
+    (advice-add 'fzf-native-async-snapshot :around #'fzfa--bridge-defcustoms)
 
     (with-eval-after-load 'embark
       (dolist (entry '((fzfa-file     . embark-file-map)
