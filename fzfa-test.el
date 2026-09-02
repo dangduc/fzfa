@@ -2810,6 +2810,18 @@ locked even if the wrapper changes."
       (should (= refreshes 0))
       (cancel-timer tm))))
 
+(ert-deftest fzfa-source-fetch-callback-after-stop-is-inert ()
+  "A producer callback arriving after cleanup must not mutate its source."
+  (let* ((async-cb nil)
+         (producer (lambda (_in cb) (setq async-cb cb)))
+         (source (fzfa-make-source :spec `(:candidates ,producer)))
+         (before (length timer-idle-list)))
+    (fzfa--source-fetch source "q" #'ignore)
+    (fzfa-source--stop source)
+    (funcall async-cb '("late"))
+    (should-not (fzfa-source-snapshot source))
+    (should (= (length timer-idle-list) before))))
+
 (ert-deftest fzfa-source-fetch-sync-no-refresh ()
   "Sync producer's inline callback does NOT schedule REFRESH-FN."
   (let* ((refresh-fn (lambda () 'sentinel))
