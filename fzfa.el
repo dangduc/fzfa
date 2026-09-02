@@ -600,17 +600,23 @@ After the frontend commits new candidates, invokes
 this is how the initial preview lands for slow async producers, since
 `post-command-hook' does not fire while the user waits idly for the
 first batch of results.  Subsequent typing then re-triggers preview
-through the usual post-command-hook / idle-timer path."
+through the usual post-command-hook / idle-timer path.
+
+Return non-nil only when a supported frontend completed its refresh."
   (when-let* ((win (active-minibuffer-window)))
     (with-selected-window win
-      (cond
-       ((bound-and-true-p vertico-mode)
-        (setq vertico--input t)
-        (vertico--exhibit))
-       ((bound-and-true-p icomplete-mode)
-        (fzfa--icomplete-exhibit)))
-      (when (functionp fzfa--preview-run-fn)
-        (funcall fzfa--preview-run-fn)))))
+      (let ((published
+             (cond
+              ((bound-and-true-p vertico-mode)
+               (setq vertico--input t)
+               (vertico--exhibit)
+               t)
+              ((bound-and-true-p icomplete-mode)
+               (fzfa--icomplete-exhibit)
+               t))))
+        (when (and published (functionp fzfa--preview-run-fn))
+          (funcall fzfa--preview-run-fn))
+        published))))
 
 (defun fzfa--frontend-push (ivy-push-fn)
   "Refresh the active completion display.
@@ -618,7 +624,8 @@ through the usual post-command-hook / idle-timer path."
 Under `ivy-mode' (push model) `funcall' IVY-PUSH-FN; otherwise hand
 off to `fzfa--frontend-exhibit' for the pull-model frontends.
 Designed to be passed straight to `run-with-idle-timer' with
-IVY-PUSH-FN as the trailing argument, or called directly inline."
+IVY-PUSH-FN as the trailing argument, or called directly inline.  Return
+non-nil only when the frontend completed a refresh."
   (if (bound-and-true-p ivy-mode)
       (funcall ivy-push-fn)
     (fzfa--frontend-exhibit)))
@@ -3724,52 +3731,76 @@ Returns non-nil iff a fetch was actually issued."
                  (fzfa--tag s idx candidate->source multi-p action))
                cands)))))
 
-(defun fzfa--multi-poll-bumped-p (sources-v)
-  "Non-nil iff any source in SOURCES-V has a fresh generation.
+(defun fzfa--multi-poll-bumps (sources-v)
+  "Return fresh generation observations for SOURCES-V.
 
-Walks each source's CURRENT handle (not a frozen snapshot — so
-post-restart handles get polled) and compares the live generation
-to the source's `last-gen' slot.  Does not commit; pair with
-`fzfa--multi-poll-commit' inside the same poll tick to keep the
-detect/push throttle correct (commit only when actually pushing,
-otherwise the bump signal is silently dropped)."
-  (cl-loop for src across sources-v
-           thereis (when-let* ((h (fzfa-source-handle src))
-                               (g (fzfa--poll-generation h)))
-                     (/= g (fzfa-source-last-gen src)))))
+Each entry is (SOURCE HANDLE GENERATION).  Capturing the exact handle and
+generation keeps a refresh from acknowledging a newer generation or a
+replacement handle that it did not display."
+  (cl-loop for source across sources-v
+           for handle = (fzfa-source-handle source)
+           for generation = (and handle (fzfa--poll-generation handle))
+           when (and generation
+                     (/= generation (fzfa-source-last-gen source)))
+           collect (list source handle generation)))
 
-(defun fzfa--multi-poll-commit (sources-v)
-  "Commit each SOURCES-V source's current generation to its `last-gen' slot.
+(defun fzfa--multi-poll-commit (bumps)
+  "Commit the successfully displayed generation observations in BUMPS.
 
-Call after `fzfa--multi-poll-bumped-p' returned non-nil and you've
-decided to fire the frontend push, so the next tick starts from
-the published baseline."
-  (cl-loop for src across sources-v do
-           (when-let* ((h (fzfa-source-handle src))
-                       (g (fzfa--poll-generation h)))
-             (setf (fzfa-source-last-gen src) g))))
+Only commit while a source still owns the observed handle.  Return non-nil
+when at least one observation was committed."
+  (let (committed)
+    (dolist (bump bumps)
+      (pcase-let ((`(,source ,handle ,generation) bump))
+        (when (and (eq handle (fzfa-source-handle source))
+                   (< (fzfa-source-last-gen source) generation))
+          (setf (fzfa-source-last-gen source) generation
+                committed t))))
+    committed))
 
-(defun fzfa--make-poll-fn (sources-v alive-p refresh-fn first-shown-p)
+(defun fzfa--make-poll-fn (sources-v alive-p refresh-fn first-shown-p
+                                     &optional schedule-fn)
   "Return a 0-arg poll closure for SOURCES-V.
 
-ALIVE-P / REFRESH-FN / FIRST-SHOWN-P are 0-arg functions.  Each tick
-the closure checks ALIVE-P, `fzfa--multi-poll-bumped-p', and
-`input-pending-p', then a `fzfa-input-throttle' gate that is
+ALIVE-P, REFRESH-FN, and FIRST-SHOWN-P are 0-arg functions.  REFRESH-FN
+must return non-nil only after it displays the observed candidates.
+SCHEDULE-FN accepts one 0-arg transaction; nil runs it immediately.
+
+Each tick checks ALIVE-P, `fzfa--multi-poll-bumps', and `input-pending-p',
+then a `fzfa-input-throttle' gate that is
 bypassed while FIRST-SHOWN-P returns nil — so cold sessions paint
 as soon as the producer + scoring delivers, without sitting through
-a throttle window on the empty buffer.  When all checks pass, commit
-the generations and call REFRESH-FN."
-  (let ((last-exhibit 0.0))
+a throttle window on the empty buffer.  A scheduled transaction rechecks
+liveness and input, refreshes the frontend, and then commits only the exact
+generations that the successful refresh displayed."
+  (let ((last-exhibit 0.0)
+        pending)
     (lambda ()
-      (when (and (funcall alive-p)
-                 (fzfa--multi-poll-bumped-p sources-v)
-                 (not (input-pending-p))
-                 (or (not (funcall first-shown-p))
-                     (>= (- (float-time) last-exhibit)
-                         fzfa-input-throttle)))
-        (fzfa--multi-poll-commit sources-v)
-        (setq last-exhibit (float-time))
-        (funcall refresh-fn)))))
+      (when (funcall alive-p)
+        (let ((bumps (fzfa--multi-poll-bumps sources-v)))
+          (when (and bumps
+                     (not pending)
+                     (not (input-pending-p))
+                     (or (not (funcall first-shown-p))
+                         (>= (- (float-time) last-exhibit)
+                             fzfa-input-throttle)))
+            (setq pending t)
+            (let (scheduled)
+              (unwind-protect
+                  (progn
+                    (funcall
+                     (or schedule-fn #'funcall)
+                     (lambda ()
+                       (setq pending nil)
+                       (when (and (funcall alive-p)
+                                  (not (input-pending-p))
+                                  (funcall refresh-fn)
+                                  (funcall alive-p))
+                         (when (fzfa--multi-poll-commit bumps)
+                           (setq last-exhibit (float-time))))))
+                    (setq scheduled t))
+                (unless scheduled
+                  (setq pending nil))))))))))
 
 (defun fzfa--multi-narrow->string (k)
   "Coerce narrow key value K (symbol, character, or string) to length-1 string."
@@ -4346,7 +4377,8 @@ Per-source plist keys:
                         ;; candidate body didn't change.  Force it so our
                         ;; `ivy-pre-prompt-function' lambda runs again with
                         ;; the freshest stats.
-                        (ivy--insert-prompt)))))))))
+                        (ivy--insert-prompt)
+                        t))))))))
          ;; Ivy action list for narrow dispatch.  One entry per
          ;; source's :narrow key (mutates `narrow-idx' and refreshes
          ;; via `ivy-push-multi'), plus a widen entry on
@@ -4566,9 +4598,10 @@ Per-source plist keys:
                  (fzfa--make-poll-fn
                   sources
                   frontend-owned-p
-                  (lambda ()
-                    (run-with-idle-timer 0 nil multi-refresh-fn))
-                  (lambda () first-cands-shown))))
+                  multi-refresh-fn
+                  (lambda () first-cands-shown)
+                  (lambda (transaction)
+                    (run-with-idle-timer 0 nil transaction)))))
           (add-hook 'post-command-hook refresh-overlay)
           (sit-for fzfa-refresh-delay)
           (setq result

@@ -507,8 +507,14 @@ and `fzfa-helm--read' (batch with bulk-stop)."
                               (gen (and h (fzfa--poll-generation h))))
                          (when (and gen
                                     (> gen (fzfa-source-last-gen source)))
-                           (setf (fzfa-source-last-gen source) gen)
-                           (helm-force-update)))))))
+                           (helm-force-update)
+                           ;; A refresh can run user callbacks.  A nested
+                           ;; Helm session or a command restart must leave
+                           ;; this generation available for the next tick.
+                           (when (and (funcall owner-p)
+                                      (eq h (fzfa-source-handle source))
+                                      (< (fzfa-source-last-gen source) gen))
+                             (setf (fzfa-source-last-gen source) gen))))))))
             (prog1
                 (cons
      (apply #'helm-make-source (or name "fzfa") 'helm-source-sync
@@ -1117,7 +1123,8 @@ for fuzzy-multi-source UX."
          (helm-refresh
           (lambda ()
             (when (funcall helm-owner-p)
-              (helm-force-update))))
+              (helm-force-update)
+              (funcall helm-owner-p))))
          ;; Per-source state collected during source construction.
          (handles nil)   ; reversed: list of fzf-native handles (async only)
          (stops nil)     ; reversed: list of 0-arg stop closures (async only)

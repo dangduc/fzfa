@@ -1560,6 +1560,60 @@ even when their extension is excluded from `fzfa-extensions'."
       (kill-buffer outer-origin)
       (kill-buffer nested-origin))))
 
+(ert-deftest fzfa-helm-poller-retries-update-that-loses-ownership ()
+  "A nested Helm session during display must leave the generation pending."
+  (let* ((result-buffer (generate-new-buffer " *fzfa Helm publish result*"))
+         (outer-origin (generate-new-buffer " *fzfa Helm publish outer*"))
+         (nested-origin (generate-new-buffer " *fzfa Helm publish nested*"))
+         (helm-alive-p t)
+         (helm-buffer result-buffer)
+         (helm-current-buffer outer-origin)
+         (helm-pattern "")
+         (helm-map (make-sparse-keymap))
+         (steal-owner t)
+         (updates 0)
+         poll candidates stop)
+    (unwind-protect
+        (cl-letf (((symbol-function 'fzfa-helm--ensure-loaded) #'ignore)
+                  ((symbol-function 'fzfa--spawn) (lambda (&rest _) 'handle))
+                  ((symbol-function 'helm-make-source)
+                   (lambda (_name _class &rest args) args))
+                  ((symbol-function 'run-with-timer)
+                   (lambda (_delay _repeat function &rest args)
+                     (setq poll (lambda () (apply function args)))
+                     'poll-timer))
+                  ((symbol-function 'cancel-timer) #'ignore)
+                  ((symbol-function 'fzfa-source--stop) #'ignore)
+                  ((symbol-function 'fzfa--poll-generation) (lambda (_) 9))
+                  ((symbol-function 'fzfa--source-async-candidates)
+                   (lambda (&rest _) nil))
+                  ((symbol-function 'helm-force-update)
+                   (lambda ()
+                     (cl-incf updates)
+                     (when steal-owner
+                       (setq helm-current-buffer nested-origin)))))
+          (pcase-let ((`(,source . ,stop-fn)
+                       (fzfa-helm--async-source-and-stop
+                        "source" "producer" "/tmp/" #'identity 10)))
+            (setq stop stop-fn
+                  candidates (plist-get source :candidates))
+            (funcall candidates)
+            (funcall poll)
+            (should (= updates 1))
+            (setq helm-current-buffer outer-origin
+                  steal-owner nil)
+            (funcall poll)
+            (should (= updates 2))
+            ;; The second update kept ownership, so this generation is done.
+            (funcall poll)
+            (should (= updates 2))
+            (funcall stop)
+            (setq stop nil)))
+      (when stop (funcall stop))
+      (kill-buffer result-buffer)
+      (kill-buffer outer-origin)
+      (kill-buffer nested-origin))))
+
 (ert-deftest fzfa-helm-poller-updates-only-claimed-session ()
   "A Helm poller must ignore unclaimed and nested invocations."
   (let* ((result-buffer (generate-new-buffer " *fzfa Helm poll result*"))
@@ -1878,6 +1932,81 @@ even when their extension is excluded from `fzfa-extensions'."
       (should (= (fzfa-source-last-gen src) 1))
       (should (= (fzfa-source-request-id src) 18))
       (should (fzfa-source-request-signature src)))))
+
+(ert-deftest fzfa-session-poller-retries-unpublished-generation ()
+  "A refresh that does not publish must leave its generation pending."
+  (let* ((src (fzfa-make-source :command "producer"))
+         (sources (vector src))
+         (refreshes 0)
+         (publish nil)
+         (fzfa-input-throttle 0)
+         poll)
+    (setf (fzfa-source-handle src) 'handle
+          (fzfa-source-last-gen src) 0)
+    (cl-letf (((symbol-function 'fzfa--poll-generation) (lambda (_) 1))
+              ((symbol-function 'input-pending-p) (lambda () nil)))
+      (setq poll
+            (fzfa--make-poll-fn
+             sources (lambda () t)
+             (lambda ()
+               (cl-incf refreshes)
+               publish)
+             (lambda () nil)))
+      (funcall poll)
+      (should (= refreshes 1))
+      (should (= (fzfa-source-last-gen src) 0))
+      (setq publish t)
+      (funcall poll)
+      (should (= refreshes 2))
+      (should (= (fzfa-source-last-gen src) 1)))))
+
+(ert-deftest fzfa-session-poller-commits-after-scheduled-publication ()
+  "A scheduled refresh must publish before its generation is committed."
+  (let* ((src (fzfa-make-source :command "producer"))
+         (sources (vector src))
+         (refreshes 0)
+         (fzfa-input-throttle 0)
+         transaction poll)
+    (setf (fzfa-source-handle src) 'handle
+          (fzfa-source-last-gen src) 0)
+    (cl-letf (((symbol-function 'fzfa--poll-generation) (lambda (_) 1))
+              ((symbol-function 'input-pending-p) (lambda () nil)))
+      (setq poll
+            (fzfa--make-poll-fn
+             sources (lambda () t)
+             (lambda ()
+               (cl-incf refreshes)
+               t)
+             (lambda () nil)
+             (lambda (callback) (setq transaction callback))))
+      (funcall poll)
+      (should transaction)
+      (should (= refreshes 0))
+      (should (= (fzfa-source-last-gen src) 0))
+      (funcall transaction)
+      (should (= refreshes 1))
+      (should (= (fzfa-source-last-gen src) 1)))))
+
+(ert-deftest fzfa-session-poller-does-not-commit-replaced-handle ()
+  "A refresh must not put an old generation on a replacement handle."
+  (let* ((src (fzfa-make-source :command "producer"))
+         (sources (vector src))
+         (fzfa-input-throttle 0)
+         poll)
+    (setf (fzfa-source-handle src) 'old-handle
+          (fzfa-source-last-gen src) 0)
+    (cl-letf (((symbol-function 'fzfa--poll-generation) (lambda (_) 1))
+              ((symbol-function 'input-pending-p) (lambda () nil)))
+      (setq poll
+            (fzfa--make-poll-fn
+             sources (lambda () t)
+             (lambda ()
+               (setf (fzfa-source-handle src) 'new-handle)
+               t)
+             (lambda () nil)))
+      (funcall poll)
+      (should (eq (fzfa-source-handle src) 'new-handle))
+      (should (= (fzfa-source-last-gen src) 0)))))
 
 (ert-deftest fzfa-session-generation-change-rematerializes-result ()
   "A new native snapshot generation invalidates fzfa's candidate cache."
