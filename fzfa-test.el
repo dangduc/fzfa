@@ -2147,6 +2147,122 @@ even when their extension is excluded from `fzfa-extensions'."
     (fzfa-source--stop src)
     (should (> (fzfa-source-prod-token src) initial))))
 
+(ert-deftest fzfa-source-stop-revokes-before-best-effort-cleanup ()
+  "A failed cleanup step must not retain ownership or skip later resources."
+  (let* ((src (fzfa-make-source
+               :candidates (lambda (_input _callback))))
+         (initial-token (fzfa-source-prod-token src))
+         calls states)
+    (setf (fzfa-source-handle src) 'native-handle
+          (fzfa-source-request-id src) 42
+          (fzfa-source-request-signature src) '("q" 10)
+          (fzfa-source-restart-timer src) 'restart-timer
+          (fzfa-source-retry-timer src) 'retry-timer
+          (fzfa-source-separator-overlays src) '(separator-overlay)
+          (fzfa-source-display-overlays src) '(display-overlay))
+    (cl-labels ((record (resource)
+                  (push resource calls)
+                  (push (list (fzfa-source-request-id src)
+                              (fzfa-source-handle src)
+                              (fzfa-source-restart-timer src)
+                              (fzfa-source-retry-timer src)
+                              (fzfa-source-prod-token src))
+                        states)))
+      (cl-letf (((symbol-function 'cancel-timer)
+                 (lambda (timer)
+                   (record timer)
+                   (when (eq timer 'restart-timer)
+                     (error "injected timer failure"))))
+                ((symbol-function 'delete-overlay)
+                 (lambda (overlay) (record overlay)))
+                ((symbol-function 'fzfa--defer-async-stop)
+                 (lambda (handle) (record handle))))
+        (should-not (fzfa-source--stop src))))
+    (should (equal (nreverse calls)
+                   '(restart-timer retry-timer separator-overlay
+                     display-overlay native-handle)))
+    (dolist (state states)
+      (should (equal (cl-subseq state 0 4) '(0 nil nil nil)))
+      (should (> (nth 4 state) initial-token)))))
+
+(ert-deftest fzfa-core-rolls-back-earlier-handle-on-spawn-failure ()
+  "If a later source cannot start, core must stop sources already started."
+  (let ((spawn-count 0)
+        stopped snapshots
+        (helm-mode nil)
+        (fzfa-preview-functions nil)
+        (fzfa-prompt-function (lambda (_data) nil)))
+    (cl-letf (((symbol-function 'fzfa--ensure-category-override) #'ignore)
+              ((symbol-function 'fzfa--default-dir)
+               (lambda () default-directory))
+              ((symbol-function 'fzfa--spawn)
+               (lambda (&rest _)
+                 (if (= (cl-incf spawn-count) 1)
+                     'first-handle
+                   (error "second spawn failed"))))
+              ((symbol-function 'fzfa--defer-async-stop)
+               (lambda (handle) (push handle stopped)))
+              ((symbol-function 'fzfa--sessions-push)
+               (lambda (&rest _) (cl-incf snapshots))))
+      (should-error
+       (fzfa--read
+        '((:name "one" :command "one" :action identity)
+          (:name "two" :command "two" :action identity))
+        :prompt "test: ")))
+    (should (= spawn-count 2))
+    (should (equal stopped '(first-handle)))
+    (should-not snapshots)))
+
+(ert-deftest fzfa-helm-source-rolls-back-after-construction-failure ()
+  "A public Helm source must stop its timer and handle if construction fails."
+  (let ((helm-map (make-sparse-keymap))
+        (fzfa-preview-key nil)
+        (fzfa-display-key nil)
+        cancelled stopped)
+    (cl-letf (((symbol-function 'fzfa--spawn)
+               (lambda (&rest _) 'public-handle))
+              ((symbol-function 'run-with-timer)
+               (lambda (&rest _) 'public-timer))
+              ((symbol-function 'helm-make-source)
+               (lambda (&rest _) (error "source construction failed")))
+              ((symbol-function 'cancel-timer)
+               (lambda (timer) (push timer cancelled)))
+              ((symbol-function 'fzfa--defer-async-stop)
+               (lambda (handle) (push handle stopped))))
+      (should-error
+       (fzfa-helm--async-source-and-stop
+        "test" "producer" "/tmp/" #'identity 10)))
+    (should (equal cancelled '(public-timer)))
+    (should (equal stopped '(public-handle)))))
+
+(ert-deftest fzfa-helm-multi-rolls-back-earlier-source-on-build-failure ()
+  "If Helm multi source two fails, source one must be stopped."
+  (let ((spawn-count 0)
+        stopped
+        (helm-map (make-sparse-keymap))
+        (helm-after-update-hook nil)
+        (helm-move-selection-after-hook nil)
+        (fzfa-preview-functions nil))
+    (cl-letf (((symbol-function 'fzfa-helm--ensure-loaded) #'ignore)
+              ((symbol-function 'fzfa--preview-handler)
+               (lambda (&rest _) nil))
+              ((symbol-function 'helm-make-source)
+               (lambda (_name _class &rest args) args))
+              ((symbol-function 'fzfa--spawn)
+               (lambda (&rest _)
+                 (if (= (cl-incf spawn-count) 1)
+                     'first-helm-handle
+                   (error "second Helm spawn failed"))))
+              ((symbol-function 'fzfa--defer-async-stop)
+               (lambda (handle) (push handle stopped))))
+      (should-error
+       (fzfa-helm--read
+        '((:name "one" :command "one" :action identity)
+          (:name "two" :command "two" :action identity))
+        :prompt "test: ")))
+    (should (= spawn-count 2))
+    (should (equal stopped '(first-helm-handle)))))
+
 (ert-deftest fzfa-source-restart-producer-fires-callback ()
   "`fzfa-source--restart' on a producer source fires the producer and
 updates snapshot, total, filtered, last-result."
