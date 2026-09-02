@@ -1743,6 +1743,21 @@ DATA plist keys:
   :type 'function
   :group 'fzfa)
 
+(defun fzfa--candidates-kind (cands)
+  "Return the existing candidate source kind for CANDS.
+
+Functions with a minimum arity of zero are `zero'; other functions follow
+the existing `producer' path.  Lists are `list'.  This mirrors
+`fzfa--normalize-candidates' without calling CANDS, because a producer can
+perform I/O or other visible work when it runs."
+  (cond
+   ((functionp cands)
+    (if (zerop (car (func-arity cands))) 'zero 'producer))
+   ((listp cands) 'list)
+   (t
+    (error "fzfa: :candidates must be list, zero-arg fn, or 2-arg fn, got %S"
+           cands))))
+
 (defun fzfa--normalize-candidates (cands)
   "Normalize CANDS to the (lambda (INPUT CALLBACK) ...) producer shape.
 

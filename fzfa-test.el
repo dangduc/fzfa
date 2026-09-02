@@ -19,6 +19,13 @@
 (require 'fzfa-hungry)
 (require 'fzfa-replay)
 (require 'fzfa-locate)
+(require 'fzfa-helm)
+
+(defvar helm-alive-p)
+(defvar helm-pattern)
+(defvar helm-map)
+(defvar helm-after-update-hook)
+(defvar helm-move-selection-after-hook)
 
 ;;; fzfa-hungry--deduplicate-dirs
 
@@ -1293,6 +1300,20 @@ even when their extension is excluded from `fzfa-extensions'."
       (funcall (fzfa-source-cands-fn src) "ignored"
                (lambda (cands) (setq got cands)))
       (should (equal got '("a" "b" "c"))))))
+
+(ert-deftest fzfa-candidates-kind-preserves-existing-function-classes ()
+  "Candidate classification must preserve normalization's existing split."
+  (let ((calls 0))
+    (should
+     (eq (fzfa--candidates-kind (lambda () (cl-incf calls))) 'zero))
+    (should
+     (eq (fzfa--candidates-kind (lambda (_input) (cl-incf calls)))
+         'producer))
+    (should
+     (eq (fzfa--candidates-kind
+          (lambda (_input _callback _extra) (cl-incf calls)))
+         'producer))
+    (should (zerop calls))))
 
 (ert-deftest fzfa-source-directory-falls-back-to-default ()
   "Constructor falls back to `default-directory' when none provided."
@@ -2831,6 +2852,93 @@ locked even if the wrapper changes."
     (fzfa--source-fetch source "q" refresh-fn)
     (should (equal (fzfa-source-snapshot source) '("x" "y")))
     (should (= (length timer-idle-list) before))))
+
+(ert-deftest fzfa-helm-producer-is-not-fired-during-construction ()
+  "Helm must issue one producer call for the first real fetch, not a probe."
+  (let* ((calls 0)
+         (callback nil)
+         (producer (lambda (_input cb)
+                     (cl-incf calls)
+                     (setq callback cb)))
+         (captured nil)
+         (test-helm-map (make-sparse-keymap))
+         (fzfa-preview-key nil)
+         (fzfa-display-key nil)
+         (before (length timer-idle-list)))
+    (cl-progv '(helm-map helm-pattern helm-alive-p)
+        (list test-helm-map "" t)
+      (cl-letf (((symbol-function 'fzfa-helm--ensure-loaded) #'ignore)
+                ((symbol-function 'helm-make-source)
+                 (lambda (&rest args) (setq captured args))))
+        (fzfa-helm-make-sync-source :name "probe" :items producer)
+        (should (= calls 0))
+        (let ((candidates (plist-get (cddr captured) :candidates))
+              (cleanup (plist-get (cddr captured) :cleanup)))
+          (funcall candidates)
+          (should (= calls 1))
+          (funcall cleanup)
+          (funcall callback '("late"))
+          (should (= (length timer-idle-list) before)))))))
+
+(ert-deftest fzfa-helm-multi-producer-construction-and-cleanup-lifecycle ()
+  "A Helm multi producer starts on fetch and becomes inert after cleanup."
+  (let* ((calls 0)
+         (callback nil)
+         (scheduled 0)
+         (original-maker (symbol-function 'fzfa-make-source))
+         (helm-alive-p t)
+         (helm-pattern "")
+         (helm-map (make-sparse-keymap))
+         (helm-after-update-hook nil)
+         (helm-move-selection-after-hook nil)
+         (fzfa-preview-key nil)
+         (fzfa-display-key nil)
+         runtime-source
+         token-before-cleanup
+         token-after-cleanup)
+    (cl-letf (((symbol-function 'fzfa-helm--ensure-loaded) #'ignore)
+              ((symbol-function 'fzfa--preview-handler)
+               (lambda (&rest _) nil))
+              ((symbol-function 'fzfa--sessions-push) #'ignore)
+              ((symbol-function 'fzfa-helm--cancel-stranded-follow-timer)
+               #'ignore)
+              ((symbol-function 'fzfa-make-source)
+               (lambda (&rest args)
+                 (setq runtime-source (apply original-maker args))))
+              ((symbol-function 'helm-make-source)
+               (lambda (_name _class &rest args) args))
+              ((symbol-function 'run-with-idle-timer)
+               (lambda (&rest _)
+                 (cl-incf scheduled)
+                 'fake-idle-timer))
+              ((symbol-function 'cancel-timer) #'ignore)
+              ((symbol-function 'helm)
+               (lambda (&rest args)
+                 (let* ((source-plist (car (plist-get args :sources)))
+                        (fetch (plist-get source-plist :candidates))
+                        (cleanup (plist-get source-plist :cleanup)))
+                   (should (= calls 0))
+                   (funcall fetch)
+                   (should (= calls 1))
+                   (setq token-before-cleanup
+                         (fzfa-source-prod-token runtime-source))
+                   (funcall cleanup)
+                   (setq token-after-cleanup
+                         (fzfa-source-prod-token runtime-source)
+                         helm-alive-p nil))
+                 nil)))
+      (fzfa-helm--read
+       `((:name "producer"
+          :candidates ,(lambda (_input cb)
+                         (cl-incf calls)
+                         (setq callback cb))
+          :action identity))
+       :prompt "test: "))
+    (should callback)
+    (should (> token-after-cleanup token-before-cleanup))
+    (funcall callback '("late"))
+    (should-not (fzfa-source-snapshot runtime-source))
+    (should (= scheduled 0))))
 
 (provide 'fzfa-test)
 ;;; fzfa-test.el ends here
