@@ -603,16 +603,7 @@ callback so helm re-reads candidates with the fresh snapshot."
             (fzfa-source--display-cycle source initial-char)
             (when helm-alive-p
               (setq helm-pattern (minibuffer-contents)))))
-         (stop (lambda ()
-                 (when-let* ((tm (fzfa-source-retry-timer source)))
-                   (cancel-timer tm)
-                   (setf (fzfa-source-retry-timer source) nil))
-                 (mapc #'delete-overlay
-                       (fzfa-source-separator-overlays source))
-                 (mapc #'delete-overlay
-                       (fzfa-source-display-overlays source))
-                 (setf (fzfa-source-separator-overlays source) nil
-                       (fzfa-source-display-overlays source) nil))))
+         (stop (lambda () (fzfa-source--stop source))))
     (apply #'helm-make-source (or name "fzfa") 'helm-source-sync
            :header-name
            (lambda (n)
@@ -1223,10 +1214,7 @@ for fuzzy-multi-source UX."
                                (if fired 'sync 'async))
                            'zero))))
                       (sync-stop
-                       (lambda ()
-                         (when-let* ((tm (fzfa-source-retry-timer source)))
-                           (cancel-timer tm)
-                           (setf (fzfa-source-retry-timer source) nil)))))
+                       (lambda () (fzfa-source--stop source))))
                  (aset sources-v i source)
                  (apply #'helm-make-source name 'helm-source-sync
                         :keymap (let ((map (make-sparse-keymap)))
