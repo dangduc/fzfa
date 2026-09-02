@@ -25,11 +25,24 @@
 (require 'fzfa)
 
 (defcustom fzfa-ugrep-command
-  "ugrep -RIn --no-heading %s ''"
+  (concat "ugrep -RIn --no-heading"
+          " --exclude='*.info' --exclude='*.info-*'"
+          " --exclude='emms/cache'"
+          " %s ''")
   "Shell command used by `fzfa-ugrep' for content search.
 
 A `%s' placeholder is filled with the max-columns flag derived from
-`fzfa-max-line-length'.  Output must be FILE:LINE:CONTENT."
+`fzfa-max-line-length'.  Output must be FILE:LINE:CONTENT.
+
+Ugrep's `-I' binary sniffer only inspects the file header, so files
+that start with plain ASCII but contain NUL bytes later slip through
+as text.  fzf-native 2.7+ rejects any producer output containing a
+NUL byte, so those files are excluded by path:
+
+- GNU Info files (`*.info' and `*.info-N' continuations) — header is
+  plain ASCII documentation, tag table at the end embeds NULs.
+- EMMS's `emms/cache' — opaque printed Lisp form that includes
+  NUL-carrying entries."
   :type 'string
   :group 'fzfa)
 
