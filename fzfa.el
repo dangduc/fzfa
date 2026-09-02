@@ -239,8 +239,8 @@ If nil, prefixing a term with ' switches that term to fuzzy matching.
 
 Read at the start of every scoring call.
 
-Propagated to `fzf-native-fuzzy' via `:around' advice on the
-`fzf-native' async entry points."
+Propagated to `fzf-native-fuzzy' by explicit bridges at fzfa's
+native call sites."
   :type 'boolean
   :group 'fzfa)
 
@@ -466,7 +466,8 @@ highlight already attached by the scorer."
             (lambda (cand)
               (if (or (null query) (string-empty-p query))
                   cand
-                (fzf-native-highlight-one cand query))))))
+                (fzfa--bridge-defcustoms
+                 #'fzf-native-highlight-one cand query))))))
   (funcall table string pred t))
 
 ;;; Frontend abstraction
@@ -2555,7 +2556,8 @@ A failed submit is terminal for this request signature.  It must not become
 an endless pending/resubmit loop, and nil must never reach snapshot because a
 nil request id means \"latest\" rather than \"this query\"."
   (condition-case err
-      (or (fzf-native-async-submit
+      (or (fzfa--bridge-defcustoms
+           #'fzf-native-async-submit
            handle query limit)
           '(failed "native matcher rejected request"))
     (error
@@ -2666,7 +2668,8 @@ t for pending work."
 (defun fzfa--source-materialize-session-output (src handle request-id)
   "Build and cache REQUEST-ID's candidate output for SRC on HANDLE."
   (let ((snapshot (while-no-input
-                    (fzf-native-async-snapshot handle request-id))))
+                    (fzfa--bridge-defcustoms
+                     #'fzf-native-async-snapshot handle request-id))))
     (cond
      ((eq snapshot t) t)
      ((and (eq (plist-get snapshot :state) 'complete)
@@ -2936,7 +2939,8 @@ can rewrite CMD/DIR before the shell fork."
                        (funcall fzfa-source-spawn-transform-function
                                 cmd dir))
                   (cons cmd dir))))
-    (fzf-native-async-start (car pair) (cdr pair))))
+    (fzfa--bridge-defcustoms
+     #'fzf-native-async-start (car pair) (cdr pair))))
 
 (defun fzfa-source--restart (source new-cmd refresh-fn)
   "Restart SOURCE's producer with NEW-CMD.
@@ -5417,10 +5421,6 @@ PATH is resolved against `default-directory' first."
                  '(fzfa
                    fzfa-try-completion fzfa-all-completions
                    "Passthrough style for pre-scored async fzf completions."))
-
-    (advice-add 'fzf-native-async-start    :around #'fzfa--bridge-defcustoms)
-    (advice-add 'fzf-native-async-submit   :around #'fzfa--bridge-defcustoms)
-    (advice-add 'fzf-native-async-snapshot :around #'fzfa--bridge-defcustoms)
 
     (with-eval-after-load 'embark
       (dolist (entry '((fzfa-file     . embark-file-map)

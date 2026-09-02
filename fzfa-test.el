@@ -2261,6 +2261,29 @@ unchanged through the per-source pipeline."
 
 ;;; Eager C-side highlight suppression — Chunk 6 (fussy pattern port)
 
+(ert-deftest fzfa-setup-does-not-change-direct-native-matching-options ()
+  "Initializing fzfa must not reconfigure unrelated fzf-native callers."
+  (skip-unless (fboundp 'fzf-native-score-all))
+  (let ((fzfa--setup-done nil)
+        (fzfa-extensions nil)
+        (completion-styles-alist (copy-tree completion-styles-alist))
+        (fzf-native-case-mode 'respect)
+        (fzfa-case-mode 'ignore)
+        (fzf-native-batch-highlight nil)
+        (fzfa-batch-highlight nil))
+    (fzfa--ensure-setup)
+    ;; The direct call keeps its caller-owned respect-case binding.
+    (should-not (fzf-native-score-all '("Foo") "foo"))
+    ;; fzfa's explicit bridge still applies its ignore-case policy.
+    (should (equal (fzfa--bridge-defcustoms
+                    #'fzf-native-score-all '("Foo") "foo")
+                   '("Foo")))
+    (dolist (fn '(fzf-native-async-start
+                  fzf-native-async-submit
+                  fzf-native-async-snapshot
+                  fzf-native-async-status))
+      (should-not (advice-member-p #'fzfa--bridge-defcustoms fn)))))
+
 (ert-deftest fzfa-batch-highlight-nil-suppresses-c-highlight ()
   "Binding `fzfa-batch-highlight' to nil makes `fzf-native-score-all'
 return faceless candidates — the bridge propagates the nil onto
@@ -2426,6 +2449,21 @@ candidate at the matched position."
          (completion-lazy-hilit-fn nil))
     (fzfa-all-completions "f" table nil 0)
     (let* ((ret (funcall completion-lazy-hilit-fn "find-file"))
+           (face (get-text-property 0 'face ret)))
+      (should (or (eq face 'completions-common-part)
+                  (and (listp face)
+                       (memq 'completions-common-part face)))))))
+
+(ert-deftest fzfa-all-completions-lazy-highlight-uses-fzfa-policy ()
+  "Lazy highlighting must use the same case policy as fzfa scoring."
+  (skip-unless (fboundp 'fzf-native-highlight-one))
+  (let* ((table (lambda (_str _pred _flag) '("Foo")))
+         (completion-lazy-hilit t)
+         (completion-lazy-hilit-fn nil)
+         (fzfa-case-mode 'ignore)
+         (fzf-native-case-mode 'respect))
+    (fzfa-all-completions "foo" table nil 0)
+    (let* ((ret (funcall completion-lazy-hilit-fn "Foo"))
            (face (get-text-property 0 'face ret)))
       (should (or (eq face 'completions-common-part)
                   (and (listp face)
