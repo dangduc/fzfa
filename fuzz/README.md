@@ -29,10 +29,14 @@ The targets are:
   It checks the documented Info and EMMS exclusions. If another late binary
   reaches the pipe, it checks that fzf-native rejects the NUL and fzfa reports
   the failure once.
+- `make live`: drive a real icomplete-vertical minibuffer. It types a query,
+  deletes it, checks the multi-line window after returning to empty input, and
+  checks that the temporary icomplete advice is removed at exit.
 
 `state` uses a fake clock and timer queue, but it calls fzfa's real state
-functions. `producer` uses the real native module and child processes. The two
-targets cover different failure modes; one is not a substitute for the other.
+functions. `producer` uses the real native module and child processes. `live`
+uses the real Emacs command loop. Together they cover different failure modes;
+one target is not a substitute for the others.
 
 ## Run locally
 
@@ -62,7 +66,14 @@ make state FZF_NATIVE_DIR=/path/to/fzf-native
 `producer` needs Python 3. `tools` skips with a clear message when `ugrep` is
 not installed.
 
-The state job covers Emacs 29.1, 30.1, and the current snapshot.
+The live target needs a display or a terminal. In a local terminal, use:
+
+```sh
+make live LIVE_EMACS_FLAGS=-nw
+```
+
+CI runs terminal Emacs inside a pseudo-terminal supplied by `script`.
+The state and live jobs cover Emacs 29.1, 30.1, and the current snapshot.
 
 ## Reproduce a failure
 
@@ -71,12 +82,14 @@ Every failure prints its seed and generated trace. Run one case from that seed:
 ```sh
 FZFA_FUZZ_SEED=123 make state CASES=1
 FZFA_FUZZ_SEED=123 make producer CASES=1
+FZFA_FUZZ_SEED=123 make live LIVE_CASES=1 LIVE_EMACS_FLAGS=-nw
 ```
 
 Useful controls are:
 
 - `CASES`: number of generated state or producer cases.
 - `STEPS`: operations in each producer-lifecycle state trace.
+- `LIVE_CASES`: number of real minibuffer sessions.
 - `FZFA_FUZZ_SEED`: first deterministic seed.
 
 The state lane currently labels the process-buffer `fzfa--print` ownership
