@@ -50,3 +50,37 @@ jobs:
           fi
           make -C fzf-async/fuzz compile selftest replay state \
             CASES="$cases" STEPS="$steps"
+
+  producer:
+    name: Native producer and tool boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fzf-async
+
+      - uses: actions/checkout@v4
+        with:
+          repository: dangduc/fzf-native
+          ref: "2.7"
+          path: fzf-native
+
+      - uses: jcs090218/setup-emacs@master
+        with:
+          version: 30.1
+
+      - name: Install ugrep
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ugrep
+
+      - name: Fuzz producer bytes and integration defaults
+        shell: bash
+        run: |
+          cases=100
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+            cases=1000
+          fi
+          make -C fzf-async/fuzz producer CASES="$cases"
+          make -C fzf-async/fuzz tools

@@ -1,4 +1,4 @@
-.PHONY: compile selftest replay state clean
+.PHONY: compile selftest replay state producer tools clean
 
 EMACS ?= emacs
 FZF_NATIVE_DIR ?= ../../fzf-native
@@ -9,6 +9,9 @@ ELISP_LOAD_PATH := -L .. -L . -L $(FZF_NATIVE_DIR)
 FUZZ_SRC := $(wildcard fzfa-fuzz-*.el)
 STATE_RUNNER := $(EMACS) -Q --batch $(ELISP_LOAD_PATH) \
 	-l fzfa-fuzz-core.el -l fzfa-fuzz-state.el
+NATIVE_RUNNER := $(EMACS) -Q --batch $(ELISP_LOAD_PATH) \
+	-l fzf-native -f fzf-native-load-dyn \
+	-l fzfa-fuzz-core.el -l fzfa-fuzz-producer.el
 
 compile: clean
 	$(EMACS) -Q --batch $(ELISP_LOAD_PATH) \
@@ -24,6 +27,14 @@ replay:
 state:
 	FZFA_FUZZ_CASES=$(CASES) FZFA_FUZZ_STEPS=$(STEPS) \
 	  $(STATE_RUNNER) -f fzfa-fuzz-state-batch
+
+producer:
+	FZFA_FUZZ_CASES=$(CASES) $(NATIVE_RUNNER) \
+	  -f fzfa-fuzz-producer-batch
+
+tools:
+	FZFA_FUZZ_CASES=$(CASES) $(NATIVE_RUNNER) \
+	  -f fzfa-fuzz-tools-batch
 
 clean:
 	rm -f *.elc
