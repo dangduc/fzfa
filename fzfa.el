@@ -145,6 +145,23 @@ Set to nil or 0 to disable the cap (may be slow for very large result sets)."
                  (integer :tag "Max candidates"))
   :group 'fzfa)
 
+(defcustom fzfa-default-minibuffer-max-candidates 10000
+  "Max candidates returned when the built-in *Completions* frontend is active.
+
+Emacs's `display-completion-list' renders every candidate into the
+*Completions* window on each refresh, so returning tens of thousands
+of candidates causes noticeable per-keystroke lag under eager display
+\(`completion-eager-display' on Emacs 31+).  This cap trims the list
+after fzf-native has scored it, so the user still sees the top-ranked
+candidates and can narrow past the cap by typing.
+
+Only takes effect when `fzfa--default-minibuffer-p' returns non-nil.
+Vertico / ivy / icomplete / helm sessions are unaffected — they respect
+`fzfa-max-candidates' alone.  Nil or 0 disables the extra cap."
+  :type '(choice (const  :tag "No cap" nil)
+                 (integer :tag "Max candidates"))
+  :group 'fzfa)
+
 (defcustom fzfa-refresh-delay 0.05
   "Seconds between polls for a new native result snapshot.
 
@@ -486,14 +503,41 @@ highlight already attached by the scorer."
                   cand
                 (fzfa--bridge-defcustoms
                  #'fzf-native-highlight-one cand query))))))
-  (funcall table string pred t))
+  (let ((result (funcall table string pred t)))
+    (if (and (fzfa--default-minibuffer-p)
+             (integerp fzfa-default-minibuffer-max-candidates)
+             (> fzfa-default-minibuffer-max-candidates 0)
+             (listp result)
+             (nthcdr fzfa-default-minibuffer-max-candidates result))
+        ;; `seq-take' returns a fresh list, which also protects our
+        ;; internal snapshot from Emacs's `(nconc all base-size)'
+        ;; mutation (same rationale as the copy-sequence in the
+        ;; collection lambda's empty-query arm).
+        (seq-take result fzfa-default-minibuffer-max-candidates)
+      result)))
 
 ;;; Frontend abstraction
+
+(defun fzfa--default-minibuffer-p ()
+  "Non-nil when the session uses Emacs's built-in *Completions* frontend.
+
+Gated on Emacs 31+ because the `completion-eager-display' /
+`completion-eager-update' / `minibuffer-visible-completions' machinery
+that makes the built-in frontend usable interactively landed there.
+Earlier Emacs also has *Completions* but only refreshes on TAB, which
+isn't the interactive-typing model fzfa targets."
+  (and (> emacs-major-version 30)
+       (minibufferp)
+       (not (or (bound-and-true-p vertico-mode)
+                (bound-and-true-p ivy-mode)
+                (bound-and-true-p icomplete-mode)
+                (bound-and-true-p helm-alive-p)))))
 
 (defun fzfa--frontend-index ()
   "Return the active completion UI's selection index (0-based), or nil.
 
-Returns nil for frontends without a selection index (e.g. icomplete)."
+Returns nil for frontends without a selection index (e.g. icomplete,
+default-minibuffer)."
   (cond
    ((bound-and-true-p vertico-mode) (max 0 vertico--index))
    ((bound-and-true-p ivy-mode) (and (boundp 'ivy--index) (max 0 ivy--index)))
@@ -519,7 +563,16 @@ Used for live preview (e.g. `fzfa-theme') and persistent-action
         (when (and (boundp 'ivy--all-candidates) ivy--all-candidates)
           (nth (max 0 ivy--index) ivy--all-candidates)))
        ((bound-and-true-p icomplete-mode)
-        (car (completion-all-sorted-completions)))))))
+        (car (completion-all-sorted-completions)))
+       ((fzfa--default-minibuffer-p)
+        ;; Point in the *Completions* buffer marks the user's navigated
+        ;; selection; when it hasn't been touched, fall back to the top of
+        ;; the sorted list (what would be inserted on TAB or RET).
+        (or (when-let* ((win (get-buffer-window "*Completions*" 'visible)))
+              (with-current-buffer (window-buffer win)
+                (and (fboundp 'completion-list-candidate-at-point)
+                     (car (completion-list-candidate-at-point)))))
+            (car (completion-all-sorted-completions))))))))
 
 (defun fzfa--icomplete-fit-mini-window ()
   "Grow the mini-window to fit `icomplete-overlay's `after-string'.
@@ -615,10 +668,28 @@ Return non-nil only when a supported frontend completed its refresh."
                t)
               ((bound-and-true-p icomplete-mode)
                (fzfa--icomplete-exhibit)
+               t)
+              ((fzfa--default-minibuffer-p)
+               (fzfa--default-minibuffer-refresh)
                t))))
         (when (and published (functionp fzfa--preview-run-fn))
           (funcall fzfa--preview-run-fn))
         published))))
+
+(defun fzfa--default-minibuffer-refresh ()
+  "Force the built-in *Completions* buffer to re-render current candidates.
+
+Called from the fzfa poll timer when a source's snapshot updates.
+Prefers Emacs 32+'s `completions--start-eager-display' (which schedules
+the render via `run-with-idle-timer' inside `while-no-input', keeping
+typing responsive) and falls back to the synchronous
+`minibuffer-completion-help' for older Emacs that still passes the
+version gate in `fzfa--default-minibuffer-p'."
+  (cond
+   ((fboundp 'completions--start-eager-display)
+    (completions--start-eager-display))
+   ((fboundp 'minibuffer-completion-help)
+    (minibuffer-completion-help))))
 
 (defun fzfa--frontend-push (ivy-push-fn)
   "Refresh the active completion display.

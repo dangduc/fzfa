@@ -1326,6 +1326,31 @@ I use this config when using ~fzfa~ with ~icomplete-vertical~.
   (fido-vertical-mode))
 #+end_src
 
+** ~minibuffer~ (Emacs 31+ eager display)
+
+#+HTML: <img src="./screenshots/minibuffer.png" alt="fzfa under Emacs's built-in *Completions* frontend" />
+
+Config I use when running ~fzfa~ against the built-in minibuffer:
+
+#+begin_src emacs-lisp :tangle yes
+(use-package minibuffer
+  :ensure nil
+  :config
+  (setq completions-detailed nil)
+  (setq completions-format 'one-column)
+  (setq completions-max-height 12)
+  (setq completions-sort 'historical)
+  (setq completion-auto-help t)
+  (setq completion-auto-select nil
+        minibuffer-visible-completions t)
+  (setq completion-eager-display t)
+  (setq completion-eager-update t))
+#+end_src
+
+Rendering the ~*Completions*~ window is proportional to how many
+candidates we return, so ~fzfa~ applies a separate cap for this
+frontend via ~fzfa-default-minibuffer-max-candidates~ (default
+~10000~).
 ** ~transient~
 A few transients are included in the ~transient~ extension (~fzfa-transient.el~).
 ~M-x fzfa-transient~ opens a width-adaptive top-level menu over every
