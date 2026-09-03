@@ -4,6 +4,11 @@ These tests exercise the boundaries where the recent fzfa bugs appeared. They
 live under `fuzz/`, are not loaded by the package, and do not replace any fzfa
 function.
 
+[`CONTRACTS.md`](CONTRACTS.md) records the historical failure witnesses,
+expected behavior, generator neighborhoods, and current coverage gaps.  A
+contract remains partial until a controlled broken implementation makes its
+oracle fail.
+
 The targets are:
 
 - `make compile`: byte-compile every fuzz harness and treat warnings as errors.
