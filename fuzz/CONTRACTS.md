@@ -313,8 +313,11 @@ controlled failure that its self-test rejects.
   different query lengths, no matches, one match, many matches, repeated
   exhibits, max-height caps, and nested advice installation.
 - **Evidence:** `9633ff6` and draft #23.
-- **Draft status:** `partial` in #23.  No-filter, no-fit, and stale-empty
-  controlled mutations currently pass.
+- **Draft status:** `qualified` in #23.  Input advances only after the expected
+  query renders.  Each observation records a sequence number and logical
+  candidate set.  Initial, narrow, and restored-empty renders are compared
+  causally, and controlled no-fit, no-filter, and stale-empty behaviors are
+  rejected.
 
 ## New behavior without a historical failure witness
 

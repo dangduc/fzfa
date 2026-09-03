@@ -29,9 +29,11 @@ The targets are:
   It checks the documented Info and EMMS exclusions. If another late binary
   reaches the pipe, it checks that fzf-native rejects the NUL and fzfa reports
   the failure once.
-- `make live`: drive a real icomplete-vertical minibuffer. It types a query,
-  deletes it, checks the multi-line window after returning to empty input, and
-  checks that the temporary icomplete advice is removed at exit.
+- `make live`: drive a real icomplete-vertical minibuffer. Each next key waits
+  for the prior query to render. The oracle checks initial growth, a smaller
+  narrowed candidate set, a fresh full empty-query render, and advice cleanup.
+  Three controlled canaries disable fitting, disable filtering, or reuse stale
+  empty-query candidates; all three must be rejected before generated cases run.
 
 `state` uses a fake clock and timer queue, but it calls fzfa's real state
 functions. `producer` uses the real native module and child processes. `live`
@@ -77,7 +79,9 @@ The state and live jobs cover Emacs 29.1, 30.1, and the current snapshot.
 
 ## Reproduce a failure
 
-Every failure prints its seed and generated trace. Run one case from that seed:
+Every failure prints its seed and generated trace. Live failures also include
+the sequence, query, candidate set, line count, and window height of every
+observed render. Run one case from that seed:
 
 ```sh
 FZFA_FUZZ_SEED=123 make state CASES=1

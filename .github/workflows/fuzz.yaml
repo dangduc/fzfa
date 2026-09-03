@@ -112,11 +112,22 @@ jobs:
         shell: bash
         env:
           TERM: xterm-256color
+          FZFA_FUZZ_RESULT_FILE: ${{ runner.temp }}/fzfa-live-${{ matrix.emacs-version }}.txt
         run: |
           cases=8
           if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
             cases=40
           fi
+          set +e
           script --quiet --return --command \
             "make -C fzf-async/fuzz live LIVE_CASES=$cases LIVE_EMACS_FLAGS=-nw" \
             /dev/null
+          status=$?
+          set -e
+          echo "----- live fuzz result -----"
+          if [[ -f "$FZFA_FUZZ_RESULT_FILE" ]]; then
+            cat "$FZFA_FUZZ_RESULT_FILE"
+          else
+            echo "No live fuzz result file was produced."
+          fi
+          exit "$status"
