@@ -82,5 +82,5 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
             cases=1000
           fi
-          make -C fzf-async/fuzz producer CASES="$cases"
+          make -C fzf-async/fuzz producer-selftest producer CASES="$cases"
           make -C fzf-async/fuzz tools

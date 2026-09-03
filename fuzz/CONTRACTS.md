@@ -179,8 +179,10 @@ controlled failure that its self-test rejects.
   `fzfa-session-running-status-reports-producer-failure-once`,
   `fzfa-producer-failure-with-partial-output-reports-once`, and
   `fzfa-session-end-to-end-reports-partial-producer-failure`.
-- **Draft status:** `partial` in #22.  The terminal result is checked, but
-  publishable interim results and the complete stable redraw value are not.
+- **Draft status:** `partial` in #22.  It now compares the complete stable
+  redraw value with the terminal result.  The stable-redraw canary changes a
+  count and is rejected.  The one-message failure assertion still lacks its
+  own controlled canary.
 
 ### FZFA-C08: fzfa matching settings remain local to an fzfa call
 
@@ -253,8 +255,10 @@ controlled failure that its self-test rejects.
   lines, partial final lines, NUL position, and nonzero exit.
 - **Evidence:** fzf-native 2.7's producer contract,
   `fzfa-async-submit-preserves-raw-byte-query`, and draft #22.
-- **Draft status:** `partial` in #22.  It validates the reader-done result but
-  can miss an invalid interim publication.
+- **Draft status:** `qualified` in #22.  A two-chunk producer is required to
+  publish the first chunk before the second arrives.  Every publishable result
+  is checked, and an injected NUL in that interim result is rejected.  Stable
+  redraws must equal the full terminal value.
 
 ### FZFA-C12: the configured line cap is part of producer behavior
 
@@ -269,8 +273,10 @@ controlled failure that its self-test rejects.
 - **Generator neighborhood:** Boundary lengths, multibyte display width versus
   byte length, backend kind, nil, zero, and positive caps.
 - **Evidence:** `fzfa--max-columns-flag` and draft #22's long-row category.
-- **Draft status:** `partial` in #22.  Generated cases currently bind the cap
-  to nil when the case omits the key, bypassing the default policy.
+- **Draft status:** `qualified` in #22.  Missing spec keys preserve the ambient
+  cap, while an explicit nil means unlimited.  Fixed rows at N-1, N, and N+1
+  distinguish positive exclusion, negative truncation, and unlimited input.
+  The self-test recreates the old implicit-nil mistake and rejects it.
 
 ### FZFA-C13: the ugrep adapter keeps valid output while excluding known NUL paths
 
@@ -286,8 +292,10 @@ controlled failure that its self-test rejects.
 - **Generator neighborhood:** NUL near and far from the header, matching and
   nonmatching normal files, spaces in paths, and continuation suffixes.
 - **Evidence:** `90f721a` and draft #22's tools lane.
-- **Draft status:** `partial` in #22.  The negative assertions lack the normal
-  file as a positive control.
+- **Draft status:** `qualified` in #22.  The command must exit zero and a unique
+  normal-file sentinel must appear in both raw stdout and final candidates
+  before exclusions are checked.  Separate canaries remove each positive
+  observation and are rejected.
 
 ### FZFA-C14: live icomplete growth follows a fresh render
 

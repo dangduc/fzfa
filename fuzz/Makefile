@@ -1,4 +1,4 @@
-.PHONY: compile selftest replay state producer tools clean
+.PHONY: compile selftest replay state producer-selftest producer tools clean
 
 EMACS ?= emacs
 FZF_NATIVE_DIR ?= ../../fzf-native
@@ -27,6 +27,9 @@ replay:
 state:
 	FZFA_FUZZ_CASES=$(CASES) FZFA_FUZZ_STEPS=$(STEPS) \
 	  $(STATE_RUNNER) -f fzfa-fuzz-state-batch
+
+producer-selftest:
+	$(NATIVE_RUNNER) -f fzfa-fuzz-producer-selftest-batch
 
 producer:
 	FZFA_FUZZ_CASES=$(CASES) $(NATIVE_RUNNER) \
