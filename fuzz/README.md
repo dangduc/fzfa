@@ -12,6 +12,9 @@ oracle fail.
 The targets are:
 
 - `make compile`: byte-compile every fuzz harness and treat warnings as errors.
+- `make selftest`: require generated producer traces to reach their intended
+  race witnesses, then inject eight controlled defects and require the matching
+  state oracle to reject each one.
 - `make replay`: run small fixed regression cases.
 - `make state`: generate candidate-list mutations, late producer callbacks,
   restart/stop races, stale poll publications, and message ownership contexts.
@@ -32,7 +35,7 @@ parent/
 From `fzf-async/fuzz`:
 
 ```sh
-make replay state
+make selftest replay state
 ```
 
 If fzf-native is elsewhere, pass it explicitly:

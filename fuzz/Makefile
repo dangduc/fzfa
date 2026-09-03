@@ -1,4 +1,4 @@
-.PHONY: compile replay state clean
+.PHONY: compile selftest replay state clean
 
 EMACS ?= emacs
 FZF_NATIVE_DIR ?= ../../fzf-native
@@ -14,6 +14,9 @@ compile: clean
 	$(EMACS) -Q --batch $(ELISP_LOAD_PATH) \
 	  --eval "(setq byte-compile-error-on-warn t)" \
 	  -f batch-byte-compile $(FUZZ_SRC)
+
+selftest:
+	$(STATE_RUNNER) -f fzfa-fuzz-state-selftest-batch
 
 replay:
 	$(STATE_RUNNER) -f fzfa-fuzz-replay-batch

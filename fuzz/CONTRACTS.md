@@ -41,9 +41,11 @@ candidate, not automatically an fzfa bug.
 - `gap`: no draft fuzz lane exercises the contract.
 - `known product gap`: the desired contract is recorded, but current fzfa is
   known not to satisfy it in every context.
+- `qualified`: the generator reaches the witness and the named oracle rejects
+  a controlled broken behavior.
 
-No row is marked `covered` during phase one.  Coverage requires the mutation
-qualification planned for the next phase.
+Phase-two qualification is recorded per row.  A qualified row names the
+controlled failure that its self-test rejects.
 
 ## Historical contract matrix
 
@@ -60,9 +62,9 @@ qualification planned for the next phase.
   permutations, duplicate candidate strings, and text properties.
 - **Evidence:** `fzfa-source-fetch-stale-callback-discarded` and the token
   checks added around `fzfa--source-fetch`.
-- **Draft status:** `partial` in #21.  The current model can alias callback
-  values, so a destructive publication mutation can corrupt expected and
-  actual state together.
+- **Draft status:** `qualified` in #21.  Expected callback values are copied
+  before delivery.  The self-test rejects both an aliased snapshot mutation
+  and a stale callback that publishes.
 
 ### FZFA-C02: stopped sources are inert
 
@@ -79,9 +81,9 @@ qualification planned for the next phase.
 - **Evidence:** `f0fd0e0`, `e712837`,
   `fzfa-source-fetch-queued-refresh-rechecks-token`, and
   `fzfa-source-fetch-callback-after-stop-is-inert`.
-- **Draft status:** `partial` in #21.  The final teardown sweep exercises the
-  contract, but most random operations after the first stop repeat inert work
-  instead of exploring live transitions.
+- **Draft status:** `qualified` in #21.  Generated traces end at the first stop,
+  a reachability check requires a queued refresh at stop, and the self-test
+  rejects a late publication after teardown.
 
 ### FZFA-C03: classifying a producer must not run it
 
@@ -212,8 +214,11 @@ qualification planned for the next phase.
   operation above.
 - **Evidence:** `836ae54` and the empty-query copies in the Ivy and pull-model
   collection paths.
-- **Draft status:** `partial` in #21.  It snapshots expectations only after the
-  production table runs and does not assert complete second-lookup semantics.
+- **Draft status:** `qualified` in #21.  The oracle builds independent expected
+  strings and list spines before the table runs, requires every mutation to
+  change its input, and compares the first result, cached snapshots, and second
+  result including properties and duplicates.  Its self-test rejects nil
+  results, stripped properties, and a result that aliases the snapshot.
 
 ### FZFA-C10: user messages respect minibuffer ownership
 
@@ -228,9 +233,10 @@ qualification planned for the next phase.
 - **Generator neighborhood:** The three contexts above, owner replacement,
   nested minibuffers, buffer death, and errors during reporting.
 - **Evidence:** `e04916c` and the draft #21 message ownership harness.
-- **Draft status:** `known product gap` for the worker-buffer context and
-  `partial` in #21.  Its current oracle ignores recorded event buffers and
-  accepts more than the exact known failure shape.
+- **Draft status:** `known product gap` for the worker-buffer context; its #21
+  oracle is `qualified`.  All three contexts run deterministically.  The known
+  exception must match one exact event sequence, and the self-test rejects a
+  partial repair that emits the inline cue from the worker buffer.
 
 ### FZFA-C11: the producer seam preserves valid records and rejects invalid tails
 

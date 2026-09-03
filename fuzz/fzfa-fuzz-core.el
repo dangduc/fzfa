@@ -14,6 +14,8 @@
 (require 'cl-lib)
 (require 'fzfa)
 
+(define-error 'fzfa-fuzz-failure "Fzfa fuzz failure")
+
 (cl-defstruct (fzfa-fuzz-rng (:constructor fzfa-fuzz-rng-create))
   state)
 
@@ -50,8 +52,28 @@
 
 (defun fzfa-fuzz--fail (seed trace format-string &rest args)
   "Signal a fuzz failure with SEED, TRACE, and FORMAT-STRING with ARGS."
-  (error "Fzfa fuzz failure\nseed: %s\ntrace: %S\n%s"
-         seed trace (apply #'format format-string args)))
+  (signal
+   'fzfa-fuzz-failure
+   (list (format "Fzfa fuzz failure\nseed: %s\ntrace: %S\n%s"
+                 seed trace (apply #'format format-string args)))))
+
+(defun fzfa-fuzz--expect-detection (name message-pattern function)
+  "Require FUNCTION's oracle to kill canary NAME.
+
+Only `fzfa-fuzz-failure' counts as detection.  MESSAGE-PATTERN must match the
+failure so a canary cannot pass because an unrelated assertion happened to
+fire."
+  (condition-case err
+      (progn
+        (funcall function)
+        (error "Fzfa fuzz canary survived: %s" name))
+    (fzfa-fuzz-failure
+     (let ((message (error-message-string err)))
+       (unless (string-match-p message-pattern message)
+         (error "Fzfa fuzz canary %s hit the wrong oracle: %s"
+                name message))
+       (princ (format "KILLED canary %s\n" name))
+       t))))
 
 (defun fzfa-fuzz--proper-list-p (value)
   "Return non-nil when VALUE is a finite proper list."

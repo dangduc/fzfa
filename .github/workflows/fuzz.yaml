@@ -48,5 +48,5 @@ jobs:
             cases=5000
             steps=100
           fi
-          make -C fzf-async/fuzz compile replay state \
+          make -C fzf-async/fuzz compile selftest replay state \
             CASES="$cases" STEPS="$steps"
