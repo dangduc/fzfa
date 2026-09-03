@@ -38,6 +38,9 @@
 (defvar-local fzfa-fuzz-live--expected-query nil)
 (defvar-local fzfa-fuzz-live--target-query nil)
 (defvar-local fzfa-fuzz-live--full-candidates nil)
+(defvar-local fzfa-fuzz-live--pending-actions nil)
+(defvar-local fzfa-fuzz-live--remaining-actions-cell nil)
+(defvar-local fzfa-fuzz-live--event-log-cell nil)
 (defvar-local fzfa-fuzz-live--initial-observation nil)
 (defvar-local fzfa-fuzz-live--narrow-observation nil)
 (defvar-local fzfa-fuzz-live--failure-cell nil)
@@ -79,11 +82,12 @@
     (setq copy (plist-put copy :candidates (copy-sequence candidates)))
     (plist-put copy :candidate-count (length candidates))))
 
-(defun fzfa-fuzz-live--fail-driver (format-string &rest args)
-  "Record a driver failure and arrange for the minibuffer to quit."
+(defun fzfa-fuzz-live--fail-driver (oracle format-string &rest args)
+  "Record stable ORACLE and FORMAT-STRING, then make the minibuffer quit."
   (unless (car fzfa-fuzz-live--failure-cell)
     (setcar fzfa-fuzz-live--failure-cell
-            (apply #'format format-string args)))
+            (list :oracle oracle
+                  :message (apply #'format format-string args))))
   (setq unread-command-events (list 7)))
 
 (defun fzfa-fuzz-live--deliver-event (buffer event)
@@ -103,6 +107,39 @@
           (run-with-idle-timer 0 nil #'fzfa-fuzz-live--deliver-event
                                (current-buffer) event))))
 
+(defun fzfa-fuzz-live--queue-next-action ()
+  "Queue the next input action recorded in the current trace."
+  ;; An automatic initial exhibit can run before the setup kick's idle timer.
+  ;; Do not consume a recorded action until the timer slot is actually free.
+  (unless fzfa-fuzz-live--driver-timer
+    (if (null fzfa-fuzz-live--pending-actions)
+        (fzfa-fuzz-live--fail-driver
+         'trace-actions-exhausted
+         "live trace ran out of input actions in phase %S"
+         fzfa-fuzz-live--phase)
+      (let ((action (car fzfa-fuzz-live--pending-actions)))
+        (if (and (eq (car-safe action) 'key)
+                 (integerp (nth 1 action))
+                 (stringp (nth 2 action))
+                 (null (nthcdr 3 action)))
+            (progn
+              (setq fzfa-fuzz-live--pending-actions
+                    (cdr fzfa-fuzz-live--pending-actions))
+              (setcar fzfa-fuzz-live--remaining-actions-cell
+                      (copy-tree fzfa-fuzz-live--pending-actions))
+              (setcar fzfa-fuzz-live--event-log-cell
+                      (append
+                       (car fzfa-fuzz-live--event-log-cell)
+                       (list
+                        (list :phase fzfa-fuzz-live--phase
+                              :after-sequence
+                              fzfa-fuzz-live--observation-sequence
+                              :action (copy-tree action)))))
+              (fzfa-fuzz-live--queue-event (nth 1 action) (nth 2 action)))
+          (fzfa-fuzz-live--fail-driver
+           'malformed-trace-action
+           "malformed live input action: %S" action))))))
+
 (defun fzfa-fuzz-live--advance-driver (observation)
   "Advance the live input handshake after OBSERVATION."
   (let ((query (plist-get observation :query))
@@ -120,16 +157,12 @@
          (setq fzfa-fuzz-live--initial-observation observation
                fzfa-fuzz-live--phase 'narrowing)
          (setcar fzfa-fuzz-live--progress-cell 'initial)
-         (fzfa-fuzz-live--queue-event
-          (aref fzfa-fuzz-live--target-query 0)
-          (substring fzfa-fuzz-live--target-query 0 1))))
+         (fzfa-fuzz-live--queue-next-action)))
       ('narrowing
        (when (equal query fzfa-fuzz-live--expected-query)
          (let ((length (length query)))
            (if (< length (length fzfa-fuzz-live--target-query))
-               (fzfa-fuzz-live--queue-event
-                (aref fzfa-fuzz-live--target-query length)
-                (substring fzfa-fuzz-live--target-query 0 (1+ length)))
+               (fzfa-fuzz-live--queue-next-action)
              (if (and (member fzfa-fuzz-live--target-query candidates)
                       (> (length candidates) 0)
                       (< (length candidates)
@@ -138,15 +171,14 @@
                    (setq fzfa-fuzz-live--narrow-observation observation
                          fzfa-fuzz-live--phase 'widening)
                    (setcar fzfa-fuzz-live--progress-cell 'narrow)
-                   (fzfa-fuzz-live--queue-event
-                    127 (substring query 0 (1- length))))
+                   (fzfa-fuzz-live--queue-next-action))
                (fzfa-fuzz-live--fail-driver
+                'narrow-candidates-not-reduced
                 "narrow render did not reduce candidates: %S" observation))))))
       ('widening
        (when (equal query fzfa-fuzz-live--expected-query)
          (if (> (length query) 0)
-             (fzfa-fuzz-live--queue-event
-              127 (substring query 0 (1- (length query))))
+             (fzfa-fuzz-live--queue-next-action)
            (let* ((initial fzfa-fuzz-live--initial-observation)
                   (fresh (> (plist-get observation :sequence)
                             (plist-get
@@ -162,8 +194,9 @@
                  (progn
                    (setq fzfa-fuzz-live--phase 'exiting)
                    (setcar fzfa-fuzz-live--progress-cell 'empty-restored)
-                   (fzfa-fuzz-live--queue-event 13 ""))
+                   (fzfa-fuzz-live--queue-next-action))
                (fzfa-fuzz-live--fail-driver
+                'empty-candidates-not-restored
                 (concat "fresh empty render did not restore the full "
                         "non-collapsed display: %S")
                 observation)))))))))
@@ -219,6 +252,7 @@
               ((eq buffer (window-buffer window))))
     (with-current-buffer buffer
       (fzfa-fuzz-live--fail-driver
+       'watchdog-timeout
        "live case timed out in phase %S waiting for query %S"
        fzfa-fuzz-live--phase fzfa-fuzz-live--expected-query))))
 
@@ -247,6 +281,12 @@
     (setq-local fzfa-fuzz-live--target-query (plist-get config :target))
     (setq-local fzfa-fuzz-live--full-candidates
                 (copy-sequence (plist-get config :candidates)))
+    (setq-local fzfa-fuzz-live--pending-actions
+                (copy-tree (plist-get config :actions)))
+    (setq-local fzfa-fuzz-live--remaining-actions-cell
+                (plist-get config :remaining-actions-cell))
+    (setq-local fzfa-fuzz-live--event-log-cell
+                (plist-get config :event-log-cell))
     (setq-local fzfa-fuzz-live--failure-cell
                 (plist-get config :failure-cell))
     (setq-local fzfa-fuzz-live--progress-cell
@@ -315,32 +355,99 @@
          (target (fzfa-fuzz-live--target-query rng)))
     (cons target (fzfa-fuzz-live--candidates rng target))))
 
-(defun fzfa-fuzz-live--case (seed)
-  "Run one real icomplete minibuffer case for SEED."
-  (let* ((inputs (fzfa-fuzz-live--case-inputs seed))
-         (target-query (car inputs))
-         (candidates (cdr inputs))
-         (events (append (string-to-list target-query)
-                         (make-list (length target-query) 127)
-                         (list 13)))
-         (trace (list :target 'live-icomplete :query target-query
-                      :candidate-count (length candidates)
-                      :events events))
+(defun fzfa-fuzz-live--input-actions (target)
+  "Return recorded key actions that type and delete TARGET, then accept."
+  (append
+   (cl-loop for index from 0 below (length target)
+            collect (list 'key (aref target index)
+                          (substring target 0 (1+ index))))
+   (cl-loop for length from (1- (length target)) downto 0
+            collect (list 'key 127 (substring target 0 length)))
+   '((key 13 ""))))
+
+(defun fzfa-fuzz-live--trace (root-seed case-seed)
+  "Generate a live trace for ROOT-SEED and CASE-SEED."
+  (let* ((inputs (fzfa-fuzz-live--case-inputs case-seed))
+         (target (car inputs))
+         (candidates (cdr inputs)))
+    (fzfa-fuzz-trace-create
+     'live-icomplete root-seed case-seed
+     (list :frontend 'icomplete-vertical
+           :target target
+           :candidates (fzfa-fuzz--copy-strings candidates)
+           :icomplete-prospects-height 10
+           :max-mini-window-height 10
+           :watchdog-seconds fzfa-fuzz-live--watchdog-seconds)
+     (fzfa-fuzz-live--input-actions target))))
+
+(defun fzfa-fuzz-live--decode-trace (trace)
+  "Validate TRACE and return its live-minibuffer inputs."
+  (let* ((initial (plist-get trace :initial-state))
+         (keys
+          (fzfa-fuzz-trace--plist-keys
+           initial "live-icomplete initial state"
+           '(:frontend :target :candidates :icomplete-prospects-height
+             :max-mini-window-height :watchdog-seconds)))
+         (frontend (plist-get initial :frontend))
+         (target (plist-get initial :target))
+         (candidates (plist-get initial :candidates))
+         (prospects-height (plist-get initial :icomplete-prospects-height))
+         (max-height (plist-get initial :max-mini-window-height))
+         (watchdog (plist-get initial :watchdog-seconds))
+         (actions (plist-get trace :actions)))
+    (fzfa-fuzz-trace--require-keys
+     keys
+     '(:frontend :target :candidates :icomplete-prospects-height
+       :max-mini-window-height :watchdog-seconds)
+     "live-icomplete initial state")
+    (unless (and (eq frontend 'icomplete-vertical)
+                 (stringp target) (> (length target) 0)
+                 (fzfa-fuzz--proper-list-p candidates)
+                 (cl-every #'stringp candidates)
+                 (member target candidates)
+                 (integerp prospects-height) (> prospects-height 0)
+                 (numberp max-height) (> max-height 0)
+                 (numberp watchdog) (> watchdog 0)
+                 (equal actions (fzfa-fuzz-live--input-actions target)))
+      (error "Malformed live icomplete trace: %S" trace))
+    (list :target target :candidates candidates
+          :icomplete-prospects-height prospects-height
+          :max-mini-window-height max-height
+          :watchdog-seconds watchdog :actions actions)))
+
+(defun fzfa-fuzz-live--case (trace)
+  "Run one real icomplete minibuffer TRACE."
+  (let* ((description (fzfa-fuzz-live--decode-trace trace))
+         (seed (plist-get trace :case-seed))
+         (target-query (plist-get description :target))
+         (candidates
+          (fzfa-fuzz--copy-strings
+           (plist-get description :candidates)))
+         (actions (plist-get description :actions))
          (failure-cell (list nil))
          (progress-cell (list 'not-started))
+         (remaining-actions-cell (list (copy-tree actions)))
+         (event-log-cell (list nil))
          (initial-count fzfa--icomplete-exhibit-advice-count)
          (initial-member
           (advice-member-p #'fzfa--icomplete-exhibit-fit-advice
                            'icomplete-exhibit))
          (fzfa-fuzz-live--observations nil)
          (fzfa-fuzz-live--observation-sequence 0)
-         (icomplete-prospects-height 10)
+         (icomplete-prospects-height
+          (plist-get description :icomplete-prospects-height))
          (icomplete-show-matches-on-no-input t)
          (icomplete-compute-delay 0)
-         (max-mini-window-height 10)
+         (max-mini-window-height
+          (plist-get description :max-mini-window-height))
          (resize-mini-windows t)
+         (fzfa-fuzz-live--watchdog-seconds
+          (plist-get description :watchdog-seconds))
          (fzfa-fuzz-live--driver-config
           (list :target target-query :candidates candidates
+                :actions actions
+                :remaining-actions-cell remaining-actions-cell
+                :event-log-cell event-log-cell
                 :failure-cell failure-cell :progress-cell progress-cell))
          (minibuffer-setup-hook
           (cons #'fzfa-fuzz-live--driver-setup minibuffer-setup-hook))
@@ -358,79 +465,120 @@
                      :require-match nil))
             (quit
              (if (car failure-cell)
-                 (fzfa-fuzz--fail
-                  seed trace "%s\nobservations: %S"
-                  (car failure-cell) fzfa-fuzz-live--observations)
+                 (let ((failure (car failure-cell)))
+                   (fzfa-fuzz--fail-observation-key
+                    seed trace (plist-get failure :oracle)
+                    'completed-handshake
+                    (list :driver-failure failure
+                          :queued-actions (car event-log-cell)
+                          :remaining-actions (car remaining-actions-cell)
+                          :observations fzfa-fuzz-live--observations)
+                    "%s" (plist-get failure :message)))
                (signal (car err) (cdr err)))))
           (when (car failure-cell)
-            (fzfa-fuzz--fail
-             seed trace "%s\nobservations: %S"
-             (car failure-cell) fzfa-fuzz-live--observations))
+            (let ((failure (car failure-cell)))
+              (fzfa-fuzz--fail-observation-key
+               seed trace (plist-get failure :oracle)
+               'completed-handshake
+               (list :driver-failure failure
+                     :queued-actions (car event-log-cell)
+                     :remaining-actions (car remaining-actions-cell)
+                     :observations fzfa-fuzz-live--observations)
+               "%s" (plist-get failure :message))))
           (unless (eq (car progress-cell) 'empty-restored)
-            (fzfa-fuzz--fail
-             seed trace "live handshake exited at %S\nobservations: %S"
-             (car progress-cell) fzfa-fuzz-live--observations))
+            (fzfa-fuzz--fail-observation
+             seed trace 'empty-restored
+             (list :progress (car progress-cell)
+                   :queued-actions (car event-log-cell)
+                   :remaining-actions (car remaining-actions-cell)
+                   :observations fzfa-fuzz-live--observations)
+             "live handshake exited before restoring empty input"))
+          (unless (null (car remaining-actions-cell))
+            (fzfa-fuzz--fail-observation
+             seed trace nil (car remaining-actions-cell)
+             "live handshake left recorded input actions"))
           (unless (and (= fzfa--icomplete-exhibit-advice-count initial-count)
                        (eq (and (advice-member-p
                                  #'fzfa--icomplete-exhibit-fit-advice
                                  'icomplete-exhibit)
                                 t)
                            (and initial-member t)))
-            (fzfa-fuzz--fail
-             seed (list :target 'live-icomplete :result result
-                        :query target-query)
-             "session leaked fit advice: count=%S member=%S"
-             fzfa--icomplete-exhibit-advice-count
-             (advice-member-p #'fzfa--icomplete-exhibit-fit-advice
-                              'icomplete-exhibit))))
+            (fzfa-fuzz--fail-observation
+             seed trace
+             (list :count initial-count :member (and initial-member t))
+             (list
+              :count fzfa--icomplete-exhibit-advice-count
+              :member
+              (and (advice-member-p
+                    #'fzfa--icomplete-exhibit-fit-advice 'icomplete-exhibit)
+                   t)
+              :result result)
+             "session leaked fit advice")))
       (setq unread-command-events nil)
       (advice-remove 'fzfa--icomplete-fit-mini-window
                      #'fzfa-fuzz-live--fit-observer))
     t))
 
+(defun fzfa-fuzz-live-run-trace (trace)
+  "Run one validated live icomplete TRACE without random generation."
+  (fzfa-fuzz-trace-validate trace)
+  (unless (eq (plist-get trace :target) 'live-icomplete)
+    (error "Unsupported live trace target: %S" (plist-get trace :target)))
+  (fzfa-fuzz--run-trace trace (lambda () (fzfa-fuzz-live--case trace))))
+
 (defun fzfa-fuzz-live-selftest ()
-  "Qualify the live-render oracle with three controlled canaries."
+  "Qualify live replay and its render oracle with controlled canaries."
+  (let ((trace (fzfa-fuzz-live--trace 9500 9500)))
+    (cl-letf (((symbol-function 'fzfa-fuzz--integer)
+               (lambda (&rest _) (error "Replay requested randomness")))
+              ((symbol-function 'fzfa-fuzz--pick)
+               (lambda (&rest _) (error "Replay requested randomness"))))
+      (fzfa-fuzz-live-run-trace trace)))
   (fzfa-fuzz--expect-detection
    "live-fit-disabled" "timed out in phase initial"
    (lambda ()
      (let ((fzfa-fuzz-live--watchdog-seconds 0.75)
            (fzfa-fuzz-live--fit-call-mutator
             (lambda (_function _args) nil)))
-       (fzfa-fuzz-live--case 9501))))
-  (let* ((seed 9502)
-         (inputs (fzfa-fuzz-live--case-inputs seed))
-         (target (car inputs))
-         (full (cdr inputs)))
-    (fzfa-fuzz--expect-detection
-     "live-filter-disabled" "narrow render did not reduce candidates"
-     (lambda ()
-       (let ((fzfa-fuzz-live--watchdog-seconds 0.75)
-             (fzfa-fuzz-live--observation-mutator
-              (lambda (observation)
-                (if (equal (plist-get observation :query) target)
-                    (fzfa-fuzz-live--replace-candidates observation full)
-                  observation))))
-         (fzfa-fuzz-live--case seed)))))
-  (let* ((seed 9503)
-         (target (car (fzfa-fuzz-live--case-inputs seed)))
-         narrow)
-    (fzfa-fuzz--expect-detection
-     "live-empty-render-stale"
-     "fresh empty render did not restore the full non-collapsed display"
-     (lambda ()
-       (let ((fzfa-fuzz-live--watchdog-seconds 0.75)
-             (fzfa-fuzz-live--observation-mutator
-              (lambda (observation)
-                (let ((query (plist-get observation :query)))
-                  (cond
-                   ((equal query target)
-                    (setq narrow (plist-get observation :candidates))
-                    observation)
-                   ((and (equal query "") narrow)
-                    (fzfa-fuzz-live--replace-candidates observation narrow))
-                   (t observation))))))
-         (fzfa-fuzz-live--case seed)))))
-  (princ "fzfa live fuzz self-test passed (3 canaries killed)\n"))
+       (fzfa-fuzz-live-run-trace (fzfa-fuzz-live--trace 9501 9501)))))
+  (let ((fzfa-fuzz-live--watchdog-seconds 0.75))
+    (let* ((seed 9502)
+           (trace (fzfa-fuzz-live--trace seed seed))
+           (initial (plist-get trace :initial-state))
+           (target (plist-get initial :target))
+           (full (plist-get initial :candidates)))
+      (fzfa-fuzz--expect-detection
+       "live-filter-disabled" "narrow render did not reduce candidates"
+       (lambda ()
+         (let ((fzfa-fuzz-live--observation-mutator
+                (lambda (observation)
+                  (if (equal (plist-get observation :query) target)
+                      (fzfa-fuzz-live--replace-candidates observation full)
+                    observation))))
+           (fzfa-fuzz-live-run-trace trace))))))
+  (let ((fzfa-fuzz-live--watchdog-seconds 0.75))
+    (let* ((seed 9503)
+           (trace (fzfa-fuzz-live--trace seed seed))
+           (target (plist-get (plist-get trace :initial-state) :target))
+           narrow)
+      (fzfa-fuzz--expect-detection
+       "live-empty-render-stale"
+       "fresh empty render did not restore the full non-collapsed display"
+       (lambda ()
+         (let ((fzfa-fuzz-live--observation-mutator
+                (lambda (observation)
+                  (let ((query (plist-get observation :query)))
+                    (cond
+                     ((equal query target)
+                      (setq narrow (plist-get observation :candidates))
+                      observation)
+                     ((and (equal query "") narrow)
+                      (fzfa-fuzz-live--replace-candidates observation narrow))
+                     (t observation))))))
+           (fzfa-fuzz-live-run-trace trace))))))
+  (princ
+   (concat "fzfa live fuzz self-test passed "
+           "(exact replay without RNG; 3 canaries killed)\n")))
 
 (defun fzfa-fuzz-live-run ()
   "Run live icomplete fuzz cases, then exit Emacs with their status."
@@ -444,7 +592,9 @@
           (let* ((root-seed (fzfa-fuzz--seed))
                  (cases (fzfa-fuzz--env-natural "FZFA_FUZZ_CASES" 20)))
             (dotimes (index cases)
-              (fzfa-fuzz-live--case (+ root-seed index)))
+              (let ((seed (+ root-seed index)))
+                (fzfa-fuzz-live-run-trace
+                 (fzfa-fuzz-live--trace root-seed seed))))
             (fzfa-fuzz-live--report
              (format "fzfa live fuzz passed (%d cases, root seed %d)\n"
                      cases root-seed)))

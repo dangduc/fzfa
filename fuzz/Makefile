@@ -1,4 +1,5 @@
-.PHONY: compile selftest replay state producer-selftest producer tools live clean
+.PHONY: compile selftest trace-selftest replay replay-trace \
+	replay-trace-live state producer-selftest producer tools live clean
 
 EMACS ?= emacs
 FZF_NATIVE_DIR ?= ../../fzf-native
@@ -23,8 +24,31 @@ compile: clean
 selftest:
 	$(STATE_RUNNER) -f fzfa-fuzz-state-selftest-batch
 
+trace-selftest:
+	$(NATIVE_RUNNER) -l fzfa-fuzz-replay.el \
+	  -f fzfa-fuzz-replay-selftest-batch
+
 replay:
 	$(STATE_RUNNER) -f fzfa-fuzz-replay-batch
+
+replay-trace:
+	@if [ -z "$(TRACE)" ]; then \
+	  echo "usage: make replay-trace TRACE=/path/to/failure.sexp"; \
+	  exit 2; \
+	fi
+	FZFA_FUZZ_TRACE_FILE="$(abspath $(TRACE))" \
+	  $(NATIVE_RUNNER) -l fzfa-fuzz-replay.el \
+	  -f fzfa-fuzz-replay-trace-batch
+
+replay-trace-live:
+	@if [ -z "$(TRACE)" ]; then \
+	  echo "usage: make replay-trace-live TRACE=/path/to/failure.sexp"; \
+	  exit 2; \
+	fi
+	FZFA_FUZZ_TRACE_FILE="$(abspath $(TRACE))" \
+	  $(EMACS) -Q $(LIVE_EMACS_FLAGS) $(ELISP_LOAD_PATH) \
+	  -l fzf-native -f fzf-native-load-dyn \
+	  -l fzfa-fuzz-replay.el -f fzfa-fuzz-replay-trace-live
 
 state:
 	FZFA_FUZZ_CASES=$(CASES) FZFA_FUZZ_STEPS=$(STEPS) \

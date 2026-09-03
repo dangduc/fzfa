@@ -52,26 +52,9 @@ ENDING defaults to a line feed."
                            (or ending (unibyte-string ?\n))))
                  strings)))
 
-(defun fzfa-fuzz-producer--python-command (bytes exit-status)
-  "Return a trusted Python command that writes BYTES and exits EXIT-STATUS."
-  (let ((python (or (executable-find "python3")
-                    (error "Producer fuzz requires python3"))))
-    (format
-     "%s -u -c %s %s %d"
-     (shell-quote-argument python)
-     (shell-quote-argument
-      (concat
-       "import sys; "
-       "sys.stdout.buffer.write(bytes.fromhex(sys.argv[1])); "
-       "sys.stdout.buffer.flush(); "
-       "raise SystemExit(int(sys.argv[2]))"))
-     (shell-quote-argument
-      (mapconcat (lambda (byte) (format "%02x" byte)) bytes ""))
-     exit-status)))
-
 (defun fzfa-fuzz-producer--python-chunk-command
     (chunks pause exit-status)
-  "Return a Python command that writes CHUNKS with PAUSE between each one."
+  "Return a Python command writing CHUNKS with PAUSE and EXIT-STATUS."
   (let ((python (or (executable-find "python3")
                     (error "Producer fuzz requires python3"))))
     (format
@@ -105,21 +88,23 @@ ENDING defaults to a line feed."
   (when (eq (car-safe output) 'final)
     (unless (and (fzfa-fuzz--proper-list-p output)
                  (>= (length output) 4))
-      (fzfa-fuzz--fail
-       seed trace "final output has invalid shape during %S: %S" phase output))
+      (fzfa-fuzz--fail-observation
+       seed trace '(final CANDIDATES FILTERED TOTAL) output
+       "final output has invalid shape during %S" phase))
     (let ((candidates (nth 1 output)))
       (unless (fzfa-fuzz--proper-list-p candidates)
-        (fzfa-fuzz--fail
-         seed trace "candidate output is not a proper list during %S: %S"
-         phase candidates))
+        (fzfa-fuzz--fail-observation
+         seed trace 'proper-list candidates
+         "candidate output is not a proper list during %S" phase))
       (unless (cl-every #'stringp candidates)
-        (fzfa-fuzz--fail
-         seed trace "a non-string candidate escaped during %S: %S"
-         phase candidates))
+        (fzfa-fuzz--fail-observation
+         seed trace 'strings-only candidates
+         "a non-string candidate escaped during %S" phase))
       (when-let* ((bad (cl-find-if
                         #'fzfa-fuzz-producer--contains-nul-p candidates)))
-        (fzfa-fuzz--fail
-         seed trace "a NUL-bearing candidate escaped during %S: %S" phase bad))
+        (fzfa-fuzz--fail-observation
+         seed trace 'no-nul bad
+         "a NUL-bearing candidate escaped during %S" phase))
       candidates)))
 
 (defun fzfa-fuzz-producer--wait (source handle seed trace)
@@ -147,9 +132,10 @@ SEED and TRACE identify a timeout in the reproducer message."
         (sleep-for 0.005)))
     (unless (and (eq (car-safe output) 'final)
                  (plist-get status :reader-done))
-      (fzfa-fuzz--fail seed trace
-                       "producer did not reach a final result: %S / %S"
-                       output status))
+      (fzfa-fuzz--fail-observation
+       seed trace '(:output final :reader-done t)
+       (list :output output :status status)
+       "producer did not reach a final result"))
     (list output status (nreverse observations))))
 
 (defun fzfa-fuzz-producer--failure-required-p (policy status)
@@ -160,12 +146,170 @@ POLICY is nil, non-nil, or `either'."
       (eq (plist-get status :producer-state) 'failed)
     policy))
 
-(defun fzfa-fuzz-producer--run-command (seed spec command &optional directory)
-  "Run COMMAND as the native producer described by SPEC for SEED.
+(defun fzfa-fuzz-producer--trace
+    (root-seed case-seed spec &optional chunks pause)
+  "Build a producer trace for ROOT-SEED, CASE-SEED, and SPEC.
+
+CHUNKS defaults to SPEC's byte string.  PAUSE is recorded between writes."
+  (let* ((chunks (or chunks (list (or (plist-get spec :bytes) ""))))
+         (bytes (apply #'concat chunks))
+         (source (if (plist-member spec :max-line-length)
+                     'explicit 'ambient))
+         (selected (if (eq source 'explicit)
+                       (plist-get spec :max-line-length)
+                     fzfa-max-line-length))
+         (expected-present (and (plist-member spec :expected) t))
+         (interim-present (and (plist-member spec :interim-expected) t)))
+    (unless (equal bytes (or (plist-get spec :bytes) ""))
+      (error "Producer trace chunks do not reconstruct its byte stream"))
+    (fzfa-fuzz-trace-create
+     'native-producer root-seed case-seed
+     (list :kind (plist-get spec :kind)
+           :failure (plist-get spec :failure)
+           :max-line-source source
+           :max-line-length selected
+           :expected-present expected-present
+           :expected-candidates
+           (and expected-present
+                (fzfa-fuzz-trace-encode-strings
+                 (plist-get spec :expected)))
+           :interim-present interim-present
+           :interim-candidates
+           (and interim-present
+                (fzfa-fuzz-trace-encode-strings
+                 (plist-get spec :interim-expected))))
+     (append
+      (mapcar
+       (lambda (chunk)
+         (list 'emit
+               :bytes-hex (fzfa-fuzz-trace-bytes-to-hex chunk)
+               :pause (or pause 0)))
+       chunks)
+      (list (list 'exit (plist-get spec :exit))
+            '(poll-until-terminal)
+            '(redraw 3)
+            '(stop))))))
+
+(defun fzfa-fuzz-producer--decode-trace (trace)
+  "Decode TRACE into a producer execution description."
+  (let* ((initial (plist-get trace :initial-state))
+         (initial-keys
+          (fzfa-fuzz-trace--plist-keys
+           initial "native-producer initial state"
+           '(:kind :failure :max-line-source :max-line-length
+             :expected-present :expected-candidates
+             :interim-present :interim-candidates)))
+         (actions (plist-get trace :actions))
+         (emits (cl-remove-if-not
+                 (lambda (action) (eq (car-safe action) 'emit)) actions))
+         (chunks
+          (mapcar
+           (lambda (action)
+             (fzfa-fuzz-trace-hex-to-bytes
+              (plist-get (cdr action) :bytes-hex)))
+           emits))
+         (pauses (mapcar (lambda (action)
+                           (plist-get (cdr action) :pause))
+                         emits))
+         (exit-action (assq 'exit actions))
+         (redraw-action (assq 'redraw actions))
+         (source (plist-get initial :max-line-source))
+         (spec
+          (list :kind (plist-get initial :kind)
+                :bytes (apply #'concat chunks)
+                :exit (nth 1 exit-action)
+                :failure (plist-get initial :failure))))
+    (fzfa-fuzz-trace--require-keys
+     initial-keys
+     '(:kind :failure :max-line-source :max-line-length
+       :expected-present :expected-candidates
+       :interim-present :interim-candidates)
+     "native-producer initial state")
+    (dolist (action actions)
+      (pcase (car-safe action)
+        ('emit
+         (let ((keys
+                (fzfa-fuzz-trace--plist-keys
+                 (cdr action) "native-producer emit action"
+                 '(:bytes-hex :pause))))
+           (fzfa-fuzz-trace--require-keys
+            keys '(:bytes-hex :pause) "native-producer emit action")
+           (fzfa-fuzz-trace-hex-to-bytes
+            (plist-get (cdr action) :bytes-hex))
+           (unless (and (numberp (plist-get (cdr action) :pause))
+                        (>= (plist-get (cdr action) :pause) 0))
+             (error "Malformed native producer pause: %S" action))))
+        ('exit
+         (unless (and (= (length action) 2)
+                      (integerp (nth 1 action))
+                      (<= 0 (nth 1 action))
+                      (<= (nth 1 action) 255))
+           (error "Malformed native producer exit: %S" action)))
+        ('poll-until-terminal
+         (unless (equal action '(poll-until-terminal))
+           (error "Malformed native producer poll: %S" action)))
+        ('redraw
+         (unless (and (= (length action) 2)
+                      (integerp (nth 1 action))
+                      (>= (nth 1 action) 0))
+           (error "Malformed native producer redraw: %S" action)))
+        ('stop
+         (unless (equal action '(stop))
+           (error "Malformed native producer stop: %S" action)))
+        (_ (error "Malformed native producer action: %S" action))))
+    (unless (and emits exit-action redraw-action
+                 (symbolp (plist-get initial :kind))
+                 (memq (plist-get initial :failure) '(nil t either))
+                 (memq source '(ambient explicit))
+                 (let ((limit (plist-get initial :max-line-length)))
+                   (or (null limit) (integerp limit)))
+                 (memq (plist-get initial :expected-present) '(nil t))
+                 (memq (plist-get initial :interim-present) '(nil t))
+                 (cl-every (lambda (pause)
+                             (and (numberp pause) (>= pause 0)))
+                           pauses)
+                 (or (null pauses) (apply #'= pauses))
+                 (integerp (nth 1 redraw-action))
+                 (>= (nth 1 redraw-action) 0)
+                 (equal (mapcar #'car actions)
+                        (append (make-list (length emits) 'emit)
+                                '(exit poll-until-terminal redraw stop))))
+      (error "Malformed native producer trace: %S" trace))
+    (when (plist-get initial :expected-present)
+      (setq spec
+            (plist-put
+             spec :expected
+             (fzfa-fuzz-trace-decode-strings
+              (plist-get initial :expected-candidates)))))
+    (unless (plist-get initial :expected-present)
+      (unless (null (plist-get initial :expected-candidates))
+        (error "Native trace has candidates without an expected value")))
+    (when (plist-get initial :interim-present)
+      (setq spec
+            (plist-put
+             spec :interim-expected
+             (fzfa-fuzz-trace-decode-strings
+              (plist-get initial :interim-candidates)))))
+    (unless (plist-get initial :interim-present)
+      (unless (null (plist-get initial :interim-candidates))
+        (error "Native trace has candidates without an interim value")))
+    (when (eq source 'explicit)
+      (setq spec
+            (plist-put spec :max-line-length
+                       (plist-get initial :max-line-length))))
+    (list :spec spec :chunks chunks :pause (or (car pauses) 0)
+          :redraws (nth 1 redraw-action)
+          :ambient-max-line-length
+          (plist-get initial :max-line-length))))
+
+(defun fzfa-fuzz-producer--run-command
+    (trace spec command &optional directory)
+  "Run COMMAND as the native producer described by TRACE and SPEC.
 
 Return a plist containing the final candidates, native status, and printed
 messages.  DIRECTORY defaults to `default-directory'."
-  (let* ((ambient-max-line-length fzfa-max-line-length)
+  (let* ((seed (plist-get trace :case-seed))
+         (ambient-max-line-length fzfa-max-line-length)
          (selected-max-line-length
           (if (plist-member spec :max-line-length)
               (plist-get spec :max-line-length)
@@ -175,14 +319,8 @@ messages.  DIRECTORY defaults to `default-directory'."
               (funcall fzfa-fuzz-producer--max-line-length-mutator
                        selected-max-line-length spec)
             selected-max-line-length))
-         (trace (list :target 'native-producer
-                      :kind (plist-get spec :kind)
-                      :bytes (length (or (plist-get spec :bytes) ""))
-                      :exit (plist-get spec :exit)
-                      :max-line-length selected-max-line-length
-                      :max-line-source
-                      (if (plist-member spec :max-line-length)
-                          'explicit 'ambient)))
+         (redraw-action (assq 'redraw (plist-get trace :actions)))
+         (redraws (nth 1 redraw-action))
          ;; fzf-native reads these values when the handle starts.
          (fzfa-max-line-length selected-max-line-length)
          (fzfa-highlight nil)
@@ -217,13 +355,12 @@ messages.  DIRECTORY defaults to `default-directory'."
                         (mapcar #'substring-no-properties (nth 1 observed))
                         expected))
                      observations)
-                  (fzfa-fuzz--fail
-                   seed trace
-                   "no publishable interim result matched %S; observed %S"
-                   expected observations))))
+                  (fzfa-fuzz--fail-observation
+                   seed trace expected observations
+                   "no publishable interim result matched expected"))))
             ;; Stable redraws must reproduce the complete terminal value and
             ;; must not report a dead producer again.
-            (dotimes (index 3)
+            (dotimes (index redraws)
               (let ((redraw
                      (fzfa-fuzz-producer--observe-output
                       (fzfa--source-async-out source "" 1000)
@@ -231,36 +368,42 @@ messages.  DIRECTORY defaults to `default-directory'."
                 (fzfa-fuzz-producer--validate-output
                  seed trace redraw (list 'redraw index))
                 (unless (equal-including-properties redraw output)
-                  (fzfa-fuzz--fail
-                   seed trace
-                   "stable redraw changed terminal output: %S, expected %S"
-                   redraw output))))
+                  (fzfa-fuzz--fail-observation
+                   seed trace output redraw
+                   "stable redraw changed terminal output"))))
             (when (plist-member spec :expected)
               (unless (equal candidates (plist-get spec :expected))
-                (fzfa-fuzz--fail
-                 seed trace "candidates are %S, expected %S"
-                 candidates (plist-get spec :expected))))
+                (fzfa-fuzz--fail-observation
+                 seed trace (plist-get spec :expected) candidates
+                 "candidates are different from expected")))
             (if failure-required
                 (unless (and (eq (plist-get status :producer-state) 'failed)
                              (plist-get status :producer-error)
                              (= (length messages) 1))
-                  (fzfa-fuzz--fail
+                  (fzfa-fuzz--fail-observation
                    seed trace
-                   "producer failure was not reported once: %S / %S"
-                   status (nreverse messages)))
+                   '(:producer-state failed :producer-error present
+                     :message-count 1)
+                   (list :status status :messages (nreverse messages))
+                   "producer failure was not reported once"))
               (unless (and (eq (plist-get status :producer-state) 'complete)
                            (null (plist-get status :producer-error))
                            (null messages))
-                (fzfa-fuzz--fail
-                 seed trace "clean producer ended unexpectedly: %S / %S"
-                 status (nreverse messages))))
+                (fzfa-fuzz--fail-observation
+                 seed trace
+                 '(:producer-state complete :producer-error nil
+                   :messages nil)
+                 (list :status status :messages (nreverse messages))
+                 "clean producer ended unexpectedly")))
             (setq result
                   (list :candidates candidates :status status
                         :messages (nreverse messages)
                         :publishable-observations (length observations)))))
       (fzfa-source--stop source))
     (when (fzf-native-async-generation handle)
-      (fzfa-fuzz--fail seed trace "source teardown left its handle alive"))
+      (fzfa-fuzz--fail-observation
+       seed trace nil (fzf-native-async-generation handle)
+       "source teardown left its handle alive"))
     result))
 
 (defun fzfa-fuzz-producer--case (_seed rng)
@@ -339,12 +482,32 @@ messages.  DIRECTORY defaults to `default-directory'."
      (format "REACHED producer byte categories %S (%d seeds)\n"
              fzfa-fuzz-producer--kinds seeds))))
 
-(defun fzfa-fuzz-producer--run-spec (seed spec)
-  "Run generated producer SPEC for SEED."
-  (fzfa-fuzz-producer--run-command
-   seed spec
-   (fzfa-fuzz-producer--python-command
-    (plist-get spec :bytes) (plist-get spec :exit))))
+(defun fzfa-fuzz-producer-run-trace (trace)
+  "Run one validated native producer TRACE without random generation."
+  (fzfa-fuzz-trace-validate trace)
+  (unless (eq (plist-get trace :target) 'native-producer)
+    (error "Unsupported producer trace target: %S"
+           (plist-get trace :target)))
+  (fzfa-fuzz--run-trace
+   trace
+   (lambda ()
+     (pcase-let* ((description (fzfa-fuzz-producer--decode-trace trace))
+                  (spec (plist-get description :spec))
+                  (chunks (plist-get description :chunks))
+                  (pause (plist-get description :pause))
+                  (fzfa-max-line-length
+                   (plist-get description :ambient-max-line-length)))
+       (fzfa-fuzz-producer--run-command
+        trace spec
+        (fzfa-fuzz-producer--python-chunk-command
+         chunks pause (plist-get spec :exit)))))))
+
+(defun fzfa-fuzz-producer--run-spec
+    (root-seed case-seed spec &optional chunks pause)
+  "Trace and run producer SPEC for ROOT-SEED and CASE-SEED."
+  (fzfa-fuzz-producer-run-trace
+   (fzfa-fuzz-producer--trace
+    root-seed case-seed spec chunks pause)))
 
 (defun fzfa-fuzz-producer--write-bytes (file bytes)
   "Write exact BYTES to FILE."
@@ -361,91 +524,192 @@ messages.  DIRECTORY defaults to `default-directory'."
                                 shell-command-switch command)))
         (cons exit (buffer-string))))))
 
+(defun fzfa-fuzz-tools-trace (root-seed case-seed)
+  "Return the explicit ugrep fixture trace for ROOT-SEED and CASE-SEED."
+  (fzfa-fuzz-trace-create
+   'ugrep-command root-seed case-seed
+   (list :sentinel "fzfa-fuzz-visible-normal-7319"
+         :header-line "plain ASCII header"
+         :header-count 800
+         :late-tail-hex
+         (fzfa-fuzz-trace-bytes-to-hex "late-binary\0tail\n"))
+   '((write-normal "normal.txt")
+     (write-late "manual.info")
+     (write-late "manual.info-1")
+     (write-late "emms/cache")
+     (write-late "late.bin")
+     (run-ugrep))))
+
+(defun fzfa-fuzz-tools--fixture-file (directory relative)
+  "Return RELATIVE inside fixture DIRECTORY, rejecting paths that escape it."
+  (let* ((root (file-name-as-directory (expand-file-name directory)))
+         (file (and (stringp relative) (expand-file-name relative root))))
+    (unless (and file
+                 (not (string-empty-p relative))
+                 (not (file-name-absolute-p relative))
+                 (not (directory-name-p relative))
+                 (string-prefix-p root file))
+      (error "Unsafe ugrep fixture path: %S" relative))
+    file))
+
+(defun fzfa-fuzz-tools--decode-trace (trace directory)
+  "Validate TRACE's ugrep fixture and resolve its files under DIRECTORY."
+  (let* ((initial (plist-get trace :initial-state))
+         (initial-keys
+          (fzfa-fuzz-trace--plist-keys
+           initial "ugrep-command initial state"
+           '(:sentinel :header-line :header-count :late-tail-hex)))
+         (sentinel (plist-get initial :sentinel))
+         (header-line (plist-get initial :header-line))
+         (header-count (plist-get initial :header-count))
+         (tail-hex (plist-get initial :late-tail-hex))
+         (actions (plist-get trace :actions))
+         resolved-actions)
+    (fzfa-fuzz-trace--require-keys
+     initial-keys '(:sentinel :header-line :header-count :late-tail-hex)
+     "ugrep-command initial state")
+    (unless (and (stringp sentinel)
+                 (not (string-empty-p sentinel))
+                 (stringp header-line)
+                 (integerp header-count)
+                 (> header-count 0)
+                 (stringp tail-hex)
+                 actions
+                 (equal (car (last actions)) '(run-ugrep)))
+      (error "Malformed ugrep fixture trace: %S" trace))
+    ;; Decode now so malformed hexadecimal input is rejected before any file
+    ;; is created or command is run.
+    (fzfa-fuzz-trace-hex-to-bytes tail-hex)
+    (dolist (action (butlast actions))
+      (pcase action
+        ((or `(write-normal ,relative) `(write-late ,relative))
+         (push (list (car action)
+                     (fzfa-fuzz-tools--fixture-file directory relative))
+               resolved-actions))
+        (_ (error "Malformed ugrep fixture action: %S" action))))
+    (unless (assq 'write-normal resolved-actions)
+      (error "Ugrep fixture trace has no normal-file witness"))
+    (unless (assq 'write-late resolved-actions)
+      (error "Ugrep fixture trace has no late-output witness"))
+    (list :sentinel sentinel :header-line header-line
+          :header-count header-count :late-tail-hex tail-hex
+          :actions (nreverse resolved-actions))))
+
 (defun fzfa-fuzz-producer--assert-ugrep-positive
-    (seed raw result sentinel)
-  "Require RAW and native RESULT to contain ugrep SENTINEL for SEED."
-  (let ((trace (list :target 'ugrep-positive-control
-                     :sentinel sentinel)))
+    (trace raw result sentinel)
+  "Require RAW and native RESULT to contain ugrep SENTINEL for TRACE."
+  (let ((seed (plist-get trace :case-seed)))
     (unless (= (car raw) 0)
-      (fzfa-fuzz--fail seed trace "ugrep exited %S, expected 0" (car raw)))
+      (fzfa-fuzz--fail-observation
+       seed trace 0 (car raw) "ugrep exited with a nonzero status"))
     (unless (string-match-p (regexp-quote sentinel) (cdr raw))
-      (fzfa-fuzz--fail seed trace
-                       "ugrep stdout omitted the normal-file sentinel"))
+      (fzfa-fuzz--fail-observation
+       seed trace sentinel (cdr raw)
+       "ugrep stdout omitted the normal-file sentinel"))
     (unless (cl-some
              (lambda (candidate)
                (string-match-p (regexp-quote sentinel) candidate))
              (plist-get result :candidates))
-      (fzfa-fuzz--fail seed trace
-                       "native candidates omitted the normal-file sentinel"))))
+      (fzfa-fuzz--fail-observation
+       seed trace sentinel (plist-get result :candidates)
+       "native candidates omitted the normal-file sentinel"))))
+
+(defun fzfa-fuzz-tools-run-trace (trace)
+  "Execute one validated ugrep integration TRACE."
+  (fzfa-fuzz-trace-validate trace)
+  (unless (eq (plist-get trace :target) 'ugrep-command)
+    (error "Unsupported tool trace target: %S" (plist-get trace :target)))
+  (let* ((directory (make-temp-file "fzfa-ugrep-fuzz-" t))
+         (description
+          (condition-case err
+              (fzfa-fuzz-tools--decode-trace trace directory)
+            (error
+             (delete-directory directory t)
+             (signal (car err) (cdr err))))))
+    (unwind-protect
+        (if (not (executable-find "ugrep"))
+            (progn
+              (princ "SKIP fzfa tool fuzz: ugrep is not installed\n")
+              'skipped)
+          (fzfa-fuzz--run-trace
+           trace
+           (lambda ()
+             (require 'fzfa-ugrep)
+             (let* ((seed (plist-get trace :case-seed))
+                    (sentinel (plist-get description :sentinel))
+                    (header
+                     (fzfa-fuzz-producer--lines
+                      (make-list (plist-get description :header-count)
+                                 (plist-get description :header-line))))
+                    (late-bytes
+                     (concat
+                      header
+                      (fzfa-fuzz-trace-hex-to-bytes
+                       (plist-get description :late-tail-hex))))
+                    args command raw)
+               (cl-letf (((symbol-function 'fzfa-completing-read)
+                          (lambda (&rest captured)
+                            (setq args captured)
+                            nil)))
+                 (fzfa-ugrep))
+               (setq command (plist-get args :command))
+               (unless (and (stringp command)
+                            (string-match-p "\\bugrep\\b" command))
+                 (fzfa-fuzz--fail-observation
+                  seed trace 'ugrep-command args
+                  "tool fuzz could not capture the ugrep command"))
+               (dolist (action (plist-get description :actions))
+                 (pcase action
+                   (`(write-normal ,file)
+                    (fzfa-fuzz-producer--write-bytes
+                     file (concat sentinel "\n")))
+                   (`(write-late ,file)
+                    (make-directory (file-name-directory file) t)
+                    (fzfa-fuzz-producer--write-bytes file late-bytes))))
+               (setq raw (fzfa-fuzz-producer--run-shell command directory))
+               (let* ((nul-reached
+                       (fzfa-fuzz-producer--contains-nul-p (cdr raw)))
+                      (spec (list :kind 'ugrep-default :bytes (cdr raw)
+                                  :exit (car raw)
+                                  :failure (if nul-reached t nil)))
+                      (native-trace
+                       (fzfa-fuzz-producer--trace
+                        (plist-get trace :root-seed) seed spec))
+                      (result (fzfa-fuzz-producer--run-command
+                               native-trace spec command directory)))
+                 ;; Prove the command found an ordinary file before treating
+                 ;; missing excluded paths as evidence.
+                 (fzfa-fuzz-producer--assert-ugrep-positive
+                  trace raw result sentinel)
+                 (dolist
+                     (excluded '("manual.info" "manual.info-1" "emms/cache"))
+                   (when (string-match-p (regexp-quote excluded) (cdr raw))
+                     (fzfa-fuzz--fail-observation
+                      seed trace 'excluded (list :path excluded :raw (cdr raw))
+                      "excluded path reached ugrep stdout")))
+                 (when-let* ((bad (cl-find-if
+                                   (lambda (candidate)
+                                     (or (string-match-p "manual\\.info"
+                                                         candidate)
+                                         (string-match-p "emms/cache"
+                                                         candidate)))
+                                   (plist-get result :candidates))))
+                   (fzfa-fuzz--fail-observation
+                    seed trace 'excluded bad
+                    "excluded ugrep candidate escaped"))
+                 (princ
+                  (format
+                   (concat "fzfa ugrep fuzz passed (%s; native boundary %s "
+                           "late binary output)\n")
+                   (car (process-lines "ugrep" "--version"))
+                   (if nul-reached "rejected" "did not receive"))))))))
+      (when (file-directory-p directory)
+        (delete-directory directory t)))))
 
 (defun fzfa-fuzz-tools-batch ()
-  "Exercise external-tool defaults at the native producer boundary."
-  (if (not (executable-find "ugrep"))
-      (princ "SKIP fzfa tool fuzz: ugrep is not installed\n")
-    (require 'fzfa-ugrep)
-    (let (args command)
-      (cl-letf (((symbol-function 'fzfa-completing-read)
-                 (lambda (&rest captured)
-                   (setq args captured)
-                   nil)))
-        (fzfa-ugrep))
-      (setq command (plist-get args :command))
-      (unless (and (stringp command) (string-match-p "\\bugrep\\b" command))
-        (error "Tool fuzz could not capture the ugrep command: %S" args))
-      (let* ((directory (make-temp-file "fzfa-ugrep-fuzz-" t))
-             (emms-directory (expand-file-name "emms" directory))
-             (sentinel "fzfa-fuzz-visible-normal-7319")
-             (header (fzfa-fuzz-producer--lines
-                      (make-list 800 "plain ASCII header")))
-             (late-bytes (concat header "late-binary\0tail\n"))
-             raw)
-        (unwind-protect
-            (progn
-              (make-directory emms-directory)
-              (fzfa-fuzz-producer--write-bytes
-               (expand-file-name "normal.txt" directory)
-               (concat sentinel "\n"))
-              (dolist (file (list (expand-file-name "manual.info" directory)
-                                  (expand-file-name "manual.info-1" directory)
-                                  (expand-file-name "cache" emms-directory)))
-                (fzfa-fuzz-producer--write-bytes file late-bytes))
-              ;; A path not covered by the integration's explicit exclusions
-              ;; checks the containment boundary: ugrep may omit it as binary,
-              ;; or fzf-native must reject its NUL if it reaches the pipe.
-              (fzfa-fuzz-producer--write-bytes
-               (expand-file-name "late.bin" directory) late-bytes)
-              (setq raw (fzfa-fuzz-producer--run-shell command directory))
-              (let* ((nul-reached
-                      (fzfa-fuzz-producer--contains-nul-p (cdr raw)))
-                     (spec (list :kind 'ugrep-default :bytes (cdr raw)
-                                 :exit (car raw)
-                                 :failure (if nul-reached t nil)))
-                     (result (fzfa-fuzz-producer--run-command
-                              (fzfa-fuzz--seed) spec command directory)))
-                ;; Establish that the command found an ordinary file before
-                ;; accepting the absence of any excluded file as evidence.
-                (fzfa-fuzz-producer--assert-ugrep-positive
-                 (fzfa-fuzz--seed) raw result sentinel)
-                (dolist
-                    (excluded '("manual.info" "manual.info-1" "emms/cache"))
-                  (when (string-match-p (regexp-quote excluded) (cdr raw))
-                    (error "Excluded path reached ugrep stdout: %s"
-                           excluded)))
-                (when-let* ((bad (cl-find-if
-                                  (lambda (candidate)
-                                    (or (string-match-p "manual\\.info"
-                                                        candidate)
-                                        (string-match-p "emms/cache"
-                                                        candidate)))
-                                  (plist-get result :candidates))))
-                  (error "Excluded ugrep candidate escaped: %S" bad))
-                (princ
-                 (format
-                  (concat "fzfa ugrep fuzz passed (%s; native boundary %s "
-                          "late binary output)\n")
-                  (car (process-lines "ugrep" "--version"))
-                  (if nul-reached "rejected" "did not receive")))))
-          (delete-directory directory t))))))
+  "Exercise the versioned ugrep integration trace."
+  (let ((seed (fzfa-fuzz--seed)))
+    (fzfa-fuzz-tools-run-trace (fzfa-fuzz-tools-trace seed seed))))
 
 (defun fzfa-fuzz-producer-selftest-batch ()
   "Qualify producer generators and oracles with controlled canaries."
@@ -468,14 +732,13 @@ messages.  DIRECTORY defaults to `default-directory'."
                          (list (concat "first" (unibyte-string 0) "tail"))
                          1 1)
                  output))))
-       (fzfa-fuzz-producer--run-command
-        9401
+       (fzfa-fuzz-producer--run-spec
+        9401 9401
         (list :kind 'interim-output-canary
               :bytes (concat first second) :exit 0 :failure nil
               :interim-expected '("first")
               :expected '("first" "second"))
-        (fzfa-fuzz-producer--python-chunk-command
-         (list first second) 0.3 0)))))
+        (list first second) 0.3))))
   (fzfa-fuzz--expect-detection
    "ambient-line-cap-disabled" "candidates are"
    (lambda ()
@@ -487,7 +750,7 @@ messages.  DIRECTORY defaults to `default-directory'."
                         :bytes (fzfa-fuzz-producer--lines rows)
                         :exit 0 :failure nil
                         :expected '("aaa" "bbbb"))))
-       (fzfa-fuzz-producer--run-spec 9402 spec))))
+       (fzfa-fuzz-producer--run-spec 9402 9402 spec))))
   (fzfa-fuzz--expect-detection
    "stable-redraw-count-changed" "stable redraw changed terminal output"
    (lambda ()
@@ -498,21 +761,25 @@ messages.  DIRECTORY defaults to `default-directory'."
                         (nth 3 output))
                 output))))
        (fzfa-fuzz-producer--run-spec
-        9403
+        9403 9403
         (list :kind 'stable-redraw-canary
               :bytes (fzfa-fuzz-producer--lines '("alpha" "beta"))
               :exit 0 :failure nil :expected '("alpha" "beta"))))))
   (fzfa-fuzz--expect-detection
    "ugrep-raw-positive-missing" "stdout omitted"
    (lambda ()
-     (fzfa-fuzz-producer--assert-ugrep-positive
-      9404 '(0 . "") '(:candidates ("fzfa-sentinel")) "fzfa-sentinel")))
+     (let* ((trace (fzfa-fuzz-tools-trace 9404 9404))
+            (sentinel (plist-get (plist-get trace :initial-state) :sentinel)))
+       (fzfa-fuzz-producer--assert-ugrep-positive
+        trace '(0 . "") (list :candidates (list sentinel)) sentinel))))
   (fzfa-fuzz--expect-detection
    "ugrep-final-positive-missing" "native candidates omitted"
    (lambda ()
-     (fzfa-fuzz-producer--assert-ugrep-positive
-      9405 '(0 . "fzfa-sentinel\n") '(:candidates ("other"))
-      "fzfa-sentinel")))
+     (let* ((trace (fzfa-fuzz-tools-trace 9405 9405))
+            (sentinel (plist-get (plist-get trace :initial-state) :sentinel)))
+       (fzfa-fuzz-producer--assert-ugrep-positive
+        trace (cons 0 (concat sentinel "\n")) '(:candidates ("other"))
+        sentinel))))
   (princ "fzfa producer fuzz self-test passed (5 canaries killed)\n"))
 
 (defun fzfa-fuzz-producer-batch ()
@@ -529,36 +796,35 @@ messages.  DIRECTORY defaults to `default-directory'."
          (cap-bytes (fzfa-fuzz-producer--lines cap-rows))
          (stream-first (fzfa-fuzz-producer--lines '("first")))
          (stream-second (fzfa-fuzz-producer--lines '("second"))))
-    (fzfa-fuzz-producer--run-spec root-seed fixed)
-    (fzfa-fuzz-producer--run-command
-     root-seed
+    (fzfa-fuzz-producer--run-spec root-seed root-seed fixed)
+    (fzfa-fuzz-producer--run-spec
+     root-seed root-seed
      (list :kind 'streaming-publication
            :bytes (concat stream-first stream-second)
            :exit 0 :failure nil :interim-expected '("first")
            :expected '("first" "second"))
-     (fzfa-fuzz-producer--python-chunk-command
-      (list stream-first stream-second) 0.3 0))
+     (list stream-first stream-second) 0.3)
     ;; N-1, N, and N+1 distinguish positive exclusion, negative truncation,
     ;; and an explicitly unlimited reader.  The positive case omits the plist
     ;; key so it also proves that the ambient fzfa policy reaches fzf-native.
     (let ((fzfa-max-line-length 4))
       (fzfa-fuzz-producer--run-spec
-       root-seed
+       root-seed root-seed
        (list :kind 'cap-positive-ambient :bytes cap-bytes
              :exit 0 :failure nil :expected '("aaa" "bbbb"))))
     (fzfa-fuzz-producer--run-spec
-     root-seed
+     root-seed root-seed
      (list :kind 'cap-negative :bytes cap-bytes :max-line-length -4
            :exit 0 :failure nil :expected '("aaa" "bbbb" "cccc")))
     (fzfa-fuzz-producer--run-spec
-     root-seed
+     root-seed root-seed
      (list :kind 'cap-unlimited :bytes cap-bytes :max-line-length nil
            :exit 0 :failure nil :expected cap-rows))
     (dotimes (index cases)
       (let* ((seed (+ root-seed index))
              (rng (fzfa-fuzz-rng-create :state seed)))
         (fzfa-fuzz-producer--run-spec
-         seed (fzfa-fuzz-producer--case seed rng))))
+         root-seed seed (fzfa-fuzz-producer--case seed rng))))
     (princ (format "fzfa producer fuzz passed (%d cases, root seed %d)\n"
                    cases root-seed))))
 

@@ -41,6 +41,8 @@ jobs:
 
       - name: Replay fixed cases and fuzz state transitions
         shell: bash
+        env:
+          FZFA_FUZZ_ARTIFACT_FILE: ${{ runner.temp }}/fzfa-state-${{ matrix.emacs-version }}.sexp
         run: |
           cases=300
           steps=40
@@ -48,8 +50,16 @@ jobs:
             cases=5000
             steps=100
           fi
-          make -C fzf-async/fuzz compile selftest replay state \
+          make -C fzf-async/fuzz compile selftest trace-selftest replay state \
             CASES="$cases" STEPS="$steps"
+
+      - name: Upload state failure trace
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fzfa-state-trace-${{ matrix.emacs-version }}
+          path: ${{ runner.temp }}/fzfa-state-${{ matrix.emacs-version }}.sexp
+          if-no-files-found: ignore
 
   producer:
     name: Native producer and tool boundary
@@ -77,6 +87,8 @@ jobs:
 
       - name: Fuzz producer bytes and integration defaults
         shell: bash
+        env:
+          FZFA_FUZZ_ARTIFACT_FILE: ${{ runner.temp }}/fzfa-producer.sexp
         run: |
           cases=100
           if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
@@ -84,6 +96,14 @@ jobs:
           fi
           make -C fzf-async/fuzz producer-selftest producer CASES="$cases"
           make -C fzf-async/fuzz tools
+
+      - name: Upload producer failure trace
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fzfa-producer-trace
+          path: ${{ runner.temp }}/fzfa-producer.sexp
+          if-no-files-found: ignore
 
   live:
     name: Live icomplete / Emacs ${{ matrix.emacs-version }}
@@ -113,6 +133,7 @@ jobs:
         env:
           TERM: xterm-256color
           FZFA_FUZZ_RESULT_FILE: ${{ runner.temp }}/fzfa-live-${{ matrix.emacs-version }}.txt
+          FZFA_FUZZ_ARTIFACT_FILE: ${{ runner.temp }}/fzfa-live-${{ matrix.emacs-version }}.sexp
         run: |
           cases=8
           if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
@@ -131,3 +152,11 @@ jobs:
             echo "No live fuzz result file was produced."
           fi
           exit "$status"
+
+      - name: Upload live failure trace
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fzfa-live-trace-${{ matrix.emacs-version }}
+          path: ${{ runner.temp }}/fzfa-live-${{ matrix.emacs-version }}.sexp
+          if-no-files-found: ignore
