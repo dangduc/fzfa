@@ -167,12 +167,16 @@ This analyzer describes what an explicit trace asks the driver to do. It is a
 reachability measure, not another correctness oracle. The state driver still
 compares fzfa's observed behavior with its independent model.
 
-The report also lists the first action kind in each trace. With the default
-root seed and 300 cases, all 300 current traces start with `fetch` after the
-completion-list generator advances the shared RNG. The fixed classifier test
-reaches `deliver/none`, but the generated campaign does not. This correlation
-is recorded here for the state-aware generation phase; it is not treated as a
-product failure.
+The state-aware lifecycle generator selects current and stale callbacks and
+pending refreshes directly. Its weighted choices favor effective and guarded
+work while retaining same-query fetches and empty callback/timer operations as
+an explicit no-op fraction. The case seed distributes the first action across
+`deliver`, `fetch`, `restart`, and `run`; the coverage gate requires all four.
+
+Before this generator, all 300 default traces started with `fetch` because the
+completion-list generator advanced a shared RNG into the same low-bit pattern.
+The explicit entry paths remove that correlation and add generated coverage of
+delivery-before-request and timer-before-request.
 
 The state lane currently labels the process-buffer `fzfa--print` ownership
 case as `KNOWN` when it occurs. It does not require that gap to remain: once the

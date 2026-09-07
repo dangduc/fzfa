@@ -18,10 +18,14 @@
 (require 'fzfa-fuzz-state)
 
 (defconst fzfa-fuzz-coverage--required-actions
-  '(run/none fetch/new fetch/same deliver/current-fetch
+  '(deliver/none run/none fetch/new fetch/same deliver/current-fetch
     run/current restart deliver/stale deliver/current-restart run/stale
     stop stop/pending-current)
   "Semantic action results every state campaign must reach.")
+
+(defconst fzfa-fuzz-coverage--required-first-actions
+  '(deliver fetch restart run)
+  "Entry paths every state-aware campaign must reach.")
 
 (defconst fzfa-fuzz-coverage--required-pairs
   '((fetch/new fetch/new)
@@ -218,6 +222,9 @@ ignore entries whose cdr says the task has already run."
   (dolist (action fzfa-fuzz-coverage--required-actions)
     (unless (gethash action (fzfa-fuzz-coverage-actions coverage))
       (error "Semantic coverage did not reach %S" action)))
+  (dolist (action fzfa-fuzz-coverage--required-first-actions)
+    (unless (gethash action (fzfa-fuzz-coverage-first-actions coverage))
+      (error "Semantic coverage did not start with %S" action)))
   (dolist (pair fzfa-fuzz-coverage--required-pairs)
     (unless (gethash pair (fzfa-fuzz-coverage-pairs coverage))
       (error "Semantic coverage did not reach adjacent pair %S" pair)))

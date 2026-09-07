@@ -250,27 +250,134 @@ reverse, and truncation all have an observable effect."
                (:constructor fzfa-fuzz-state--callback-create))
   token kind function refresh)
 
-(defun fzfa-fuzz-state--producer-actions (rng steps)
-  "Generate producer lifecycle actions from RNG with at most STEPS entries."
-  (let ((trace (list (list 'fetch "a")))
-        (remaining (max 0 (1- steps)))
-        stopped)
-    (while (and (> remaining 0) (not stopped))
-      (let ((roll (fzfa-fuzz--integer rng 100)))
-        (push
-         (cond
-          ((< roll 30)
-           (list 'fetch (fzfa-fuzz--pick rng '("" "a" "ab" "b" "same"))))
-          ((< roll 60)
-           (list 'deliver (fzfa-fuzz--integer rng 32)
-                 (fzfa-fuzz-state--candidate-list rng 0)))
-          ((< roll 78) (list 'run (fzfa-fuzz--integer rng 32)))
-          ((< roll 92)
-           (list 'restart (fzfa-fuzz--pick rng '("" "a" "new" "other"))))
-          (t (setq stopped t) '(stop)))
-         trace)
+(defconst fzfa-fuzz-state--producer-queries
+  '("" "a" "ab" "b" "same" "new" "other")
+  "Small query alphabet for state-aware producer traces.")
+
+(defun fzfa-fuzz-state--weighted-pick (rng weighted-values)
+  "Choose from WEIGHTED-VALUES using RNG.
+
+Each entry is (VALUE . POSITIVE-WEIGHT)."
+  (let* ((total (apply #'+ (mapcar #'cdr weighted-values)))
+         (roll (fzfa-fuzz--integer rng total)))
+    (catch 'selected
+      (dolist (entry weighted-values)
+        (if (< roll (cdr entry))
+            (throw 'selected (car entry))
+          (cl-decf roll (cdr entry))))
+      (error "State-aware generator has no weighted choice"))))
+
+(defun fzfa-fuzz-state--entry-index (entries predicate)
+  "Return the first index in ENTRIES satisfying PREDICATE."
+  (cl-position-if predicate entries))
+
+(defun fzfa-fuzz-state--producer-actions (rng steps case-seed)
+  "Generate state-aware producer actions from RNG for CASE-SEED.
+
+Return at most STEPS entries.  Current and stale callbacks and refresh tasks
+are selected directly.  A small explicit fraction exercises observational
+no-ops."
+  (let ((remaining steps)
+        (token 0)
+        (input :unfetched)
+        callbacks tasks actions stopped)
+    (cl-labels
+        ((pending-tasks () (cl-remove-if #'cdr tasks))
+         (current-callback-index ()
+           (fzfa-fuzz-state--entry-index
+            callbacks (lambda (entry) (= (car entry) token))))
+         (stale-callback-index ()
+           (fzfa-fuzz-state--entry-index
+            callbacks (lambda (entry) (/= (car entry) token))))
+         (current-task-index ()
+           (fzfa-fuzz-state--entry-index
+            (pending-tasks) (lambda (entry) (= (car entry) token))))
+         (stale-task-index ()
+           (fzfa-fuzz-state--entry-index
+            (pending-tasks) (lambda (entry) (/= (car entry) token))))
+         (new-query ()
+           (fzfa-fuzz--pick
+            rng (cl-remove input fzfa-fuzz-state--producer-queries
+                           :test #'equal)))
+         (make-action
+          (kind)
+          (pcase kind
+            ('fetch-new
+             (let ((query (new-query)))
+               (setq input query)
+               (cl-incf token)
+               (setq callbacks
+                     (append callbacks (list (cons token 'fetch))))
+               (list 'fetch query)))
+            ('fetch-same (list 'fetch input))
+            ('restart
+             (cl-incf token)
+             (setq callbacks
+                   (append callbacks (list (cons token 'restart))))
+             (list 'restart
+                   (fzfa-fuzz--pick rng fzfa-fuzz-state--producer-queries)))
+            ('deliver-none
+             (list 'deliver 0 (fzfa-fuzz-state--candidate-list rng 0)))
+            ('deliver-current
+             (let* ((index (current-callback-index))
+                    (entry (nth index callbacks)))
+               (when (eq (cdr entry) 'fetch)
+                 (setq tasks (append tasks (list (cons token nil)))))
+               (list 'deliver index (fzfa-fuzz-state--candidate-list rng 0))))
+            ('deliver-stale
+             (list 'deliver (stale-callback-index)
+                   (fzfa-fuzz-state--candidate-list rng 0)))
+            ('run-none (list 'run (fzfa-fuzz--integer rng 32)))
+            ('run-current
+             (let* ((pending (pending-tasks))
+                    (index (current-task-index)))
+               (setcdr (nth index pending) t)
+               (list 'run index)))
+            ('run-stale
+             (let* ((pending (pending-tasks))
+                    (index (stale-task-index)))
+               (setcdr (nth index pending) t)
+               (list 'run index)))
+            ('stop (setq stopped t) '(stop))
+            (_ (error "Unknown state-aware operation: %S" kind))))
+         (choose-kind
+          ()
+          (let* ((pending (pending-tasks))
+                 (current-callback (current-callback-index))
+                 (stale-callback (stale-callback-index))
+                 (current-task (current-task-index))
+                 (stale-task (stale-task-index))
+                 (choices
+                  `((fetch-new . 22)
+                    (restart . 12)
+                    (stop . ,(if current-task 10 5))
+                    (run-none . ,(if pending 1 3)))))
+            (when (not (eq input :unfetched))
+              (push '(fetch-same . 4) choices))
+            (if callbacks
+                (progn
+                  (when current-callback
+                    (push '(deliver-current . 24) choices))
+                  (when stale-callback
+                    (push '(deliver-stale . 18) choices)))
+              (push '(deliver-none . 3) choices))
+            (when current-task
+              (push '(run-current . 18) choices))
+            (when stale-task
+              (push '(run-stale . 14) choices))
+            (fzfa-fuzz-state--weighted-pick rng choices))))
+      ;; The case seed, rather than another correlated low RNG value, gives the
+      ;; campaign four deterministic entry paths.
+      (when (> remaining 0)
+        (let ((first-kind
+               (nth (% case-seed 4)
+                    '(deliver-none fetch-new restart run-none))))
+          (push (make-action first-kind) actions)
+          (cl-decf remaining)))
+      (while (and (> remaining 0) (not stopped))
+        (push (make-action (choose-kind)) actions)
         (cl-decf remaining)))
-    (nreverse trace)))
+    (nreverse actions)))
 
 (defun fzfa-fuzz-state--producer-trace
     (root-seed case-seed rng steps &optional actions)
@@ -279,7 +386,8 @@ reverse, and truncation all have an observable effect."
    'state-producer root-seed case-seed
    (list :source-name "state" :step-budget steps)
    (copy-tree (or actions
-                  (fzfa-fuzz-state--producer-actions rng steps)))))
+                  (fzfa-fuzz-state--producer-actions
+                   rng steps case-seed)))))
 
 (defun fzfa-fuzz-state--decode-producer-trace (trace)
   "Validate TRACE and return its producer lifecycle inputs."
