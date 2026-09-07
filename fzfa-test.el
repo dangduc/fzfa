@@ -25,6 +25,8 @@
 (defvar helm-pattern)
 (defvar helm-map)
 (defvar helm-after-update-hook)
+(defvar helm-action-buffer)
+(defvar helm-buffer)
 (defvar helm-move-selection-after-hook)
 
 ;;; fzfa-hungry--deduplicate-dirs
@@ -3721,6 +3723,89 @@ locked even if the wrapper changes."
     (funcall callback '("late"))
     (should-not (fzfa-source-snapshot runtime-source))
     (should (= scheduled 0))))
+
+(ert-deftest fzfa-helm-snap-timer-is-coalesced-and-cleaned-up ()
+  "Rapid Helm updates retain one snap timer, even when Helm exits by error."
+  (require 'fzfa-helm)
+  (let ((helm-alive-p t)
+        (helm-pattern "")
+        (helm-map (make-sparse-keymap))
+        (helm-after-update-hook nil)
+        (helm-move-selection-after-hook nil)
+        (fzfa-preview-key nil)
+        (fzfa-display-key nil)
+        (next-id 0)
+        (original-window-buffer (window-buffer (selected-window)))
+        snap-context-buffer
+        callback-ran
+        scheduled
+        canceled)
+    (cl-letf (((symbol-function 'fzfa-helm--ensure-loaded) #'ignore)
+              ((symbol-function 'fzfa--preview-handler)
+               (lambda (&rest _) nil))
+              ((symbol-function 'fzfa--sessions-push) #'ignore)
+              ((symbol-function 'fzfa-helm--cancel-stranded-follow-timer)
+               #'ignore)
+              ((symbol-function 'helm-buffer-get)
+               (lambda ()
+                 (setq snap-context-buffer (current-buffer))))
+              ((symbol-function 'helm-make-source)
+               (lambda (_name _class &rest args) args))
+              ((symbol-function 'helm-empty-buffer-p)
+               (lambda (&optional buffer)
+                 (should (eq buffer (current-buffer)))
+                 nil))
+              ((symbol-function 'helm-beginning-of-buffer)
+               (lambda ()
+                 (should (eq helm-buffer (current-buffer)))
+                 (should (equal helm-action-buffer "*test action*"))
+                 (should (equal helm-pattern "needle"))
+                 (setq callback-ran t)))
+              ((symbol-function 'recenter) #'ignore)
+              ((symbol-function 'run-at-time)
+               (lambda (_seconds _repeat function &rest args)
+                 (let ((timer (list 'fake-timer (cl-incf next-id)
+                                    function args)))
+                   (push timer scheduled)
+                   timer)))
+              ((symbol-function 'timerp)
+               (lambda (object) (eq (car-safe object) 'fake-timer)))
+              ((symbol-function 'cancel-timer)
+               (lambda (timer) (push (cadr timer) canceled)))
+              ((symbol-function 'helm)
+               (lambda (&rest _)
+                 ;; `add-hook' prepends, so the snap hook is first here.
+                 (let ((helm-buffer (current-buffer))
+                       (helm-action-buffer "*test action*")
+                       (helm-pattern "needle")
+                       (snap-fn (car helm-after-update-hook)))
+                   (setq scheduled nil
+                         canceled nil
+                         next-id 0)
+                   (funcall snap-fn)
+                   (funcall snap-fn)
+                   (funcall snap-fn))
+                 (error "simulated Helm exit"))))
+      (let ((condition
+             (should-error
+              (fzfa-helm--read
+               '((:name "sync" :candidates ("one") :action identity))
+               :prompt "test: ")
+              :type 'error)))
+        (should (equal (error-message-string condition)
+                       "simulated Helm exit")))
+      (should (= (length scheduled) 3))
+      ;; Updates cancel timers 1 and 2; unwind cleanup cancels timer 3.
+      (should (equal canceled '(3 2 1)))
+      ;; A timer event may already have been dequeued when cleanup cancels it.
+      ;; Run that callback after Helm's dynamic bindings have disappeared.
+      (unwind-protect
+          (progn
+            (set-window-buffer (selected-window) snap-context-buffer)
+            (let ((latest (car scheduled)))
+              (apply (nth 2 latest) (nth 3 latest))))
+        (set-window-buffer (selected-window) original-window-buffer))
+      (should callback-ran))))
 
 (ert-deftest fzfa-session-snapshot-restart-discards-obsolete-result ()
   "A source restart during snapshot construction revokes the old result."
