@@ -27,8 +27,8 @@ The targets are:
   state/action/outcome buckets, and adjacent transition pairs for the exact
   producer traces used by the state campaign. It fails if required events or
   state facets disappear, or if observational no-ops dominate the campaign.
-  The fixed classifier self-test covers `deliver/none`; the current generated
-  campaign does not claim that event as a reachability gate.
+  The state-aware campaign must start traces with deliver, fetch, restart, and
+  run actions, and generated traces must cover `deliver/none`.
 - `make trace-selftest`: round-trip trace data and raw bytes, reject malformed
   files, prove replay does not call the generator, and reproduce one controlled
   failure by its stable signature.
@@ -37,7 +37,7 @@ The targets are:
   cannot remove another action.
 - `make replay`: run small fixed regression cases.
 - `make replay-trace TRACE=FILE`: exactly replay one saved state, native
-  producer, or ugrep trace or failure artifact.
+  producer, source-differential, or ugrep trace or failure artifact.
 - `make replay-trace-live TRACE=FILE LIVE_EMACS_FLAGS=-nw`: exactly replay one
   live icomplete trace through a real minibuffer.
 - `make reduce-trace TRACE=FILE [OUTPUT=FILE]`: remove actions from a saved
@@ -53,6 +53,13 @@ The targets are:
 - `make producer-selftest`: require every byte-stream category to be generated,
   then inject five controlled defects and require the producer and ugrep
   oracles to reject them.
+- `make partition-selftest`: corrupt one partition result and one source form,
+  and require both differential oracles to reject the change.
+- `make partition`: compare native command-reader results across systematic
+  stdout chunk boundaries.
+- `make differential`: compare the same generated rows across list,
+  zero-argument function, synchronous producer, asynchronous producer, and
+  command sources.
 - `make tools`: run the command built by `fzfa-ugrep` in a generated directory.
   It checks the documented Info and EMMS exclusions. If another late binary
   reaches the pipe, it checks that fzf-native rejects the NUL and fzfa reports
@@ -177,6 +184,28 @@ Before this generator, all 300 default traces started with `fetch` because the
 completion-list generator advanced a shared RNG into the same low-bit pattern.
 The explicit entry paths remove that correlation and add generated coverage of
 delivery-before-request and timer-before-request.
+
+The partition lane sends the same command output through every byte boundary
+for short UTF-8, CRLF, ANSI, final-newline, unterminated-final-row, and NUL
+fixtures. It also sends each short fixture one byte per write. A larger line-cap
+fixture uses selected boundaries before, at, and after record and size limits.
+The final candidates, producer state, error presence, and visible failure count
+must not depend on stdout chunking.
+
+The source differential lane uses logical rows that all source contracts can
+represent. Each case sends copies of those rows through a list, a zero-argument
+function, a synchronous two-argument producer, an asynchronous two-argument
+producer, and a shell command. It compares plain candidate strings after each
+path has crossed its real adapter boundary. Newlines and NUL bytes are excluded
+from this cross-source comparison because they do not mean the same thing in an
+in-memory string and a line-oriented command stream; dedicated byte fixtures
+cover them instead.
+
+```sh
+make partition-selftest
+make partition
+make differential CASES=100
+```
 
 The state lane currently labels the process-buffer `fzfa--print` ownership
 case as `KNOWN` when it occurs. It does not require that gap to remain: once the

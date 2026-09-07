@@ -15,6 +15,7 @@
 (require 'cl-lib)
 (require 'fzfa-fuzz-state)
 (require 'fzfa-fuzz-producer)
+(require 'fzfa-fuzz-partition)
 (require 'fzfa-fuzz-live)
 
 (defun fzfa-fuzz-replay--file ()
@@ -33,6 +34,11 @@
      (unless (fzfa--command-api-p)
        (error "Native producer replay requires the fzf-native 2.7 session API"))
      (fzfa-fuzz-producer-run-trace trace))
+    ('source-differential
+     (unless (fzfa--command-api-p)
+       (error
+        "Source differential replay requires the fzf-native 2.7 session API"))
+     (fzfa-fuzz-partition-run-differential-trace trace))
     ('ugrep-command (fzfa-fuzz-tools-run-trace trace))
     ('live-icomplete
      (when noninteractive
@@ -168,7 +174,10 @@ Return `reproduced' when an artifact fails with its recorded signature and
                  :exit 0 :failure nil
                  :interim-expected '("first")
                  :expected '("first" "second"))
-           (list first second) 0.01)))
+           (list first second) 0.01))
+         (differential-trace
+          (fzfa-fuzz-partition--differential-trace
+           seed seed '("alpha" "café" "你好") "a")))
     (unwind-protect
         (progn
           (fzfa-fuzz-trace-write trace-file trace)
@@ -195,7 +204,7 @@ Return `reproduced' when an artifact fails with its recorded signature and
                      (lambda (&rest _) (error "Replay requested randomness"))))
             (dolist (plain-trace
                      (list trace state-producer-trace poller-trace
-                           message-trace native-trace))
+                           message-trace native-trace differential-trace))
               (unless (eq (fzfa-fuzz-replay-value plain-trace) 'passed)
                 (error "Plain %S trace did not replay"
                        (plist-get plain-trace :target)))))
