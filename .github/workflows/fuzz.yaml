@@ -92,11 +92,15 @@ jobs:
           FZFA_FUZZ_ARTIFACT_FILE: ${{ runner.temp }}/fzfa-producer.sexp
         run: |
           cases=100
+          schedule_cases=20
           if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
             cases=1000
+            schedule_cases=200
           fi
           make -C fzf-async/fuzz producer-selftest partition-selftest \
             partition differential producer CASES="$cases"
+          make -C fzf-async/fuzz schedule-selftest schedule \
+            CASES="$schedule_cases"
           make -C fzf-async/fuzz tools
 
       - name: Upload producer failure trace

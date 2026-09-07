@@ -1,7 +1,7 @@
 .PHONY: compile selftest coverage-selftest coverage trace-selftest \
 	reduce-selftest replay replay-trace replay-trace-live reduce-trace \
 	reduce-trace-live state producer-selftest partition-selftest partition \
-	differential producer tools live clean
+	differential schedule-selftest schedule producer tools live clean
 
 EMACS ?= emacs
 FZF_NATIVE_DIR ?= ../../fzf-native
@@ -105,6 +105,15 @@ differential:
 	FZFA_FUZZ_CASES=$(CASES) $(NATIVE_RUNNER) \
 	  -l fzfa-fuzz-partition.el \
 	  -f fzfa-fuzz-partition-differential-batch
+
+schedule-selftest:
+	$(NATIVE_RUNNER) -l fzfa-fuzz-schedule.el \
+	  -f fzfa-fuzz-schedule-selftest-batch
+
+schedule:
+	FZFA_FUZZ_CASES=$(CASES) $(NATIVE_RUNNER) \
+	  -l fzfa-fuzz-schedule.el \
+	  -f fzfa-fuzz-schedule-batch
 
 producer:
 	FZFA_FUZZ_CASES=$(CASES) $(NATIVE_RUNNER) \

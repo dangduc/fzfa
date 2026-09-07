@@ -60,6 +60,11 @@ The targets are:
 - `make differential`: compare the same generated rows across list,
   zero-argument function, synchronous producer, asynchronous producer, and
   command sources.
+- `make schedule-selftest`: corrupt stale-callback and teardown evidence and
+  require the real-scheduler oracle to reject both changes.
+- `make schedule`: use real Emacs timers and child processes for reversed
+  callbacks, teardown before delivery, restart and stop after partial output,
+  and a burst of debounced command edits.
 - `make tools`: run the command built by `fzfa-ugrep` in a generated directory.
   It checks the documented Info and EMMS exclusions. If another late binary
   reaches the pipe, it checks that fzf-native rejects the NUL and fzfa reports
@@ -205,7 +210,14 @@ cover them instead.
 make partition-selftest
 make partition
 make differential CASES=100
+make schedule-selftest
+make schedule CASES=20
 ```
+
+Every real-scheduler wait has a two-second watchdog. Each trace records the
+exact timer delays, byte chunks, queries, and expected rows. Cleanup cancels
+owned timers, stops native handles, kills temporary owner buffers, and checks
+that stopped handles no longer expose a generation.
 
 The state lane currently labels the process-buffer `fzfa--print` ownership
 case as `KNOWN` when it occurs. It does not require that gap to remain: once the
