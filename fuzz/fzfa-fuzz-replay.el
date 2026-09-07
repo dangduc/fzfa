@@ -18,6 +18,7 @@
 (require 'fzfa-fuzz-partition)
 (require 'fzfa-fuzz-schedule)
 (require 'fzfa-fuzz-live)
+(require 'fzfa-fuzz-frontends)
 
 (defun fzfa-fuzz-replay--file ()
   "Return the trace path selected for exact replay."
@@ -51,6 +52,12 @@
                       "make replay-trace-live TRACE=FILE "
                       "LIVE_EMACS_FLAGS=-nw")))
      (fzfa-fuzz-live-run-trace trace))
+    ('live-frontend
+     (when noninteractive
+       (error (concat "Live trace requires a real minibuffer; run "
+                      "make replay-trace-live TRACE=FILE "
+                      "LIVE_EMACS_FLAGS=-nw")))
+     (fzfa-fuzz-frontends-run-trace trace))
     (target (error "No replay driver for trace target %S" target))))
 
 (defun fzfa-fuzz-replay-value (value)
@@ -117,11 +124,15 @@ Return `reproduced' when an artifact fails with its recorded signature and
         (let* ((file (fzfa-fuzz-replay--file))
                (value (fzfa-fuzz-trace-read file))
                (trace (fzfa-fuzz-trace-value-trace value)))
-          (unless (eq (plist-get trace :target) 'live-icomplete)
+          (unless (memq (plist-get trace :target)
+                        '(live-icomplete live-frontend))
             (error "replay-trace-live received %S"
                    (plist-get trace :target)))
-          (icomplete-vertical-mode 1)
-          (fzfa-fuzz-live--assert-refcount-lifecycle)
+          (if (eq (plist-get trace :target) 'live-icomplete)
+              (progn
+                (icomplete-vertical-mode 1)
+                (fzfa-fuzz-live--assert-refcount-lifecycle))
+            (fzfa-fuzz-frontends-configure-for-trace trace))
           (fzfa-fuzz-replay-file file)
           (kill-emacs 0))
       ((error quit)

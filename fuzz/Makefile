@@ -1,7 +1,8 @@
 .PHONY: compile selftest coverage-selftest coverage trace-selftest \
 	reduce-selftest replay replay-trace replay-trace-live reduce-trace \
 	reduce-trace-live state producer-selftest partition-selftest partition \
-	differential schedule-selftest schedule producer tools live clean
+	differential schedule-selftest schedule producer tools live \
+	live-frontends clean
 
 EMACS ?= emacs
 FZF_NATIVE_DIR ?= ../../fzf-native
@@ -9,8 +10,11 @@ CASES ?= 300
 STEPS ?= 40
 LIVE_CASES ?= 20
 LIVE_EMACS_FLAGS ?=
+FRONTEND ?= default
+LIVE_FRONTEND_DIRS ?=
 
 ELISP_LOAD_PATH := -L .. -L . -L $(FZF_NATIVE_DIR)
+LIVE_FRONTEND_LOAD_PATH := $(foreach dir,$(LIVE_FRONTEND_DIRS),-L $(dir))
 FUZZ_SRC := $(wildcard fzfa-fuzz-*.el)
 STATE_RUNNER := $(EMACS) -Q --batch $(ELISP_LOAD_PATH) \
 	-l fzfa-fuzz-core.el -l fzfa-fuzz-state.el
@@ -62,6 +66,7 @@ replay-trace-live:
 	fi
 	FZFA_FUZZ_TRACE_FILE="$(abspath $(TRACE))" \
 	  $(EMACS) -Q $(LIVE_EMACS_FLAGS) $(ELISP_LOAD_PATH) \
+	  $(LIVE_FRONTEND_LOAD_PATH) \
 	  -l fzf-native -f fzf-native-load-dyn \
 	  -l fzfa-fuzz-replay.el -f fzfa-fuzz-replay-trace-live
 
@@ -83,6 +88,7 @@ reduce-trace-live:
 	FZFA_FUZZ_TRACE_FILE="$(abspath $(TRACE))" \
 	FZFA_FUZZ_REDUCED_FILE="$(if $(OUTPUT),$(abspath $(OUTPUT)),)" \
 	  $(EMACS) -Q $(LIVE_EMACS_FLAGS) $(ELISP_LOAD_PATH) \
+	  $(LIVE_FRONTEND_LOAD_PATH) \
 	  -l fzf-native -f fzf-native-load-dyn \
 	  -l fzfa-fuzz-reduce.el -f fzfa-fuzz-reduce-trace-live
 
@@ -132,6 +138,14 @@ live:
 	  -l fzf-native -f fzf-native-load-dyn \
 	  -l fzfa-fuzz-core.el -l fzfa-fuzz-live.el \
 	  -f fzfa-fuzz-live-run
+
+live-frontends:
+	FZFA_FUZZ_CASES=$(LIVE_CASES) FZFA_FUZZ_FRONTEND=$(FRONTEND) \
+	  $(EMACS) -Q $(LIVE_EMACS_FLAGS) $(ELISP_LOAD_PATH) \
+	  $(LIVE_FRONTEND_LOAD_PATH) \
+	  -l fzf-native -f fzf-native-load-dyn \
+	  -l fzfa-fuzz-core.el -l fzfa-fuzz-frontends.el \
+	  -f fzfa-fuzz-frontends-run
 
 clean:
 	rm -f *.elc
