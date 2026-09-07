@@ -133,6 +133,9 @@ make replay-trace TRACE=/path/to/failure.sexp
 make replay-trace-live TRACE=/path/to/live-failure.sexp LIVE_EMACS_FLAGS=-nw
 ```
 
+Scheduled campaign budgets, artifact retention, reduction, and promotion into
+fixed regression cases are described in [CORPUS.md](CORPUS.md).
+
 Reduce a failure before turning it into a permanent regression:
 
 ```sh
