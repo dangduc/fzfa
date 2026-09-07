@@ -166,3 +166,94 @@ jobs:
           name: fzfa-live-trace-${{ matrix.emacs-version }}
           path: ${{ runner.temp }}/fzfa-live-${{ matrix.emacs-version }}.sexp
           if-no-files-found: ignore
+
+  live-frontends:
+    name: Live frontend / ${{ matrix.frontend }} / Emacs ${{ matrix.emacs-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - frontend: default
+            emacs-version: snapshot
+          - frontend: vertico
+            emacs-version: snapshot
+          - frontend: helm
+            emacs-version: 30.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fzf-async
+
+      - uses: actions/checkout@v4
+        with:
+          repository: dangduc/fzf-native
+          ref: "2.7"
+          path: fzf-native
+
+      - uses: actions/checkout@v4
+        if: matrix.frontend == 'vertico'
+        with:
+          repository: minad/vertico
+          path: fzf-async/fuzz-deps/vertico
+
+      - uses: actions/checkout@v4
+        if: matrix.frontend == 'helm'
+        with:
+          repository: emacs-helm/helm
+          path: fzf-async/fuzz-deps/helm
+
+      - uses: actions/checkout@v4
+        if: matrix.frontend == 'helm'
+        with:
+          repository: jwiegley/emacs-async
+          path: fzf-async/fuzz-deps/async
+
+      - uses: actions/checkout@v4
+        if: matrix.frontend == 'helm'
+        with:
+          repository: thierryvolpiatto/wfnames
+          path: fzf-async/fuzz-deps/wfnames
+
+      - uses: jcs090218/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs-version }}
+
+      - name: Exercise real frontend updates and selection
+        shell: bash
+        env:
+          TERM: xterm-256color
+          FZFA_FUZZ_RESULT_FILE: ${{ runner.temp }}/fzfa-${{ matrix.frontend }}.txt
+          FZFA_FUZZ_ARTIFACT_FILE: ${{ runner.temp }}/fzfa-${{ matrix.frontend }}.sexp
+        run: |
+          cases=5
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+            cases=20
+          fi
+          load_dirs=""
+          case "${{ matrix.frontend }}" in
+            vertico) load_dirs="../fuzz-deps/vertico" ;;
+            helm) load_dirs="../fuzz-deps/helm ../fuzz-deps/async ../fuzz-deps/wfnames" ;;
+          esac
+          set +e
+          script --quiet --return --command \
+            "make -C fzf-async/fuzz live-frontends FRONTEND=${{ matrix.frontend }} LIVE_CASES=$cases LIVE_EMACS_FLAGS=-nw LIVE_FRONTEND_DIRS='$load_dirs'" \
+            /dev/null
+          status=$?
+          set -e
+          echo "----- ${{ matrix.frontend }} frontend fuzz result -----"
+          if [[ -f "$FZFA_FUZZ_RESULT_FILE" ]]; then
+            cat "$FZFA_FUZZ_RESULT_FILE"
+          else
+            echo "No live frontend fuzz result file was produced."
+          fi
+          exit "$status"
+
+      - name: Upload frontend failure trace
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fzfa-live-${{ matrix.frontend }}-trace
+          path: ${{ runner.temp }}/fzfa-${{ matrix.frontend }}.sexp
+          if-no-files-found: ignore

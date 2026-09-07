@@ -167,7 +167,8 @@ last accepted replay, not stale values copied from the larger input."
   (let* ((input (fzfa-fuzz-replay--file))
          (value (fzfa-fuzz-trace-read input))
          (trace (fzfa-fuzz-trace-value-trace value)))
-    (when (eq (plist-get trace :target) 'live-icomplete)
+    (when (memq (plist-get trace :target)
+                '(live-icomplete live-frontend))
       (error (concat "Live trace reduction requires a real minibuffer; run "
                      "make reduce-trace-live TRACE=FILE "
                      "LIVE_EMACS_FLAGS=-nw")))
@@ -181,11 +182,15 @@ last accepted replay, not stale values copied from the larger input."
         (let* ((input (fzfa-fuzz-replay--file))
                (value (fzfa-fuzz-trace-read input))
                (trace (fzfa-fuzz-trace-value-trace value)))
-          (unless (eq (plist-get trace :target) 'live-icomplete)
+          (unless (memq (plist-get trace :target)
+                        '(live-icomplete live-frontend))
             (error "reduce-trace-live received %S"
                    (plist-get trace :target)))
-          (icomplete-vertical-mode 1)
-          (fzfa-fuzz-live--assert-refcount-lifecycle)
+          (if (eq (plist-get trace :target) 'live-icomplete)
+              (progn
+                (icomplete-vertical-mode 1)
+                (fzfa-fuzz-live--assert-refcount-lifecycle))
+            (fzfa-fuzz-frontends-configure-for-trace trace))
           (fzfa-fuzz-reduce-file
            input (fzfa-fuzz-reduce--output-file input))
           (kill-emacs 0))
